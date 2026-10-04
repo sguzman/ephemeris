@@ -227,14 +227,15 @@ Bootstrap manifests use:
 shards[]
 ```
 
-Each shard currently identifies:
+Each shard identifies:
 
-- `shard_id`
-- `bundle_ref`
+- `shard_id`;
+- `bundle_ref`;
 - normalized snapshot ref/path/fingerprint;
 - CalendarSet ref/path/fingerprint;
 - ready-event and source counts;
-- data posture.
+- data posture;
+- and, for some recovered shards, a pinned `CompactReconciledEventIndex` path/hash.
 
 ### Production partial/complete
 
@@ -279,7 +280,7 @@ Ephemeris should not invent a third packaging shape.
 
 For Ephemeris to import a populated release slot, it needs a resolvable rich event payload.
 
-Preferred payload:
+Preferred full payload:
 
 ```text
 ReconciledProjectionEventSet
@@ -287,28 +288,40 @@ ReconciledProjectionEventSet
 
 because that is the rich event shape Ephemeris already ingests.
 
-A consumer-ready artifact therefore needs either:
+A release may also expose an explicitly versioned post-reconciliation compact payload when its semantics are pinned.
+
+Current accepted compact bootstrap payload:
+
+```text
+CompactReconciledEventIndex
+```
+
+This object is acceptable for recovered shards because it is explicitly post-reconciliation and retains stable reconciled-event/event/assertion/provenance identity plus temporal/display fields. Its own semantics state that the full normalized snapshot remains authoritative.
+
+A consumer-ready artifact therefore needs one of:
 
 1. `reconciled_event_set_path` plus integrity hash; or
-2. another explicitly versioned rich event-payload path whose semantics are sufficient to reconstruct the same canonical event state without guessing.
+2. `event_index_path` plus integrity hash when the object kind is the accepted `CompactReconciledEventIndex`; or
+3. another explicitly versioned post-reconciliation rich payload whose semantics are sufficient to reconstruct local canonical event state without guessing.
 
-CalendarSet alone is insufficient because it contains event references and membership, not the complete event objects.
+CalendarSet alone is insufficient because it contains event references and membership, not complete event payload.
 
-### Current bootstrap gap
+### Current bootstrap payload posture
 
-The current bootstrap manifest exposes normalized-snapshot and CalendarSet paths, but not reconciled-event-set paths.
+Bootstrap r3 is mixed:
 
-Therefore:
+- recovered U.S. Politics exposes a pinned `CompactReconciledEventIndex`;
+- recovered U.S. Holidays exposes a pinned `CompactReconciledEventIndex`;
+- the 2027 European elections specimen shard does not expose a rich reconciled payload path in the release manifest;
+- the 2026 U.S. pro sports specimen shard does not expose a rich reconciled payload path in the release manifest.
 
-- the bootstrap release is valid for packaging/channel integration;
-- its coverage and CalendarSet structure are consumer-visible now;
-- **the current Ephemeris reconciled-event-set importer cannot yet ingest the bootstrap release end-to-end from the manifest alone**.
+Therefore **the current Ephemeris importer still cannot adopt bootstrap r3 end-to-end from the release manifest alone**, but two of its four populated shards now have a defined compact post-reconciliation payload path.
 
-This is a producer/consumer contract gap, not a reason to flatten through ICS.
+Ephemeris should add a `CompactReconciledEventIndex` adapter rather than re-run Resourcearium reconciliation.
 
-The preferred upstream fix is to expose the reconciled-event-set path/hash for each populated bootstrap shard, matching the production artifact contract.
+For remaining bootstrap shards, the preferred upstream convergence is to expose a reconciled-event-set path/hash (or another explicitly versioned accepted reconciled payload) in the manifest.
 
-An alternative future Ephemeris normalized-snapshot importer is possible, but it must not duplicate Resourcearium reconciliation logic.
+ICS remains an unacceptable workaround.
 
 ## 10. Partial coverage semantics
 
@@ -461,23 +474,40 @@ Other composite/family-mediated/surface/local/non-RICS inputs can be layered int
 
 ## 18. Current bootstrap release
 
-At the time this contract was established, Taria exposes:
+The current bootstrap channel points to:
 
 ```text
-temporal-bundle-release:bootstrap:2026-10-04
+temporal-bundle-release:bootstrap:2026-10-04:r3
 ```
 
 It is:
 
 - `bootstrap-partial`;
 - consumer-safe for integration testing;
-- 48 ready events;
-- 15 represented Resource identities;
-- 2 partially populated canonical bundle slots;
-- 10 pending canonical bundle slots;
+- **1,114 ready events**;
+- 15 represented canonical Resource identities;
+- 2 typed recovered ingestion profiles;
+- 196 recovered source surfaces;
+- **3** partially populated canonical bundle slots;
+- **9** pending canonical bundle slots;
 - explicitly not production-complete.
 
-Ephemeris must preserve that posture if/when it imports the release.
+Current populated shards:
+
+- U.S. Politics recovery: 1,038 ready events;
+- 2027 European national elections: 11 ready events;
+- 2026 U.S. pro sports excluding hockey: 37 ready events;
+- U.S. Holidays recovery: 28 ready events.
+
+Current domain totals:
+
+- Politics & Government: 1,049;
+- Sports & Competition: 37;
+- Holidays & Observances: 28.
+
+The recovered Politics/Holidays shards are downstream-derived recovered state, not fresh upstream publisher observations, and Ephemeris must preserve that data posture.
+
+Ephemeris must preserve the release's partial posture if/when it imports it.
 
 ## 19. Immediate Ephemeris implementation target
 
