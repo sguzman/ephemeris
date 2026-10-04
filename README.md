@@ -41,8 +41,9 @@ Implemented:
 - Grid and Agenda as independent layouts
 - source visibility controls
 - text, domain, jurisdiction, and lifecycle-status filtering
+- independent grouping, stable multi-key sorting, and semantic coloring
 - durable named saved views stored in SQLite
-- saved views that retain query, source visibility, date range, layout, timezone, and week-start behavior
+- saved views that retain query, source visibility, date range, layout, grouping, sort rules, color strategy, timezone, and week-start behavior
 - event inspector with Taria identity/provenance details
 - separate unplaced/conflicted event surface
 - native persisted transient UI state
