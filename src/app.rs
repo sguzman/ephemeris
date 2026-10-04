@@ -11,9 +11,10 @@ use crate::calendar::{
 };
 use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
 use crate::query::{
-    ColorBy, ColorRule, GroupBy, IntegerField, IntegerOperator, Overlay, PresenceField,
-    QueryContext, QueryExpr, QueryPredicate, RgbColor, SavedView, SortDirection, SortField,
-    SortRule, TemporalKind, TextField, TextOperator, matches_composed_or_overlay,
+    ColorBy, ColorRule, EventMembership, GroupBy, IntegerField, IntegerOperator, Overlay,
+    PresenceField, QueryContext, QueryExpr, QueryPredicate, RgbColor, SavedView, SortDirection,
+    SortField, SortRule, TemporalKind, TextField, TextOperator,
+    matches_composed_or_overlay_with_membership,
 };
 use crate::state::PersistedUiState;
 use crate::store::TemporalStore;
@@ -29,6 +30,7 @@ pub struct EphemerisApp {
     events: Vec<TemporalEvent>,
     unplaced_events: Vec<TemporalEvent>,
     sources: Vec<TemporalSource>,
+    taria_memberships: HashMap<Uuid, EventMembership>,
     last_message: Option<String>,
     last_error: Option<String>,
     dirty_state: bool,
@@ -63,6 +65,7 @@ impl EphemerisApp {
             events: Vec::new(),
             unplaced_events: Vec::new(),
             sources: Vec::new(),
+            taria_memberships: HashMap::new(),
             last_message: None,
             last_error: None,
             dirty_state: false,
@@ -253,6 +256,9 @@ impl EphemerisApp {
         }
         self.unplaced_events = self.store.unplaced_events()?;
         self.sources = self.store.list_sources()?;
+        self.taria_memberships = self
+            .store
+            .taria_event_memberships_for_release(self.state.taria_last_release_id.as_deref())?;
         Ok(())
     }
 
@@ -403,12 +409,13 @@ impl EphemerisApp {
                 event
                     .source_id
                     .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-                    && matches_composed_or_overlay(
+                    && matches_composed_or_overlay_with_membership(
                         &query,
                         &self.state.composition_layers,
                         &self.state.overlays,
                         event,
                         &context,
+                        self.taria_memberships.get(&event.id),
                     )
             })
             .cloned()
@@ -427,12 +434,13 @@ impl EphemerisApp {
                 event
                     .source_id
                     .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-                    && matches_composed_or_overlay(
+                    && matches_composed_or_overlay_with_membership(
                         &query,
                         &self.state.composition_layers,
                         &self.state.overlays,
                         event,
                         &context,
+                        self.taria_memberships.get(&event.id),
                     )
             })
             .cloned()
@@ -1262,6 +1270,7 @@ impl eframe::App for EphemerisApp {
                                     fallback: self.state.color_by,
                                     rules: &self.state.color_rules,
                                     overlays: &self.state.overlays,
+                                    memberships: &self.taria_memberships,
                                     query_context: QueryContext::for_timezone(timezone),
                                 },
                             },
@@ -1396,10 +1405,12 @@ enum QueryPredicateKind {
     TemporalKindAnyOf,
     DateOverlaps,
     RelativeDateOverlaps,
+    BundleMembership,
+    ProjectedCalendarMembership,
 }
 
 impl QueryPredicateKind {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 10] = [
         Self::Text,
         Self::TextAnyOf,
         Self::StatusAnyOf,
@@ -1408,6 +1419,8 @@ impl QueryPredicateKind {
         Self::TemporalKindAnyOf,
         Self::DateOverlaps,
         Self::RelativeDateOverlaps,
+        Self::BundleMembership,
+        Self::ProjectedCalendarMembership,
     ];
 
     const fn label(self) -> &'static str {
@@ -1420,6 +1433,8 @@ impl QueryPredicateKind {
             Self::TemporalKindAnyOf => "Time kind set",
             Self::DateOverlaps => "Date overlap",
             Self::RelativeDateOverlaps => "Relative date window",
+            Self::BundleMembership => "Taria bundle membership",
+            Self::ProjectedCalendarMembership => "Taria projected calendar membership",
         }
     }
 }
@@ -1491,6 +1506,14 @@ fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
             end_offset_days_exclusive: 31,
             include_imprecise: false,
         },
+        QueryPredicateKind::BundleMembership => QueryPredicate::BundleMembership {
+            bundle_ref: String::new(),
+        },
+        QueryPredicateKind::ProjectedCalendarMembership => {
+            QueryPredicate::ProjectedCalendarMembership {
+                calendar_id: String::new(),
+            }
+        }
     }
 }
 
@@ -1504,6 +1527,10 @@ fn query_predicate_kind(predicate: &QueryPredicate) -> QueryPredicateKind {
         QueryPredicate::TemporalKindAnyOf { .. } => QueryPredicateKind::TemporalKindAnyOf,
         QueryPredicate::DateOverlaps { .. } => QueryPredicateKind::DateOverlaps,
         QueryPredicate::RelativeDateOverlaps { .. } => QueryPredicateKind::RelativeDateOverlaps,
+        QueryPredicate::BundleMembership { .. } => QueryPredicateKind::BundleMembership,
+        QueryPredicate::ProjectedCalendarMembership { .. } => {
+            QueryPredicateKind::ProjectedCalendarMembership
+        }
     }
 }
 
@@ -1813,6 +1840,24 @@ fn render_query_predicate_editor(
                 )
                 .changed();
         }
+        QueryPredicate::BundleMembership { bundle_ref } => {
+            ui.small("Matches current adopted-release membership; this does not change event ownership.");
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(bundle_ref)
+                        .hint_text("bundle:temporal/politics-government"),
+                )
+                .changed();
+        }
+        QueryPredicate::ProjectedCalendarMembership { calendar_id } => {
+            ui.small("Matches a stable Resourcearium projected calendar ID in the current adopted release.");
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(calendar_id)
+                        .hint_text("projected-calendar:..."),
+                )
+                .changed();
+        }
     }
 
     changed
@@ -1895,6 +1940,7 @@ struct ColorPresentation<'a> {
     fallback: ColorBy,
     rules: &'a [ColorRule],
     overlays: &'a [Overlay],
+    memberships: &'a HashMap<Uuid, EventMembership>,
     query_context: QueryContext,
 }
 
@@ -2270,26 +2316,22 @@ fn date_group_label(event: &TemporalEvent, timezone: Tz) -> String {
 }
 
 fn event_color(event: &TemporalEvent, colors: ColorPresentation<'_>) -> Color32 {
-    if let Some(overlay) = colors
-        .overlays
-        .iter()
-        .find(|overlay| overlay.matches(event, &colors.query_context))
-    {
-        if let Some(rule) = overlay
-            .color_rules
-            .iter()
-            .find(|rule| rule.matches(event, &colors.query_context))
-        {
+    let membership = colors.memberships.get(&event.id);
+
+    if let Some(overlay) = colors.overlays.iter().find(|overlay| {
+        overlay.matches_with_membership(event, &colors.query_context, membership)
+    }) {
+        if let Some(rule) = overlay.color_rules.iter().find(|rule| {
+            rule.matches_with_membership(event, &colors.query_context, membership)
+        }) {
             return rgb_color(rule.color);
         }
         return semantic_color(event, overlay.color_by);
     }
 
-    if let Some(rule) = colors
-        .rules
-        .iter()
-        .find(|rule| rule.matches(event, &colors.query_context))
-    {
+    if let Some(rule) = colors.rules.iter().find(|rule| {
+        rule.matches_with_membership(event, &colors.query_context, membership)
+    }) {
         return rgb_color(rule.color);
     }
 
