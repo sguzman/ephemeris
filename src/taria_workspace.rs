@@ -546,8 +546,8 @@ fn validate_declared_integrity(
 
     let actual = match mode {
         IntegrityMode::FileSha256 => {
-            let bytes =
-                std::fs::read(path).with_context(|| format!("failed to hash {}", path.display()))?;
+            let bytes = std::fs::read(path)
+                .with_context(|| format!("failed to hash {}", path.display()))?;
             format!("{:x}", Sha256::digest(bytes))
         }
         IntegrityMode::ContentFingerprint => {
