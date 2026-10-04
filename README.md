@@ -58,15 +58,20 @@ Implemented:
 - persisted local Resourcearium root and release channel
 - automatic local/sibling Taria checkout detection
 - one-click **Update Taria Sources** from local release manifests
-- local artifact SHA-256 validation
-- repeatable Taria re-import using stable source-record identity
+- Resourcearium-compatible integrity validation: bootstrap content fingerprints and production file SHA-256
+- immutable Taria release metadata in SQLite
+- immutable CalendarSet storage plus release-to-CalendarSet associations
+- CalendarSet projected-calendar and event-membership persistence
+- many-to-one upstream identity aliases across overlapping Taria projections
+- production `bundle_artifacts[]` adoption with cross-bundle canonical-event deduplication
+- repeatable Taria re-import using stable source-record and upstream event identity
 - transactional source import reconciliation
 - created / updated / unchanged / retained-missing accounting
 - drag-and-drop Taria JSON import in the GUI
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation milestone at 2026-10-04 passes the full CI gate: format, compile, strict Clippy, and **43 library tests**.
+The verified implementation milestone at 2026-10-04 passes the full CI gate at `41738386168f3ae9d3d803fee0dd1d925a59cfd8`: format, compile, strict Clippy, and **47 library tests**.
 
 ## Product boundary
 
@@ -151,7 +156,9 @@ Important contract rules:
 - partial/pending/gap-only coverage must remain visible and must not be interpreted as an empty world.
 - ICS/JSCalendar/jCal/CSV are downstream projections, not the canonical interchange.
 
-The current bootstrap channel is `temporal-bundle-release:bootstrap:2026-10-04:r3`: 1,114 ready events across Politics, Sports, and Holidays while nine canonical domain slots remain pending. Ephemeris can now resolve that channel directly from a local Resourcearium checkout and import the recovered Politics/Holidays `CompactReconciledEventIndex` shards with hash validation. Elections/Sports are reported as skipped because their release shards still lack an accepted reconciled payload path. Production bundle artifacts are recognized but intentionally not imported yet until release-level cross-bundle deduplication and CalendarSet membership persistence are materialized.
+The current bootstrap channel is `temporal-bundle-release:bootstrap:2026-10-04:r4`: 1,114 ready events across Politics, Sports, and Holidays while nine canonical domain slots remain pending. All four populated bootstrap shards now expose accepted post-reconciliation payloads: compact reconciled indexes for recovered Politics/Holidays and full ReconciledProjectionEventSets for Elections/Sports. Ephemeris can resolve and ingest that mixed release shape directly from the local Resourcearium checkout while also persisting CalendarSet membership.
+
+Production `bundle_artifacts[]` adoption is implemented and regression-tested with overlapping Politics/Finance projections: stable upstream identities converge on one canonical local event while bundle/calendar memberships remain separate. The live Resourcearium production channel is still unset, so this path is implemented and tested but not yet exercised against a live production release.
 
 See:
 
