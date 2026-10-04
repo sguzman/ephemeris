@@ -11,9 +11,9 @@ use crate::calendar::{
 };
 use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
 use crate::query::{
-    ColorBy, ColorRule, GroupBy, IntegerField, IntegerOperator, PresenceField, QueryContext,
-    QueryExpr, QueryPredicate, RgbColor, SavedView, SortDirection, SortField, SortRule,
-    TemporalKind, TextField, TextOperator,
+    ColorBy, ColorRule, GroupBy, IntegerField, IntegerOperator, Overlay, PresenceField,
+    QueryContext, QueryExpr, QueryPredicate, RgbColor, SavedView, SortDirection, SortField,
+    SortRule, TemporalKind, TextField, TextOperator, matches_base_or_overlay,
 };
 use crate::state::PersistedUiState;
 use crate::store::TemporalStore;
@@ -273,7 +273,7 @@ impl EphemerisApp {
                 event
                     .source_id
                     .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-                    && query.matches(event, &context)
+                    && matches_base_or_overlay(&query, &self.state.overlays, event, &context)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -291,7 +291,7 @@ impl EphemerisApp {
                 event
                     .source_id
                     .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-                    && query.matches(event, &context)
+                    && matches_base_or_overlay(&query, &self.state.overlays, event, &context)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -852,6 +852,7 @@ impl EphemerisApp {
                                 ColorPresentation {
                                     fallback: self.state.color_by,
                                     rules: &self.state.color_rules,
+                                    overlays: &self.state.overlays,
                                     query_context: QueryContext::for_timezone(self.timezone()),
                                 },
                             )),
@@ -1070,6 +1071,7 @@ impl eframe::App for EphemerisApp {
                                 colors: ColorPresentation {
                                     fallback: self.state.color_by,
                                     rules: &self.state.color_rules,
+                                    overlays: &self.state.overlays,
                                     query_context: QueryContext::for_timezone(timezone),
                                 },
                             },
@@ -1620,6 +1622,7 @@ struct CalendarRenderContext<'a> {
 struct ColorPresentation<'a> {
     fallback: ColorBy,
     rules: &'a [ColorRule],
+    overlays: &'a [Overlay],
     query_context: QueryContext,
 }
 
@@ -1995,15 +1998,38 @@ fn date_group_label(event: &TemporalEvent, timezone: Tz) -> String {
 }
 
 fn event_color(event: &TemporalEvent, colors: ColorPresentation<'_>) -> Color32 {
+    if let Some(overlay) = colors
+        .overlays
+        .iter()
+        .find(|overlay| overlay.matches(event, &colors.query_context))
+    {
+        if let Some(rule) = overlay
+            .color_rules
+            .iter()
+            .find(|rule| rule.matches(event, &colors.query_context))
+        {
+            return rgb_color(rule.color);
+        }
+        return semantic_color(event, overlay.color_by);
+    }
+
     if let Some(rule) = colors
         .rules
         .iter()
         .find(|rule| rule.matches(event, &colors.query_context))
     {
-        return Color32::from_rgb(rule.color.r, rule.color.g, rule.color.b);
+        return rgb_color(rule.color);
     }
 
-    match colors.fallback {
+    semantic_color(event, colors.fallback)
+}
+
+fn rgb_color(color: RgbColor) -> Color32 {
+    Color32::from_rgb(color.r, color.g, color.b)
+}
+
+fn semantic_color(event: &TemporalEvent, color_by: ColorBy) -> Color32 {
+    match color_by {
         ColorBy::None => Color32::WHITE,
         ColorBy::Status => status_color(event.status),
         ColorBy::Source => category_color(event_source_key(event).as_deref()),
