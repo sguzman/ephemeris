@@ -2187,6 +2187,44 @@ mod tests {
     }
 
     #[test]
+    fn direct_source_import_reconciliation_survives_taria_import_mapping_schema() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let source = TemporalSource::new("ICS fixture", SourceKind::Ics, SourceAuthority::Official);
+        let day = NaiveDate::from_ymd_opt(2026, 10, 4).expect("date");
+
+        let mut first = TemporalEvent::new(
+            "First",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        first.source_record_key = Some("uid-1".to_string());
+
+        let mut second = TemporalEvent::new(
+            "Second",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        second.source_record_key = Some("uid-2".to_string());
+
+        let first_result = store
+            .import_batch(&source, &mut [first.clone(), second.clone()])
+            .expect("first import");
+        assert_eq!(first_result.created, 2);
+        assert_eq!(first_result.retained_missing, 0);
+
+        let second_result = store
+            .import_batch(&source, &mut [first])
+            .expect("second import");
+        assert_eq!(second_result.created, 0);
+        assert_eq!(second_result.unchanged, 1);
+        assert_eq!(second_result.retained_missing, 1);
+    }
+
+    #[test]
     fn saved_view_roundtrips_through_database() {
         use crate::calendar::CalendarView;
         use crate::query::{
