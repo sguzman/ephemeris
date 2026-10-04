@@ -11,7 +11,7 @@ use crate::calendar::CalendarLayout;
 use crate::domain::{
     EventStatus, SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
 };
-use crate::query::SavedView;
+use crate::query::{EventMembership, SavedView};
 
 const SCHEMA_VERSION: i64 = 9;
 
@@ -778,6 +778,42 @@ impl TemporalStore {
             .query_row("SELECT COUNT(*) FROM taria_releases", [], |row| row.get(0))
             .context("failed to count Taria releases")?;
         u64::try_from(count).context("Taria release count cannot be represented as u64")
+    }
+
+    pub fn taria_event_memberships_for_release(
+        &self,
+        release_id: Option<&str>,
+    ) -> anyhow::Result<std::collections::HashMap<Uuid, EventMembership>> {
+        let Some(release_id) = release_id else {
+            return Ok(std::collections::HashMap::new());
+        };
+
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT membership.event_id, release_set.bundle_ref, membership.calendar_id
+            FROM taria_calendar_memberships AS membership
+            JOIN taria_release_calendar_sets AS release_set
+              ON release_set.calendar_set_id = membership.calendar_set_id
+            WHERE release_set.release_id = ?1
+              AND membership.event_id IS NOT NULL
+            ORDER BY membership.event_id, release_set.bundle_ref, membership.calendar_id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![release_id])?;
+        let mut memberships = std::collections::HashMap::<Uuid, EventMembership>::new();
+
+        while let Some(row) = rows.next()? {
+            let event_id_raw: String = row.get(0)?;
+            let event_id = Uuid::parse_str(&event_id_raw)
+                .with_context(|| format!("invalid Taria membership event UUID {event_id_raw}"))?;
+            let bundle_ref: String = row.get(1)?;
+            let calendar_id: String = row.get(2)?;
+            let membership = memberships.entry(event_id).or_default();
+            membership.bundle_refs.insert(bundle_ref);
+            membership.calendar_refs.insert(calendar_id);
+        }
+
+        Ok(memberships)
     }
 
     pub fn taria_calendar_membership_count(&self) -> anyhow::Result<u64> {
@@ -2203,6 +2239,81 @@ mod tests {
         assert!(columns.contains(&"color_rules_json".to_string()));
         assert!(columns.contains(&"overlays_json".to_string()));
         assert!(columns.contains(&"composition_layers_json".to_string()));
+    }
+
+    #[test]
+    fn release_membership_index_keeps_bundle_and_calendar_context_external_to_event() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let source = TemporalSource::new("Taria", SourceKind::Taria, SourceAuthority::Derived);
+        let mut event = TemporalEvent::new(
+            "Membership event",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 4).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        event.source_id = Some(source.id);
+        event.source_record_key = Some("record:membership".to_string());
+        event.upstream_event_ref = Some("event:membership".to_string());
+        event.upstream_reconciled_key = Some("reconciled-event:membership".to_string());
+        store
+            .import_taria_batch(&source, std::slice::from_mut(&mut event))
+            .expect("event import");
+
+        store
+            .upsert_taria_release(&TariaReleaseRecord {
+                release_id: "release:test".to_string(),
+                channel: "bootstrap".to_string(),
+                status: "bootstrap-partial".to_string(),
+                production_complete: false,
+                manifest_path: "manifest.json".to_string(),
+                manifest_sha256: "abc".to_string(),
+                generated_at: None,
+                coverage_json: "{}".to_string(),
+                manifest_json: "{}".to_string(),
+            })
+            .expect("release");
+
+        store
+            .replace_taria_calendar_set(
+                &TariaCalendarSetRecord {
+                    calendar_set_id: "calendar-set:test".to_string(),
+                    release_id: "release:test".to_string(),
+                    bundle_ref: "bundle:temporal/politics-government".to_string(),
+                    projection_ref: "projection:test".to_string(),
+                    input_reconciled_event_set_ref: "reconciled-set:test".to_string(),
+                    source_path: "calendar-set.json".to_string(),
+                    content_sha256: "def".to_string(),
+                    raw_json: "{}".to_string(),
+                },
+                &[TariaProjectedCalendarRecord {
+                    calendar_id: "projected-calendar:test".to_string(),
+                    name: "Test".to_string(),
+                    kind: "single".to_string(),
+                    metadata_json: "{}".to_string(),
+                }],
+                &[TariaCalendarMembershipRecord {
+                    reconciled_event_ref: "reconciled-event:membership".to_string(),
+                    calendar_ref: "projected-calendar:test".to_string(),
+                }],
+            )
+            .expect("calendar set");
+
+        let memberships = store
+            .taria_event_memberships_for_release(Some("release:test"))
+            .expect("membership index");
+        let membership = memberships.get(&event.id).expect("event membership");
+        assert!(
+            membership
+                .bundle_refs
+                .contains("bundle:temporal/politics-government")
+        );
+        assert!(
+            membership
+                .calendar_refs
+                .contains("projected-calendar:test")
+        );
+        assert!(event.domain.is_none());
     }
 
     #[test]
