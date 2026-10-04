@@ -4,167 +4,281 @@
 
 Taria and Ephemeris solve different problems.
 
-- **Taria** owns knowledge acquisition, source/resource curation, ontology, provenance, projections, and temporal-resource generation.
-- **Ephemeris** owns interactive local temporal exploration, visualization, querying, inspection, annotations, and personal calendar behavior.
+- **Taria** owns knowledge acquisition, Resourcearium source curation, source evidence, temporal assertions, identity/revision reasoning, frozen normalized snapshots, reconciliation, projections, CalendarSets, rollover, and rendered/export artifacts.
+- **Ephemeris** owns interactive local temporal exploration, visualization, querying, inspection, annotations, saved views, overlays, and ordinary personal calendar behavior.
 
-Ephemeris should consume rich Taria temporal resources without forcing Taria to imitate a desktop calendar database.
+Ephemeris consumes Taria's rich temporal state. It must not force Taria to imitate a desktop calendar database, and it must not flatten Taria into ICS before ingestion.
 
-## Native interchange goal
+## Existing Taria contracts
 
-The preferred long-term integration is a versioned Taria temporal interchange format.
+The integration is no longer speculative. Resourcearium already defines the temporal contracts Ephemeris needs.
 
-It should carry enough information to preserve:
+The important upstream contracts include:
 
-- stable event identifiers
-- stable source identifiers
-- normalized title
-- raw/source title
-- descriptions
-- event type
-- domain
-- geography
-- jurisdiction
-- institution
-- participants
-- lifecycle status
-- confidence
-- importance/relevance when appropriate
-- canonical instant/local time/all-day semantics
-- source timezone
-- recurrence
-- relations
-- collections/sequences
-- source authority and source kind
-- provenance
-- snapshot membership
-- source record identifiers
-- extensible properties
+- `temporal-event-assertion-schema.yml`
+- `temporal-source-time-interpretation-schema.yml`
+- `temporal-event-identity-revision-schema.yml`
+- `temporal-normalized-event-snapshot-schema.yml`
+- `temporal-calendar-projection-schema.yml`
+- `temporal-calendar-set-schema.yml`
+- `temporal-bundle-projection-ontology.yml`
 
-## What must not happen
+Ephemeris should align with those contracts rather than invent a competing temporal ontology.
 
-Do not reduce Taria-native data to:
+## Upstream lifecycle
+
+Taria's accepted staged projection lifecycle is:
 
 ```text
-title
-start
-end
-color
+CalendarProjectionSpec
+    -> SourceResolutionSet
+    -> AcquisitionSnapshotSet
+    -> NormalizedEventSnapshot
+    -> ProjectionEventSet
+    -> ReconciledProjectionEventSet
+    -> CalendarSet
+    -> RenderedCalendarArtifact
 ```
 
-before Ephemeris sees it.
+Ephemeris is primarily a **consumer after normalization/reconciliation**, before lossy rendering.
 
-ICS may be an excellent external interchange format for conventional calendar clients, but it is not the canonical Taria → Ephemeris data contract.
+The initial integration boundary should therefore be a frozen/reconciled JSON artifact, not an ICS rendering.
+
+## Initial consumer boundary
+
+The first implementation target is:
+
+**ReconciledProjectionEventSet + its source/provenance context**
+
+This is a better application boundary than raw TemporalEventAssertions because Taria has already done identity grouping and conflict handling.
+
+A reconciled event can provide:
+
+- `reconciled_event_key`
+- `event_ref`
+- assertion references
+- source references
+- source contexts/facets
+- retained provenance references
+- renderability state
+- resolved display fields
+- field-resolution decisions
+
+Ephemeris must preserve these upstream references even when it maps them into local indexed fields.
+
+## CalendarSet boundary
+
+A Taria `CalendarSet` is useful as imported organizational/view metadata.
+
+Its semantics explicitly match Ephemeris:
+
+- calendar membership is not event identity
+- the same event may belong to multiple calendars
+- partitioning does not clone events
+- hierarchy is logical, not an ICS-folder constraint
+- merged and partitioned calendars may coexist
+- unresolved/blocked/undated events remain accounted for
+
+Therefore Ephemeris should import CalendarSet membership as **view/grouping metadata**, never by duplicating events.
+
+## Bundle boundary
+
+Taria's canonical temporal bundle ontology currently includes:
+
+- Temporal Everything
+- Politics & Government
+- Economics & Public Statistics
+- Finance & Markets
+- Business & Corporate
+- Sports & Competition
+- Culture & Media
+- Science, Technology & Space
+- Public Health
+- Environment & Weather
+- Transportation & Civic Infrastructure
+- Holidays & Observances
+- Education & Academia
+- Temporal Unclassified
+- Temporal Projection Gaps
+
+Domain membership is explicitly nonexclusive and orthogonal to geography.
+
+Runtime views are consumer-owned. Taria explicitly allows consumers to:
+
+- filter
+- group
+- sort
+- color
+- search
+- overlay
+- facet
+- annotate
+- save views
+
+A runtime view does not rebuild the upstream source pipeline. This is exactly the Ephemeris programmable-view model.
+
+## Identity
+
+Taria explicitly separates:
+
+- assertion identity
+- event identity
+- occurrence identity
+- series identity
+- event-version identity
+
+Ephemeris must preserve that distinction.
+
+A stable event ID does not imply immutable title, time, or status.
+
+A changed time alone does not prove a new event.
+
+A cancellation does not delete event identity.
+
+Unresolved continuity must remain unresolved rather than being forced.
+
+### Local identity
+
+Ephemeris may use an internal UUID as a database primary key, but it must also preserve upstream Taria identity strings such as:
+
+- `event_ref`
+- `reconciled_event_key`
+- assertion refs
+- occurrence refs
+- series refs
+- version refs
+
+The internal UUID must never replace or erase those identifiers.
+
+## Temporal precision
+
+Taria's source-facing temporal contract distinguishes:
+
+### Value kinds
+
+- instant
+- local-datetime
+- date-only
+- all-day-date
+- interval
+- unknown
+
+### Clock bases
+
+- UTC
+- explicit offset
+- named timezone
+- jurisdiction local
+- venue local
+- floating local
+- timezone unknown
+- not applicable
+
+### Precision
+
+- second
+- minute
+- hour
+- date
+- multi-day
+- unknown
+
+Critical upstream rules include:
+
+- all-day date is not a midnight instant
+- date-only is not automatically all-day
+- timezone-unknown must not be guessed
+- floating-local is not timezone-unknown
+- normalization must preserve the original published value
+- timezone inference must record its evidence
+- ingestion-default timezone is provenance, not a source assertion
+
+Ephemeris must retain those distinctions.
+
+## Broader projection precision
+
+Taria projection fixtures also contain intentionally imprecise future timing such as:
+
+- year-only
+- month-only
+
+Ephemeris must not invent a day merely to place these events on a conventional grid.
+
+The local model therefore needs explicit support for imprecise temporal values and undated/unrenderable temporal records.
+
+## Renderability
+
+A reconciled Taria event can be:
+
+- ready
+- blocked by temporal conflict
+- blocked by operative-status conflict
+- blocked by multiple conflicts
+- undated
+
+Blocked and undated events must remain locally inspectable/accounted for.
+
+They must not be silently dropped and must not be coerced to arbitrary dates.
+
+## Provenance
+
+Taria provenance includes source/resource lineage, captures, transformations, assertion refs, snapshot refs, and evidence classes.
+
+For a Taria event, Ephemeris should eventually be able to answer:
+
+- Which canonical event is this?
+- Which assertions support it?
+- Which resources/surfaces support those assertions?
+- Which provenance traces were retained?
+- Which snapshot produced this state?
+- Which reconciliation decisions resolved conflicting fields?
+- Was the evidence direct, derived, historical, or otherwise classified?
+- Was the source official/first-party/secondary/etc.?
 
 ## Import ownership
 
-Taria-supplied events are normally source-owned or projection-owned.
+Taria-supplied event state is upstream-owned.
 
-Ephemeris may attach user-owned annotations without mutating the original Taria assertion.
+Ephemeris may layer user-owned data such as:
 
-Examples:
-
-- watched
+- watched state
 - personal relevance
 - notes
 - reminder rules
 - local tags
 - suppression
-- custom display classification
+- display classification
+- saved-view membership/rules
 
-These must survive a Taria refresh.
+A Taria refresh must not destroy local annotations.
 
-## Projection identity
+## Snapshots
 
-Taria projections should provide stable keys so refresh can distinguish:
+Taria's `NormalizedEventSnapshot` is a frozen state, not a fresh observation merely because it was materialized later.
 
-- unchanged record
-- changed record
-- moved event
-- deleted/superseded source record
-- newly added record
+Ephemeris must preserve the difference between:
 
-Where stable source identity is impossible, the adapter should expose confidence and matching diagnostics rather than pretend identity is certain.
+- source observation time
+- acquisition time
+- snapshot creation time
+- local import time
 
-## Snapshot integration
+This enables reliable history and diffing.
 
-If Taria provides snapshot identity, Ephemeris should preserve it.
+## Refresh
 
-That enables:
+The preferred first workflow is deterministic local import of a Taria-produced frozen/reconciled JSON artifact.
 
-- as-of views
-- diff between snapshots
-- source change history
-- event lifecycle reconstruction
+Later integrations may automate discovery of new Taria snapshots, but Ephemeris rendering and querying must never depend on live GitHub/Taria access.
 
-## Resourcearium/source metadata
+## Rendered artifacts
 
-Temporal resources may include source-health information such as:
+ICS, JSCalendar, jCal, CSV, and remote calendar targets are downstream projections.
 
-- last successful retrieval
-- expected refresh cadence
-- endpoint stability
-- rollover behavior
-- source authority
-- native machine-readable vs generated projection
+They are not the canonical Taria -> Ephemeris interchange layer.
 
-Ephemeris should be designed to surface this metadata rather than flatten it away.
+## Rollover and source health
 
-## Rollover
+Taria already owns rich rollover/source-health semantics.
 
-Some temporal sources are continuous; others are year/edition specific.
-
-Taria may own discovery/rebuilding of replacement sources.
-
-Ephemeris should be able to display source state such as:
-
-- current
-- stale
-- rollover required
-- replacement discovered
-- projection rebuild required
-- failed
-
-## Local handoff
-
-The first integration should prefer a deterministic local handoff over live service coupling.
-
-Potential forms:
-
-- versioned JSON bundle
-- SQLite export/import
-- structured directory snapshot
-- another explicit versioned artifact
-
-The first implementation should prioritize:
-
-- inspectability
-- deterministic tests
-- offline operation
-- stable IDs
-- schema versioning
-
-Live IPC/service integration can be added later if it solves a real workflow problem.
-
-## Contract versioning
-
-Every native interchange artifact should declare:
-
-- schema version
-- producer version where useful
-- generation timestamp
-- snapshot identity where applicable
-
-Unknown mandatory fields or incompatible versions should fail loudly rather than silently discard semantics.
-
-## Provenance display
-
-For any Taria event, the inspector should eventually be able to answer:
-
-- Where did this come from?
-- Who published it?
-- Was the source official?
-- Was it a native calendar or generated projection?
-- When was it acquired?
-- Which snapshot contains it?
-- What normalization transformed it?
-- What source record supports it?
+Ephemeris should consume and display that state rather than implementing a competing source-discovery system unless a future workflow explicitly requires it.
