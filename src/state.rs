@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::calendar::{CalendarLayout, CalendarView};
 use crate::domain::EventStatus;
-use crate::query::{ColorBy, EventQuery, GroupBy, QueryExpr, SavedView, SortRule};
+use crate::query::{ColorBy, ColorRule, EventQuery, GroupBy, QueryExpr, SavedView, SortRule};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedUiState {
@@ -39,6 +39,8 @@ pub struct PersistedUiState {
     pub sort_rules: Vec<SortRule>,
     #[serde(default)]
     pub color_by: ColorBy,
+    #[serde(default)]
+    pub color_rules: Vec<ColorRule>,
     #[serde(default, rename = "saved_views", skip_serializing_if = "Vec::is_empty")]
     pub legacy_saved_views: Vec<SavedView>,
     #[serde(default)]
@@ -49,7 +51,7 @@ pub struct PersistedUiState {
 impl Default for PersistedUiState {
     fn default() -> Self {
         Self {
-            version: 5,
+            version: 6,
             calendar_view: CalendarView::Month,
             calendar_layout: CalendarLayout::Grid,
             focus_date: Local::now().date_naive().to_string(),
@@ -66,6 +68,7 @@ impl Default for PersistedUiState {
             group_by: GroupBy::Date,
             sort_rules: vec![SortRule::default()],
             color_by: ColorBy::Status,
+            color_rules: Vec::new(),
             legacy_saved_views: Vec::new(),
             active_saved_view_id: None,
             selected_event_id: None,
@@ -95,8 +98,8 @@ impl PersistedUiState {
             .with_context(|| format!("failed to read {}", path.display()))?;
         let mut state: Self = serde_json::from_str(&raw)
             .with_context(|| format!("failed to decode {}", path.display()))?;
-        if state.version < 5 {
-            state.version = 5;
+        if state.version < 6 {
+            state.version = 6;
         }
         if state.sort_rules.is_empty() {
             state.sort_rules.push(SortRule::default());
@@ -166,6 +169,7 @@ impl PersistedUiState {
             group_by: self.group_by,
             sort_rules: self.sort_rules.clone(),
             color_by: self.color_by,
+            color_rules: self.color_rules.clone(),
             display_timezone: self.display_timezone.clone(),
             week_start_monday: self.week_start_monday,
         }
@@ -182,6 +186,7 @@ impl PersistedUiState {
             self.sort_rules.push(SortRule::default());
         }
         self.color_by = view.color_by;
+        self.color_rules.clone_from(&view.color_rules);
         self.display_timezone.clone_from(&view.display_timezone);
         self.week_start_monday = view.week_start_monday;
         self.active_saved_view_id = Some(view.id);
@@ -234,6 +239,7 @@ mod tests {
         assert_eq!(loaded.domain_filter.as_deref(), Some("elections"));
         assert_eq!(loaded.group_by, GroupBy::Jurisdiction);
         assert_eq!(loaded.color_by, ColorBy::EventType);
+        assert!(loaded.color_rules.is_empty());
         assert!(loaded.query_expression.is_some());
         assert!(loaded.legacy_saved_views.is_empty());
     }
