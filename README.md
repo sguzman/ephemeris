@@ -53,6 +53,12 @@ Implemented:
 - separate unplaced/conflicted event surface
 - native persisted transient UI state
 - direct ingestion of Taria Resourcearium reconciled temporal event sets
+- direct ingestion of pinned `CompactReconciledEventIndex` recovery payloads
+- filesystem-first Taria/Resourcearium workspace integration
+- persisted local Resourcearium root and release channel
+- automatic local/sibling Taria checkout detection
+- one-click **Update Taria Sources** from local release manifests
+- local artifact SHA-256 validation
 - repeatable Taria re-import using stable source-record identity
 - transactional source import reconciliation
 - created / updated / unchanged / retained-missing accounting
@@ -145,7 +151,7 @@ Important contract rules:
 - partial/pending/gap-only coverage must remain visible and must not be interpreted as an empty world.
 - ICS/JSCalendar/jCal/CSV are downstream projections, not the canonical interchange.
 
-The current bootstrap channel is `temporal-bundle-release:bootstrap:2026-10-04:r3`: 1,114 ready events across Politics, Sports, and Holidays while nine canonical domain slots remain pending. Recovered Politics/Holidays shards now expose pinned `CompactReconciledEventIndex` payloads, but the Elections/Sports specimen shards still lack an explicit rich reconciled payload path in the release manifest. The existing Ephemeris importer therefore cannot yet consume the entire bootstrap release end-to-end from the manifest alone. Production bundle artifacts already expose full ReconciledProjectionEventSet path/hash metadata.
+The current bootstrap channel is `temporal-bundle-release:bootstrap:2026-10-04:r3`: 1,114 ready events across Politics, Sports, and Holidays while nine canonical domain slots remain pending. Ephemeris can now resolve that channel directly from a local Resourcearium checkout and import the recovered Politics/Holidays `CompactReconciledEventIndex` shards with hash validation. Elections/Sports are reported as skipped because their release shards still lack an accepted reconciled payload path. Production bundle artifacts are recognized but intentionally not imported yet until release-level cross-bundle deduplication and CalendarSet membership persistence are materialized.
 
 See:
 
@@ -162,7 +168,8 @@ Current architecture:
 - local-first storage/query/rendering
 - no Tauri
 - no React/WebView application shell
-- network access reserved for future acquisition/synchronization paths
+- Taria consumption is local-filesystem-first
+- network/GitHub release discovery is optional future convenience, never required
 
 ## Run
 
@@ -172,9 +179,15 @@ cargo run
 
 Ephemeris requires a graphical desktop session.
 
-## Import Taria temporal data
+## Import / update Taria temporal data
 
-A reconciled Resourcearium event-set JSON file can be dropped onto the running application.
+Normal operation is filesystem-first.
+
+Point Ephemeris once at either the local Taria repo or `incubator/resourcearium`. Ephemeris persists that path and the selected release channel. Then use **Update Taria Sources** from the toolbar or Sources panel.
+
+The updater reads the local release registry and referenced local artifacts directly from disk. It does not download them.
+
+A reconciled Resourcearium event-set JSON file can still be dropped onto the running application for one-off testing.
 
 The same artifact can be imported from the command line:
 
@@ -207,6 +220,7 @@ Start here:
 - [docs/QUERY_AND_VIEWS.md](docs/QUERY_AND_VIEWS.md) - filtering, saved views, overlays, grouping, sorting, and color
 - [docs/TARIA_INTEGRATION.md](docs/TARIA_INTEGRATION.md) - Taria integration semantics and release boundary
 - [docs/TARIA_BUNDLE_CONTRACT.md](docs/TARIA_BUNDLE_CONTRACT.md) - exact Taria/Resourcearium -> Ephemeris bundle consumer contract
+- [docs/TARIA_FILESYSTEM_WORKFLOW.md](docs/TARIA_FILESYSTEM_WORKFLOW.md) - local path setup and one-click Update Taria Sources workflow
 - [docs/INGESTION_AND_SYNC.md](docs/INGESTION_AND_SYNC.md) - imports, release adoption, refresh, identity, synchronization, and export
 - [docs/UX.md](docs/UX.md) - calendar surfaces, dense-data behavior, inspection, keyboard interaction
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md) - scale and latency expectations
