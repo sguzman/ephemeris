@@ -642,11 +642,7 @@ impl EphemerisApp {
                     .show_ui(ui, |ui| {
                         for direction in SortDirection::ALL {
                             presentation_changed |= ui
-                                .selectable_value(
-                                    &mut rule.direction,
-                                    direction,
-                                    direction.label(),
-                                )
+                                .selectable_value(&mut rule.direction, direction, direction.label())
                                 .changed();
                         }
                     });
@@ -1006,13 +1002,7 @@ fn render_calendar(
 
     if layout == CalendarLayout::Agenda {
         return render_agenda(
-            ui,
-            events,
-            timezone,
-            selected,
-            group_by,
-            sort_rules,
-            color_by,
+            ui, events, timezone, selected, group_by, sort_rules, color_by,
         );
     }
 
@@ -1042,9 +1032,7 @@ fn render_agenda(
 
     for event in ordered {
         let group = agenda_group_label(event, timezone, group_by);
-        if group_by != GroupBy::None
-            && previous_group.as_deref() != Some(group.as_str())
-        {
+        if group_by != GroupBy::None && previous_group.as_deref() != Some(group.as_str()) {
             if previous_group.is_some() {
                 ui.add_space(8.0);
             }
@@ -1198,8 +1186,7 @@ fn agenda_group_label(event: &TemporalEvent, timezone: Tz, group_by: GroupBy) ->
         GroupBy::Month => agenda_sort_date(event, timezone)
             .map(|date| date.format("%B %Y").to_string())
             .unwrap_or_else(|| "Unplaced / unresolved".to_string()),
-        GroupBy::Source => event_source_key(event)
-            .unwrap_or_else(|| "No source".to_string()),
+        GroupBy::Source => event_source_key(event).unwrap_or_else(|| "No source".to_string()),
         GroupBy::Domain => event
             .domain
             .clone()
