@@ -1217,33 +1217,35 @@ impl TemporalStore {
                             ));
                         }
                     } else {
-                        self.conn.execute(
-                            r#"
+                        self.conn
+                            .execute(
+                                r#"
                             INSERT INTO temporal_event_upstream_identities (
                                 identity_kind, identity_value, event_id
                             ) VALUES (?1, ?2, ?3)
                             "#,
-                            params![identity_kind, identity_value, event.id.to_string()],
-                        )
-                        .context("failed to record Taria upstream identity alias")?;
+                                params![identity_kind, identity_value, event.id.to_string()],
+                            )
+                            .context("failed to record Taria upstream identity alias")?;
                     }
                 }
 
-                self.conn.execute(
-                    r#"
+                self.conn
+                    .execute(
+                        r#"
                     INSERT INTO temporal_event_import_records (
                         source_id, source_record_key, event_id
                     ) VALUES (?1, ?2, ?3)
                     ON CONFLICT(source_id, source_record_key) DO UPDATE SET
                         event_id = excluded.event_id
                     "#,
-                    params![
-                        source.id.to_string(),
-                        source_record_key,
-                        event.id.to_string(),
-                    ],
-                )
-                .context("failed to record Taria event import identity")?;
+                        params![
+                            source.id.to_string(),
+                            source_record_key,
+                            event.id.to_string(),
+                        ],
+                    )
+                    .context("failed to record Taria event import identity")?;
             }
 
             Ok(ImportBatchResult {
