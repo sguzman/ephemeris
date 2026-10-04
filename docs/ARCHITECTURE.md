@@ -2,7 +2,23 @@
 
 ## Status
 
-This document defines the intended architecture before implementation. Specific crates, storage engines, and APIs remain subject to validation.
+This document now describes the **implemented architectural baseline plus planned extensions**.
+
+The baseline is no longer speculative:
+
+- Rust 2024
+- `eframe` / `egui`
+- bundled SQLite via `rusqlite`
+- schema migrations
+- event-native temporal storage
+- programmable saved views
+- advanced query expressions
+- Grid / Agenda / Table layouts
+- ordered color rules
+- overlays
+- direct Taria reconciled-event-set ingestion
+
+Current SQLite schema version: **7**.
 
 ## Architectural goals
 
@@ -20,7 +36,7 @@ Ephemeris must optimize for:
 - offline operation
 - selective reuse of Rivetr calendar code
 
-## Proposed layers
+## Layers
 
 ```text
 +------------------------------------------------------+
@@ -102,22 +118,29 @@ The canonical local store must support:
 
 ### Storage engine
 
-No engine is canonically selected yet.
+SQLite is the selected canonical local store, using bundled `rusqlite`.
 
-Candidates should be evaluated against:
+The current database owns:
 
-- SQLite maturity and portability
-- full-text search
-- JSON/extensible-property support
-- transaction quality
-- indexing flexibility
-- migration ergonomics
-- ability to query hundreds of thousands of records interactively
-- ease of packaging as a native desktop app
+- temporal sources;
+- canonical temporal events;
+- durable saved views.
 
-An embedded relational engine is currently a stronger conceptual fit than flat files because saved views and temporal queries will become relationally rich.
+Saved views currently embed their query/presentation state, including overlays and ordered color rules.
 
-Selecting the engine requires an ADR.
+Transient UI state remains outside canonical event storage.
+
+SQLite was selected because Ephemeris requires:
+
+- transactional imports;
+- identity constraints;
+- schema migrations;
+- indexed temporal/source/status/domain access;
+- JSON/extensible-property retention;
+- durable saved-view state;
+- portable native packaging.
+
+Future schema work will add release-adoption metadata, CalendarSet membership, provenance/history, annotations, relations, and occurrences without changing the storage-engine decision.
 
 ## Query/view engine
 
@@ -145,6 +168,14 @@ source bytes/records
     -> identity/duplicate/reconciliation stage
     -> transactional mutation
     -> provenance + snapshot records
+
+Taria is a special case because upstream normalization/reconciliation already happened:
+
+TemporalBundleRelease
+    -> validate release/artifacts
+    -> reconciled event payload adapter
+    -> CalendarSet membership adapter
+    -> transactional local adoption
 ```
 
 The original source representation or sufficient source record metadata should remain addressable when practical.
@@ -153,18 +184,37 @@ The original source representation or sufficient source record metadata should r
 
 Taria is not treated as "just another ICS source."
 
-The Taria adapter should consume a rich, versioned temporal interchange representation preserving:
+The producer/consumer contract is now versioned and documented:
 
-- identifiers
-- provenance
-- ontology
-- snapshots
-- source metadata
-- lifecycle/status
-- relations
-- custom fields
+- `docs/TARIA_BUNDLE_CONTRACT.md`
 
-The exact interchange format must be versioned and documented before coupling implementation to it.
+The preferred upstream boundary is:
+
+```text
+TemporalBundleRelease
+    -> referenced ReconciledProjectionEventSet payloads
+    -> referenced CalendarSets
+    -> Ephemeris transactional adoption
+```
+
+Taria owns acquisition, normalization, reconciliation, projections, CalendarSets, bundle coverage, and immutable release packaging.
+
+Ephemeris owns local adoption and runtime interpretation.
+
+The direct `ReconciledProjectionEventSet` importer already exists and remains the low-level event-payload adapter.
+
+The next architecture slice is a release-level adapter that:
+
+- validates release schema/status/hashes;
+- resolves bootstrap or production artifact packaging;
+- imports canonical event payload once across overlapping bundles;
+- persists CalendarSet membership separately;
+- preserves release coverage/gap posture;
+- records adopted release identity.
+
+CalendarSet is membership metadata, not event payload.
+
+ICS/JSCalendar/jCal/CSV are downstream renderings, not the canonical interchange.
 
 ## Rivetr reuse boundary
 
