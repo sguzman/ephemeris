@@ -15,7 +15,8 @@ use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
-    RgbColor, SavedView, SortDirection, SortField, SortRule, TemporalKind, TextField, TextOperator,
+    RgbColor, SavedView, SortDirection, SortField, SortRule, TableColumn, TemporalKind, TextField,
+    TextOperator,
     matches_composed_or_overlay_with_membership,
 };
 use crate::state::PersistedUiState;
@@ -1363,6 +1364,63 @@ impl EphemerisApp {
         }
 
         ui.separator();
+        ui.collapsing(
+            format!("Table columns ({})", self.state.table_columns.len()),
+            |ui| {
+                ui.small("The ordered list is the visible Table schema for this view.");
+
+                let mut remove_column = None;
+                let mut swap_column = None;
+                let column_count = self.state.table_columns.len();
+
+                for (index, column) in self.state.table_columns.iter().copied().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(column.label());
+                        if index > 0 && ui.small_button("↑").on_hover_text("Move left").clicked() {
+                            swap_column = Some((index, index - 1));
+                        }
+                        if index + 1 < column_count
+                            && ui.small_button("↓").on_hover_text("Move right").clicked()
+                        {
+                            swap_column = Some((index, index + 1));
+                        }
+                        if column_count > 1
+                            && ui.small_button("×").on_hover_text("Hide column").clicked()
+                        {
+                            remove_column = Some(index);
+                        }
+                    });
+                }
+
+                if let Some((left, right)) = swap_column {
+                    self.state.table_columns.swap(left, right);
+                    presentation_changed = true;
+                }
+                if let Some(index) = remove_column {
+                    self.state.table_columns.remove(index);
+                    presentation_changed = true;
+                }
+
+                ui.menu_button("Add column", |ui| {
+                    for column in TableColumn::ALL {
+                        if !self.state.table_columns.contains(&column)
+                            && ui.button(column.label()).clicked()
+                        {
+                            self.state.table_columns.push(column);
+                            presentation_changed = true;
+                            ui.close();
+                        }
+                    }
+                });
+
+                if ui.button("Reset default columns").clicked() {
+                    self.state.table_columns = crate::query::default_table_columns();
+                    presentation_changed = true;
+                }
+            },
+        );
+
+        ui.separator();
         ui.strong("Sort rules");
         let mut remove_sort = None;
         let can_remove_sort = self.state.sort_rules.len() > 1;
@@ -1689,6 +1747,7 @@ impl eframe::App for EphemerisApp {
                                 selected: self.state.selected_event_id,
                                 group_by: self.state.group_by,
                                 sort_rules: &self.state.sort_rules,
+                                table_columns: &self.state.table_columns,
                                 colors: ColorPresentation {
                                     fallback: self.state.color_by,
                                     rules: &self.state.color_rules,
@@ -2429,6 +2488,7 @@ struct CalendarRenderContext<'a> {
     selected: Option<Uuid>,
     group_by: GroupBy,
     sort_rules: &'a [SortRule],
+    table_columns: &'a [TableColumn],
     colors: ColorPresentation<'a>,
 }
 
@@ -2455,6 +2515,7 @@ fn render_calendar(
         selected,
         group_by,
         sort_rules,
+        table_columns,
         colors,
     } = context;
 
@@ -2470,9 +2531,16 @@ fn render_calendar(
         CalendarLayout::Agenda => {
             render_agenda(ui, events, timezone, selected, group_by, sort_rules, colors)
         }
-        CalendarLayout::Table => {
-            render_table(ui, events, timezone, selected, group_by, sort_rules, colors)
-        }
+        CalendarLayout::Table => render_table(
+            ui,
+            events,
+            timezone,
+            selected,
+            group_by,
+            sort_rules,
+            table_columns,
+            colors,
+        ),
         CalendarLayout::Grid => match view {
             CalendarView::Year => render_year(ui, events, focus, timezone, selected, colors),
             CalendarView::Quarter => render_quarter(ui, events, focus, timezone, selected, colors),
@@ -2549,6 +2617,7 @@ fn render_table(
     selected: Option<Uuid>,
     group_by: GroupBy,
     sort_rules: &[SortRule],
+    table_columns: &[TableColumn],
     colors: ColorPresentation<'_>,
 ) -> Option<CalendarAction> {
     let groups = grouped_events(events, timezone, group_by, sort_rules);
@@ -2563,57 +2632,29 @@ fn render_table(
             .striped(true)
             .spacing([12.0, 4.0])
             .show(ui, |ui| {
-                for heading in [
-                    "Date",
-                    "Time / precision",
-                    "Title",
-                    "Type",
-                    "Domain",
-                    "Jurisdiction",
-                    "Institution",
-                    "Status",
-                    "Importance",
-                    "Relevance",
-                    "Source",
-                ] {
-                    ui.strong(heading);
+                for column in table_columns {
+                    ui.strong(column.label());
                 }
                 ui.end_row();
 
                 for event in group_events {
-                    ui.monospace(table_date_label(event, timezone));
-                    ui.monospace(event.display_time_label(timezone));
-
-                    if ui
-                        .selectable_label(
-                            selected == Some(event.id),
-                            RichText::new(&event.normalized_title)
+                    for column in table_columns {
+                        let text = table_cell_text(event, timezone, *column);
+                        let rich_text = match column {
+                            TableColumn::Title => RichText::new(text)
                                 .color(event_color(event, colors))
                                 .strong(),
-                        )
-                        .clicked()
-                    {
-                        action = Some(CalendarAction::Select(event.id));
-                    }
+                            TableColumn::Date | TableColumn::Time => RichText::new(text).monospace(),
+                            _ => RichText::new(text),
+                        };
 
-                    ui.label(event.event_type.as_deref().unwrap_or("—"));
-                    ui.label(event.domain.as_deref().unwrap_or("—"));
-                    ui.label(event.jurisdiction.as_deref().unwrap_or("—"));
-                    ui.label(event.institution.as_deref().unwrap_or("—"));
-                    ui.label(event.status.as_str());
-                    ui.label(
-                        event
-                            .importance
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "—".to_string()),
-                    );
-                    ui.label(
-                        event
-                            .personal_relevance
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "—".to_string()),
-                    );
-                    ui.label(event_source_key(event).unwrap_or_else(|| "—".to_string()));
+                        if ui
+                            .selectable_label(selected == Some(event.id), rich_text)
+                            .clicked()
+                        {
+                            action = Some(CalendarAction::Select(event.id));
+                        }
+                    }
                     ui.end_row();
                 }
             });
@@ -2622,6 +2663,57 @@ fn render_table(
     }
 
     action
+}
+
+fn table_cell_text(event: &TemporalEvent, timezone: Tz, column: TableColumn) -> String {
+    match column {
+        TableColumn::Date => table_date_label(event, timezone),
+        TableColumn::Time => event.display_time_label(timezone),
+        TableColumn::Title => event.normalized_title.clone(),
+        TableColumn::EventType => event.event_type.clone().unwrap_or_else(|| "—".to_string()),
+        TableColumn::Domain => event.domain.clone().unwrap_or_else(|| "—".to_string()),
+        TableColumn::Jurisdiction => event
+            .jurisdiction
+            .clone()
+            .unwrap_or_else(|| "—".to_string()),
+        TableColumn::Institution => event
+            .institution
+            .clone()
+            .unwrap_or_else(|| "—".to_string()),
+        TableColumn::Status => event.status.as_str().to_string(),
+        TableColumn::Importance => event
+            .importance
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "—".to_string()),
+        TableColumn::PersonalRelevance => event
+            .personal_relevance
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "—".to_string()),
+        TableColumn::Source => event_source_key(event).unwrap_or_else(|| "—".to_string()),
+        TableColumn::Renderability => event
+            .renderability
+            .clone()
+            .unwrap_or_else(|| "—".to_string()),
+        TableColumn::Confidence => event
+            .confidence
+            .map(|value| format!("{value:.2}"))
+            .unwrap_or_else(|| "—".to_string()),
+        TableColumn::Tags => {
+            if event.tags.is_empty() {
+                "—".to_string()
+            } else {
+                event.tags.join(", ")
+            }
+        }
+        TableColumn::UpstreamEventRef => event
+            .upstream_event_ref
+            .clone()
+            .unwrap_or_else(|| "—".to_string()),
+        TableColumn::ReconciledEventRef => event
+            .upstream_reconciled_key
+            .clone()
+            .unwrap_or_else(|| "—".to_string()),
+    }
 }
 
 fn table_date_label(event: &TemporalEvent, timezone: Tz) -> String {
