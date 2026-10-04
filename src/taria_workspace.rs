@@ -935,6 +935,88 @@ channels:
     }
 
     #[test]
+    fn failed_multi_shard_release_rolls_back_every_prior_mutation() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("resourcearium");
+
+        let first_path = root.join("derived/first/event-index.json");
+        write(
+            &first_path,
+            r#"{
+              "schema_version": 1,
+              "kind": "CompactReconciledEventIndex",
+              "projection_ref": "projection:first",
+              "content_fingerprint": {"algorithm":"sha256","value":"first:fingerprint"},
+              "events": [{
+                "reconciled_event_ref": "reconciled-event:first",
+                "event_ref": "event:first",
+                "title": "First event",
+                "temporal_value": {"kind":"date","start":"2026-11-01"},
+                "schedule_status": "confirmed"
+              }]
+            }"#,
+        );
+
+        let second_path = root.join("derived/second/event-index.json");
+        write(
+            &second_path,
+            r#"{
+              "schema_version": 1,
+              "kind": "CompactReconciledEventIndex",
+              "projection_ref": "projection:second",
+              "content_fingerprint": {"algorithm":"sha256","value":"second:actual"},
+              "events": []
+            }"#,
+        );
+
+        write(
+            &root.join("examples/bundle-releases/current.json"),
+            r#"{
+              "release_id":"temporal-bundle-release:atomic-test",
+              "schema_version":1,
+              "status":"bootstrap-partial",
+              "shards":[
+                {
+                  "shard_id":"shard:first",
+                  "bundle_ref":"bundle:temporal/politics-government",
+                  "event_index_path":"derived/first/event-index.json",
+                  "event_index_content_sha256":"first:fingerprint"
+                },
+                {
+                  "shard_id":"shard:second",
+                  "bundle_ref":"bundle:temporal/finance-markets",
+                  "event_index_path":"derived/second/event-index.json",
+                  "event_index_content_sha256":"second:wrong"
+                }
+              ]
+            }"#,
+        );
+        write(
+            &root.join(RELEASE_REGISTRY_RELATIVE),
+            r#"version: 1
+channels:
+  bootstrap:
+    current_release_ref: temporal-bundle-release:atomic-test
+    manifest_path: examples/bundle-releases/current.json
+"#,
+        );
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let error =
+            update_taria_sources(&store, &root, "bootstrap").expect_err("second shard must fail");
+
+        assert!(error.to_string().contains("integrity mismatch"));
+        assert_eq!(store.event_count().expect("events"), 0);
+        assert_eq!(store.taria_release_count().expect("releases"), 0);
+        assert_eq!(
+            store
+                .taria_calendar_membership_count()
+                .expect("memberships"),
+            0
+        );
+    }
+
+    #[test]
     fn rejects_hash_mismatch() {
         let dir = tempdir().expect("tempdir");
         let root = dir.path().join("resourcearium");
