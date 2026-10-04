@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::calendar::CalendarView;
 use crate::domain::EventStatus;
+use crate::query::{EventQuery, SavedView};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedUiState {
@@ -28,13 +29,17 @@ pub struct PersistedUiState {
     pub jurisdiction_filter: Option<String>,
     #[serde(default)]
     pub status_filter: Option<EventStatus>,
+    #[serde(default)]
+    pub saved_views: Vec<SavedView>,
+    #[serde(default)]
+    pub active_saved_view_id: Option<Uuid>,
     pub selected_event_id: Option<Uuid>,
 }
 
 impl Default for PersistedUiState {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             calendar_view: CalendarView::Month,
             focus_date: Local::now().date_naive().to_string(),
             display_timezone: "America/Mexico_City".to_string(),
@@ -46,6 +51,8 @@ impl Default for PersistedUiState {
             domain_filter: None,
             jurisdiction_filter: None,
             status_filter: None,
+            saved_views: Vec::new(),
+            active_saved_view_id: None,
             selected_event_id: None,
         }
     }
@@ -71,8 +78,11 @@ impl PersistedUiState {
 
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        let state = serde_json::from_str(&raw)
+        let mut state: Self = serde_json::from_str(&raw)
             .with_context(|| format!("failed to decode {}", path.display()))?;
+        if state.version < 2 {
+            state.version = 2;
+        }
         Ok(state)
     }
 
@@ -99,6 +109,51 @@ impl PersistedUiState {
     pub fn set_focus_date(&mut self, value: NaiveDate) {
         self.focus_date = value.format("%Y-%m-%d").to_string();
     }
+
+    pub fn event_query(&self) -> EventQuery {
+        EventQuery {
+            text: self.search_query.clone(),
+            domain: self.domain_filter.clone(),
+            jurisdiction: self.jurisdiction_filter.clone(),
+            status: self.status_filter,
+        }
+    }
+
+    pub fn set_event_query(&mut self, query: &EventQuery) {
+        self.search_query.clone_from(&query.text);
+        self.domain_filter.clone_from(&query.domain);
+        self.jurisdiction_filter.clone_from(&query.jurisdiction);
+        self.status_filter = query.status;
+    }
+
+    pub fn clear_query(&mut self) {
+        self.search_query.clear();
+        self.domain_filter = None;
+        self.jurisdiction_filter = None;
+        self.status_filter = None;
+        self.active_saved_view_id = None;
+    }
+
+    pub fn capture_saved_view(&self, name: impl Into<String>) -> SavedView {
+        SavedView::new(
+            name,
+            self.event_query(),
+            self.hidden_source_ids.clone(),
+            self.calendar_view,
+            self.display_timezone.clone(),
+            self.week_start_monday,
+        )
+    }
+
+    pub fn apply_saved_view(&mut self, view: &SavedView) {
+        self.set_event_query(&view.query);
+        self.hidden_source_ids.clone_from(&view.hidden_source_ids);
+        self.calendar_view = view.calendar_view;
+        self.display_timezone.clone_from(&view.display_timezone);
+        self.week_start_monday = view.week_start_monday;
+        self.active_saved_view_id = Some(view.id);
+        self.selected_event_id = None;
+    }
 }
 
 fn default_state_path() -> anyhow::Result<PathBuf> {
@@ -123,16 +178,39 @@ mod tests {
     fn state_roundtrips() {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("ui-state.json");
-        let state = PersistedUiState {
+        let mut state = PersistedUiState {
             calendar_view: CalendarView::Week,
             display_timezone: "UTC".to_string(),
+            domain_filter: Some("elections".to_string()),
             ..PersistedUiState::default()
         };
+        let saved = state.capture_saved_view("Elections");
+        state.saved_views.push(saved.clone());
+        state.active_saved_view_id = Some(saved.id);
 
         state.save_to_path(&path).expect("save");
         let loaded = PersistedUiState::load_from_path(&path).expect("load");
 
         assert_eq!(loaded.calendar_view, CalendarView::Week);
         assert_eq!(loaded.display_timezone, "UTC");
+        assert_eq!(loaded.saved_views.len(), 1);
+        assert_eq!(loaded.saved_views[0].name, "Elections");
+        assert_eq!(loaded.active_saved_view_id, Some(saved.id));
+    }
+
+    #[test]
+    fn applying_saved_view_restores_query_and_presentation() {
+        let mut state = PersistedUiState::default();
+        state.domain_filter = Some("elections".to_string());
+        state.calendar_view = CalendarView::Year;
+        let view = state.capture_saved_view("Elections");
+
+        state.clear_query();
+        state.calendar_view = CalendarView::Day;
+        state.apply_saved_view(&view);
+
+        assert_eq!(state.domain_filter.as_deref(), Some("elections"));
+        assert_eq!(state.calendar_view, CalendarView::Year);
+        assert_eq!(state.active_saved_view_id, Some(view.id));
     }
 }
