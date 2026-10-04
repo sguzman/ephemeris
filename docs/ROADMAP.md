@@ -183,12 +183,30 @@ Implemented dense table foundation:
 - reuse of saved query, sort, grouping, and semantic color state
 - true grouping partitions independent from sorting
 
+Implemented color-rule engine:
+
+- recursive query expressions as rule conditions
+- ordered first-match precedence
+- explicit RGB rule colors
+- semantic ColorBy fallback
+- base-view and overlay-specific rule sets
+- SQLite saved-view persistence
+- full editor controls
+
+Implemented overlay foundation:
+
+- independent embedded overlay queries
+- union with base result set without copied membership
+- overlay styling precedence
+- independent overlay fallback coloring and color rules
+- saved-view persistence and UI editing
+
 Next:
 
-- ordered color-rule sets with precedence/fallback
+- explicit intersection/subtraction composition in addition to union
 - richer facets
 - user-defined table columns
-- view composition/calendar algebra
+- saved-view inheritance with cycle-safe semantics
 
 Exit criterion remains:
 
