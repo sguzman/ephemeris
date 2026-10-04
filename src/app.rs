@@ -16,6 +16,7 @@ pub struct EphemerisApp {
     store: TemporalStore,
     state: PersistedUiState,
     events: Vec<TemporalEvent>,
+    unplaced_events: Vec<TemporalEvent>,
     sources: Vec<TemporalSource>,
     last_message: Option<String>,
     last_error: Option<String>,
@@ -30,6 +31,7 @@ impl EphemerisApp {
             store,
             state,
             events: Vec::new(),
+            unplaced_events: Vec::new(),
             sources: Vec::new(),
             last_message: None,
             last_error: None,
@@ -101,6 +103,7 @@ impl EphemerisApp {
             self.events
                 .retain(|event| !matches!(event.time, TimeSpec::Year { .. }));
         }
+        self.unplaced_events = self.store.unplaced_events()?;
         self.sources = self.store.list_sources()?;
         Ok(())
     }
@@ -153,6 +156,18 @@ impl EphemerisApp {
 
     fn visible_events(&self) -> Vec<TemporalEvent> {
         self.events
+            .iter()
+            .filter(|event| {
+                event
+                    .source_id
+                    .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn visible_unplaced_events(&self) -> Vec<TemporalEvent> {
+        self.unplaced_events
             .iter()
             .filter(|event| {
                 event
@@ -265,8 +280,9 @@ impl EphemerisApp {
 
             ui.separator();
             ui.small(format!(
-                "{} events · {} sources · {}",
+                "{} events · {} unplaced/conflicted · {} sources · {}",
                 self.visible_events().len(),
+                self.visible_unplaced_events().len(),
                 self.sources.len(),
                 self.state.display_timezone
             ));
@@ -318,6 +334,35 @@ impl EphemerisApp {
                 ));
                 ui.add_space(6.0);
             }
+
+            let unplaced = self.visible_unplaced_events();
+            if !unplaced.is_empty() {
+                ui.separator();
+                ui.strong(format!("Unplaced / conflicts ({})", unplaced.len()));
+                ui.small(
+                    "Retained temporal records that cannot honestly be assigned to a day grid.",
+                );
+                ui.add_space(4.0);
+                for event in unplaced {
+                    let label = match event.renderability.as_deref() {
+                        Some(state) if state != "ready" => {
+                            format!("{} · {}", event.normalized_title, state)
+                        }
+                        _ => event.normalized_title.clone(),
+                    };
+                    if ui
+                        .selectable_label(
+                            self.state.selected_event_id == Some(event.id),
+                            RichText::new(label).color(status_color(event.status)),
+                        )
+                        .clicked()
+                    {
+                        self.state.selected_event_id = Some(event.id);
+                        self.state.show_inspector = true;
+                        self.mark_state_dirty();
+                    }
+                }
+            }
         });
     }
 
@@ -331,7 +376,11 @@ impl EphemerisApp {
             return;
         };
 
-        let Some(event) = events.iter().find(|event| event.id == selected_id) else {
+        let event = events
+            .iter()
+            .find(|event| event.id == selected_id)
+            .or_else(|| self.unplaced_events.iter().find(|event| event.id == selected_id));
+        let Some(event) = event else {
             ui.label("The selected event is not in the current view.");
             return;
         };
