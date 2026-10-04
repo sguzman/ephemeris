@@ -725,6 +725,10 @@ impl EphemerisApp {
         ui.set_width(280.0);
 
         self.render_taria_workspace(ui);
+        let membership_options = MembershipPredicateOptions {
+            bundles: self.taria_bundle_refs.clone(),
+            calendars: self.taria_calendar_choices.clone(),
+        };
         ui.separator();
 
         ui.heading("Saved Views");
@@ -894,7 +898,8 @@ impl EphemerisApp {
                 });
             } else {
                 if let Some(expression) = self.state.query_expression.as_mut() {
-                    filters_changed |= render_query_expr_editor(ui, expression, "root");
+                    filters_changed |=
+                        render_query_expr_editor(ui, expression, "root", &membership_options);
                 }
                 if ui.button("Clear advanced query").clicked() {
                     self.state.query_expression = None;
@@ -940,8 +945,12 @@ impl EphemerisApp {
         ui.strong("Color rules");
         ui.small("Rules are evaluated top to bottom; the first enabled match wins.");
 
-        presentation_changed |=
-            render_color_rules_editor(ui, &mut self.state.color_rules, "base-color-rule");
+        presentation_changed |= render_color_rules_editor(
+            ui,
+            &mut self.state.color_rules,
+            "base-color-rule",
+            &membership_options,
+        );
 
         ui.horizontal_wrapped(|ui| {
             ui.label("Fallback:");
@@ -1034,6 +1043,7 @@ impl EphemerisApp {
                         ui,
                         expression,
                         &format!("overlay-query-{}", overlay.id),
+                        &membership_options,
                     );
                 }
 
@@ -1042,6 +1052,7 @@ impl EphemerisApp {
                         ui,
                         &mut overlay.color_rules,
                         &format!("overlay-color-rule-{}", overlay.id),
+                        &membership_options,
                     );
                 });
             });
@@ -1419,10 +1430,17 @@ impl eframe::App for EphemerisApp {
     }
 }
 
+#[derive(Debug, Clone)]
+struct MembershipPredicateOptions {
+    bundles: Vec<String>,
+    calendars: Vec<TariaProjectedCalendarChoice>,
+}
+
 fn render_color_rules_editor(
     ui: &mut egui::Ui,
     rules: &mut Vec<ColorRule>,
     id_prefix: &str,
+    membership_options: &MembershipPredicateOptions,
 ) -> bool {
     let mut changed = false;
     let mut remove_rule = None;
@@ -1473,8 +1491,12 @@ fn render_color_rules_editor(
                 }
             });
 
-            changed |=
-                render_query_expr_editor(ui, &mut rule.when, &format!("{id_prefix}-{}", rule.id));
+            changed |= render_query_expr_editor(
+                ui,
+                &mut rule.when,
+                &format!("{id_prefix}-{}", rule.id),
+                membership_options,
+            );
         });
     }
 
@@ -1661,7 +1683,12 @@ fn query_predicate_kind(predicate: &QueryPredicate) -> QueryPredicateKind {
     }
 }
 
-fn render_query_expr_editor(ui: &mut egui::Ui, expression: &mut QueryExpr, path: &str) -> bool {
+fn render_query_expr_editor(
+    ui: &mut egui::Ui,
+    expression: &mut QueryExpr,
+    path: &str,
+    membership_options: &MembershipPredicateOptions,
+) -> bool {
     let mut changed = false;
     let mut kind = query_expr_kind(expression);
 
@@ -1685,7 +1712,8 @@ fn render_query_expr_editor(ui: &mut egui::Ui, expression: &mut QueryExpr, path:
 
         match expression {
             QueryExpr::Predicate(predicate) => {
-                changed |= render_query_predicate_editor(ui, predicate, path);
+                changed |=
+                    render_query_predicate_editor(ui, predicate, path, membership_options);
             }
             QueryExpr::All(children) | QueryExpr::Any(children) => {
                 let mut remove = None;
@@ -1700,7 +1728,12 @@ fn render_query_expr_editor(ui: &mut egui::Ui, expression: &mut QueryExpr, path:
                             remove = Some(index);
                         }
                         ui.vertical(|ui| {
-                            changed |= render_query_expr_editor(ui, child, &child_path);
+                            changed |= render_query_expr_editor(
+                                ui,
+                                child,
+                                &child_path,
+                                membership_options,
+                            );
                         });
                     });
                 }
@@ -1731,7 +1764,12 @@ fn render_query_expr_editor(ui: &mut egui::Ui, expression: &mut QueryExpr, path:
             }
             QueryExpr::Not(child) => {
                 ui.strong("Negates:");
-                changed |= render_query_expr_editor(ui, child, &format!("{path}.not"));
+                changed |= render_query_expr_editor(
+                    ui,
+                    child,
+                    &format!("{path}.not"),
+                    membership_options,
+                );
             }
         }
     });
@@ -1743,6 +1781,7 @@ fn render_query_predicate_editor(
     ui: &mut egui::Ui,
     predicate: &mut QueryPredicate,
     path: &str,
+    membership_options: &MembershipPredicateOptions,
 ) -> bool {
     let mut changed = false;
     let mut kind = query_predicate_kind(predicate);
@@ -1971,6 +2010,24 @@ fn render_query_predicate_editor(
             ui.small(
                 "Matches current adopted-release membership; this does not change event ownership.",
             );
+            let selected = if bundle_ref.is_empty() {
+                "Select bundle…".to_string()
+            } else {
+                short_bundle_label(bundle_ref)
+            };
+            egui::ComboBox::from_id_salt(("advanced-bundle-ref", path))
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    for candidate in &membership_options.bundles {
+                        changed |= ui
+                            .selectable_value(
+                                bundle_ref,
+                                candidate.clone(),
+                                short_bundle_label(candidate),
+                            )
+                            .changed();
+                    }
+                });
             changed |= ui
                 .add(
                     egui::TextEdit::singleline(bundle_ref)
@@ -1979,7 +2036,45 @@ fn render_query_predicate_editor(
                 .changed();
         }
         QueryPredicate::ProjectedCalendarMembership { calendar_id } => {
-            ui.small("Matches a stable Resourcearium projected calendar ID in the current adopted release.");
+            ui.small(
+                "Matches a stable Resourcearium projected calendar ID in the current adopted release.",
+            );
+            let selected = membership_options
+                .calendars
+                .iter()
+                .find(|calendar| calendar.calendar_id == *calendar_id)
+                .map(|calendar| {
+                    format!(
+                        "{} · {}",
+                        calendar.name,
+                        short_bundle_label(&calendar.bundle_ref)
+                    )
+                })
+                .unwrap_or_else(|| {
+                    if calendar_id.is_empty() {
+                        "Select projected calendar…".to_string()
+                    } else {
+                        calendar_id.clone()
+                    }
+                });
+            egui::ComboBox::from_id_salt(("advanced-calendar-ref", path))
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    for calendar in &membership_options.calendars {
+                        let label = format!(
+                            "{} · {}",
+                            calendar.name,
+                            short_bundle_label(&calendar.bundle_ref)
+                        );
+                        changed |= ui
+                            .selectable_value(
+                                calendar_id,
+                                calendar.calendar_id.clone(),
+                                label,
+                            )
+                            .changed();
+                    }
+                });
             changed |= ui
                 .add(egui::TextEdit::singleline(calendar_id).hint_text("projected-calendar:..."))
                 .changed();
