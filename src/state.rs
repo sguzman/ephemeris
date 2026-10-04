@@ -6,7 +6,7 @@ use chrono::{Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::calendar::CalendarView;
+use crate::calendar::{CalendarLayout, CalendarView};
 use crate::domain::EventStatus;
 use crate::query::{EventQuery, SavedView};
 
@@ -14,6 +14,8 @@ use crate::query::{EventQuery, SavedView};
 pub struct PersistedUiState {
     pub version: u32,
     pub calendar_view: CalendarView,
+    #[serde(default)]
+    pub calendar_layout: CalendarLayout,
     pub focus_date: String,
     pub display_timezone: String,
     pub week_start_monday: bool,
@@ -41,6 +43,7 @@ impl Default for PersistedUiState {
         Self {
             version: 3,
             calendar_view: CalendarView::Month,
+            calendar_layout: CalendarLayout::Grid,
             focus_date: Local::now().date_naive().to_string(),
             display_timezone: "America/Mexico_City".to_string(),
             week_start_monday: false,
@@ -140,6 +143,7 @@ impl PersistedUiState {
             self.event_query(),
             self.hidden_source_ids.clone(),
             self.calendar_view,
+            self.calendar_layout,
             self.display_timezone.clone(),
             self.week_start_monday,
         )
@@ -149,6 +153,7 @@ impl PersistedUiState {
         self.set_event_query(&view.query);
         self.hidden_source_ids.clone_from(&view.hidden_source_ids);
         self.calendar_view = view.calendar_view;
+        self.calendar_layout = view.calendar_layout;
         self.display_timezone.clone_from(&view.display_timezone);
         self.week_start_monday = view.week_start_monday;
         self.active_saved_view_id = Some(view.id);
@@ -180,6 +185,7 @@ mod tests {
         let path = dir.path().join("ui-state.json");
         let state = PersistedUiState {
             calendar_view: CalendarView::Week,
+            calendar_layout: CalendarLayout::Agenda,
             display_timezone: "UTC".to_string(),
             domain_filter: Some("elections".to_string()),
             ..PersistedUiState::default()
@@ -189,6 +195,7 @@ mod tests {
         let loaded = PersistedUiState::load_from_path(&path).expect("load");
 
         assert_eq!(loaded.calendar_view, CalendarView::Week);
+        assert_eq!(loaded.calendar_layout, CalendarLayout::Agenda);
         assert_eq!(loaded.display_timezone, "UTC");
         assert_eq!(loaded.domain_filter.as_deref(), Some("elections"));
         assert!(loaded.legacy_saved_views.is_empty());
@@ -199,6 +206,7 @@ mod tests {
         let mut state = PersistedUiState::default();
         state.domain_filter = Some("elections".to_string());
         state.calendar_view = CalendarView::Year;
+        state.calendar_layout = CalendarLayout::Agenda;
         let view = state.capture_saved_view("Elections");
 
         state.clear_query();
@@ -207,6 +215,7 @@ mod tests {
 
         assert_eq!(state.domain_filter.as_deref(), Some("elections"));
         assert_eq!(state.calendar_view, CalendarView::Year);
+        assert_eq!(state.calendar_layout, CalendarLayout::Agenda);
         assert_eq!(state.active_saved_view_id, Some(view.id));
     }
 }
