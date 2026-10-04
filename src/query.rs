@@ -102,8 +102,12 @@ pub enum QueryExpr {
 impl QueryExpr {
     pub fn matches(&self, event: &TemporalEvent) -> bool {
         match self {
-            Self::All(expressions) => expressions.iter().all(|expression| expression.matches(event)),
-            Self::Any(expressions) => expressions.iter().any(|expression| expression.matches(event)),
+            Self::All(expressions) => expressions
+                .iter()
+                .all(|expression| expression.matches(event)),
+            Self::Any(expressions) => expressions
+                .iter()
+                .any(|expression| expression.matches(event)),
             Self::Not(expression) => !expression.matches(event),
             Self::Predicate(predicate) => predicate.matches(event),
         }
@@ -171,14 +175,9 @@ impl QueryPredicate {
                 values,
                 case_sensitive,
             } => text_values(event, *field).into_iter().any(|candidate| {
-                values.iter().any(|value| {
-                    text_matches(
-                        candidate,
-                        value,
-                        TextOperator::Equals,
-                        *case_sensitive,
-                    )
-                })
+                values
+                    .iter()
+                    .any(|value| text_matches(candidate, value, TextOperator::Equals, *case_sensitive))
             }),
             Self::StatusAnyOf { values } => values.contains(&event.status),
             Self::Integer {
@@ -273,7 +272,11 @@ fn text_values(event: &TemporalEvent, field: TextField) -> Vec<&str> {
         TextField::Jurisdiction => event.jurisdiction.iter().map(String::as_str).collect(),
         TextField::Institution => event.institution.iter().map(String::as_str).collect(),
         TextField::Renderability => event.renderability.iter().map(String::as_str).collect(),
-        TextField::UpstreamEventRef => event.upstream_event_ref.iter().map(String::as_str).collect(),
+        TextField::UpstreamEventRef => event
+            .upstream_event_ref
+            .iter()
+            .map(String::as_str)
+            .collect(),
         TextField::UpstreamReconciledKey => event
             .upstream_reconciled_key
             .iter()
