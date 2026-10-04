@@ -341,12 +341,12 @@ impl EphemerisApp {
                 ui.label(event.tags.join(", "));
             }
 
-            if let Some(description) = event.description.as_deref() {
-                if !description.trim().is_empty() {
-                    ui.separator();
-                    ui.strong("Description");
-                    ui.label(description);
-                }
+            if let Some(description) = event.description.as_deref()
+                && !description.trim().is_empty()
+            {
+                ui.separator();
+                ui.strong("Description");
+                ui.label(description);
             }
 
             if !event.properties.is_null()
