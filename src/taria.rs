@@ -652,18 +652,21 @@ mod tests {
             .events_in_window(october_start, december_start, chrono_tz::UTC, true)
             .expect("events");
         assert_eq!(visible.len(), 3);
-        assert!(visible.iter().any(|event| matches!(
-            event.time,
-            TimeSpec::DateOnly { .. }
-        )));
-        assert!(visible.iter().any(|event| matches!(
-            event.time,
-            TimeSpec::Month { .. }
-        )));
-        assert!(visible.iter().any(|event| matches!(
-            event.time,
-            TimeSpec::Year { .. }
-        )));
+        assert!(
+            visible
+                .iter()
+                .any(|event| matches!(event.time, TimeSpec::DateOnly { .. }))
+        );
+        assert!(
+            visible
+                .iter()
+                .any(|event| matches!(event.time, TimeSpec::Month { .. }))
+        );
+        assert!(
+            visible
+                .iter()
+                .any(|event| matches!(event.time, TimeSpec::Year { .. }))
+        );
     }
 
     #[test]
