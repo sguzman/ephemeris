@@ -866,7 +866,9 @@ mod tests {
         let second =
             import_reconciled_event_set_json(&store, &reduced, None).expect("second import");
         assert_eq!(second.created, 0);
-        assert_eq!(second.retained_missing, 3);
+        // The reduced artifact still retains the top-level blocked event, so
+        // only the month- and year-precision records are missing.
+        assert_eq!(second.retained_missing, 2);
         assert_eq!(store.event_count().expect("count"), 4);
     }
 
