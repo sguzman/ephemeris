@@ -66,7 +66,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation milestone at 2026-10-04 passes the full CI gate: format, compile, strict Clippy, and **40 library tests**.
+The verified implementation milestone at 2026-10-04 passes the full CI gate: format, compile, strict Clippy, and **43 library tests**.
 
 ## Product boundary
 
