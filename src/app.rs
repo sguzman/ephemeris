@@ -11,8 +11,9 @@ use crate::calendar::{
 };
 use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
 use crate::query::{
-    ColorBy, GroupBy, IntegerField, IntegerOperator, PresenceField, QueryExpr, QueryPredicate,
-    SavedView, SortDirection, SortField, SortRule, TextField, TextOperator,
+    ColorBy, GroupBy, IntegerField, IntegerOperator, PresenceField, QueryContext, QueryExpr,
+    QueryPredicate, SavedView, SortDirection, SortField, SortRule, TemporalKind, TextField,
+    TextOperator,
 };
 use crate::state::PersistedUiState;
 use crate::store::TemporalStore;
@@ -264,6 +265,7 @@ impl EphemerisApp {
 
     fn visible_events(&self) -> Vec<TemporalEvent> {
         let query = self.state.event_query();
+        let context = QueryContext::for_timezone(self.timezone());
         let mut events = self
             .events
             .iter()
@@ -271,7 +273,7 @@ impl EphemerisApp {
                 event
                     .source_id
                     .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-                    && query.matches(event)
+                    && query.matches(event, &context)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -281,6 +283,7 @@ impl EphemerisApp {
 
     fn visible_unplaced_events(&self) -> Vec<TemporalEvent> {
         let query = self.state.event_query();
+        let context = QueryContext::for_timezone(self.timezone());
         let mut events = self
             .unplaced_events
             .iter()
@@ -1021,15 +1024,19 @@ enum QueryPredicateKind {
     StatusAnyOf,
     Integer,
     Exists,
+    TemporalKindAnyOf,
+    DateOverlaps,
 }
 
 impl QueryPredicateKind {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 7] = [
         Self::Text,
         Self::TextAnyOf,
         Self::StatusAnyOf,
         Self::Integer,
         Self::Exists,
+        Self::TemporalKindAnyOf,
+        Self::DateOverlaps,
     ];
 
     const fn label(self) -> &'static str {
@@ -1039,6 +1046,8 @@ impl QueryPredicateKind {
             Self::StatusAnyOf => "Status set",
             Self::Integer => "Integer",
             Self::Exists => "Exists / missing",
+            Self::TemporalKindAnyOf => "Time kind set",
+            Self::DateOverlaps => "Date overlap",
         }
     }
 }
@@ -1093,6 +1102,14 @@ fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
             field: PresenceField::Institution,
             exists: true,
         },
+        QueryPredicateKind::TemporalKindAnyOf => QueryPredicate::TemporalKindAnyOf {
+            values: vec![TemporalKind::DateOnly, TemporalKind::AllDay, TemporalKind::Instant],
+        },
+        QueryPredicateKind::DateOverlaps => QueryPredicate::DateOverlaps {
+            start: None,
+            end_exclusive: None,
+            include_imprecise: false,
+        },
     }
 }
 
@@ -1103,6 +1120,8 @@ fn query_predicate_kind(predicate: &QueryPredicate) -> QueryPredicateKind {
         QueryPredicate::StatusAnyOf { .. } => QueryPredicateKind::StatusAnyOf,
         QueryPredicate::Integer { .. } => QueryPredicateKind::Integer,
         QueryPredicate::Exists { .. } => QueryPredicateKind::Exists,
+        QueryPredicate::TemporalKindAnyOf { .. } => QueryPredicateKind::TemporalKindAnyOf,
+        QueryPredicate::DateOverlaps { .. } => QueryPredicateKind::DateOverlaps,
     }
 }
 
@@ -1328,9 +1347,102 @@ fn render_query_predicate_editor(
                 changed |= ui.selectable_value(exists, false, "is missing").changed();
             });
         }
+        QueryPredicate::TemporalKindAnyOf { values } => {
+            ui.horizontal_wrapped(|ui| {
+                for kind in TemporalKind::ALL {
+                    let mut selected = values.contains(&kind);
+                    if ui.checkbox(&mut selected, kind.label()).changed() {
+                        if selected {
+                            values.push(kind);
+                        } else {
+                            values.retain(|value| *value != kind);
+                        }
+                        changed = true;
+                    }
+                }
+            });
+        }
+        QueryPredicate::DateOverlaps {
+            start,
+            end_exclusive,
+            include_imprecise,
+        } => {
+            ui.small("Civil-date overlap in the current view timezone.");
+            changed |= render_optional_date_editor(ui, "Start inclusive", start);
+            changed |= render_optional_date_editor(ui, "End exclusive", end_exclusive);
+            changed |= ui
+                .checkbox(
+                    include_imprecise,
+                    "Include month/year-precision events by their full known span",
+                )
+                .changed();
+        }
     }
 
     changed
+}
+
+fn render_optional_date_editor(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut Option<NaiveDate>,
+) -> bool {
+    let mut changed = false;
+    let mut enabled = value.is_some();
+
+    ui.horizontal_wrapped(|ui| {
+        if ui.checkbox(&mut enabled, label).changed() {
+            *value = if enabled {
+                Some(Local::now().date_naive())
+            } else {
+                None
+            };
+            changed = true;
+        }
+
+        if let Some(date) = value.as_mut() {
+            let mut year = date.year();
+            let mut month = date.month();
+            let mut day = date.day();
+
+            let parts_changed = ui
+                .add(egui::DragValue::new(&mut year).prefix("Y ").speed(1))
+                .changed()
+                | ui
+                    .add(
+                        egui::DragValue::new(&mut month)
+                            .prefix("M ")
+                            .range(1..=12),
+                    )
+                    .changed()
+                | ui
+                    .add(
+                        egui::DragValue::new(&mut day)
+                            .prefix("D ")
+                            .range(1..=31),
+                    )
+                    .changed();
+
+            if parts_changed {
+                *date = clamped_date(year, month, day);
+                changed = true;
+            }
+        }
+    });
+
+    changed
+}
+
+fn clamped_date(year: i32, month: u32, mut day: u32) -> NaiveDate {
+    while day > 1 {
+        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+            return date;
+        }
+        day -= 1;
+    }
+
+    NaiveDate::from_ymd_opt(year, month, 1)
+        .unwrap_or_else(|| Local::now().date_naive())
 }
 
 #[derive(Debug, Clone, Copy)]
