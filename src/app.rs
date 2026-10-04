@@ -1051,6 +1051,7 @@ impl EphemerisApp {
                                     fallback: self.state.color_by,
                                     rules: &self.state.color_rules,
                                     overlays: &self.state.overlays,
+                                    memberships: &self.taria_memberships,
                                     query_context: QueryContext::for_timezone(self.timezone()),
                                 },
                             )),
