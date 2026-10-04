@@ -13,7 +13,7 @@ use crate::domain::{
 };
 use crate::query::{EventMembership, SavedView};
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -272,7 +272,7 @@ impl TemporalStore {
                 id, name, query_json, hidden_source_ids_json,
                 calendar_view_json, calendar_layout,
                 group_by_json, sort_rules_json, color_by_json, color_rules_json,
-                composition_layers_json, overlays_json,
+                composition_layers_json, overlays_json, table_columns_json,
                 display_timezone, week_start_monday
             FROM saved_views
             ORDER BY name COLLATE NOCASE, id
@@ -306,6 +306,8 @@ impl TemporalStore {
             .context("failed to encode saved-view composition layers")?;
         let overlays_json = serde_json::to_string(&view.overlays)
             .context("failed to encode saved-view overlays")?;
+        let table_columns_json = serde_json::to_string(&view.table_columns)
+            .context("failed to encode saved-view table columns")?;
 
         self.conn
             .execute(
@@ -320,7 +322,7 @@ impl TemporalStore {
                     :id, :name, :query_json, :hidden_source_ids_json,
                     :calendar_view_json, :calendar_layout,
                     :group_by_json, :sort_rules_json, :color_by_json, :color_rules_json,
-                    :composition_layers_json, :overlays_json,
+                    :composition_layers_json, :overlays_json, :table_columns_json,
                     :display_timezone, :week_start_monday
                 )
                 ON CONFLICT(id) DO UPDATE SET
@@ -335,6 +337,7 @@ impl TemporalStore {
                     color_rules_json = excluded.color_rules_json,
                     composition_layers_json = excluded.composition_layers_json,
                     overlays_json = excluded.overlays_json,
+                    table_columns_json = excluded.table_columns_json,
                     display_timezone = excluded.display_timezone,
                     week_start_monday = excluded.week_start_monday
                 "#,
@@ -351,6 +354,7 @@ impl TemporalStore {
                     ":color_rules_json": color_rules_json,
                     ":composition_layers_json": composition_layers_json,
                     ":overlays_json": overlays_json,
+                    ":table_columns_json": table_columns_json,
                     ":display_timezone": view.display_timezone,
                     ":week_start_monday": view.week_start_monday,
                 },
@@ -1693,6 +1697,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 8 {
         migrate_v8_to_v9(conn)?;
+        current = 9;
+    }
+
+    if current == 9 {
+        migrate_v9_to_v10(conn)?;
     }
 
     Ok(())
@@ -1975,6 +1984,7 @@ fn create_saved_views_schema_current(conn: &Connection) -> anyhow::Result<()> {
             color_rules_json TEXT NOT NULL DEFAULT '[]',
             composition_layers_json TEXT NOT NULL DEFAULT '[]',
             overlays_json TEXT NOT NULL DEFAULT '[]',
+            table_columns_json TEXT NOT NULL DEFAULT '["date","time","title","event_type","domain","jurisdiction","institution","status","importance","personal_relevance","source"]',
             display_timezone TEXT NOT NULL,
             week_start_monday INTEGER NOT NULL DEFAULT 0
         );
@@ -1995,6 +2005,21 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> anyhow::Result<()> {
         .context("failed to set schema version 3")?;
     tx.commit()
         .context("failed to commit v2 to v3 schema migration")
+}
+
+fn migrate_v9_to_v10(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v9 to v10 migration")?;
+    tx.execute_batch(
+        r#"ALTER TABLE saved_views ADD COLUMN table_columns_json TEXT NOT NULL
+            DEFAULT '["date","time","title","event_type","domain","jurisdiction","institution","status","importance","personal_relevance","source"]';"#,
+    )
+    .context("failed to add saved-view table columns")?;
+    tx.pragma_update(None, "user_version", 10)
+        .context("failed to set schema version 10")?;
+    tx.commit()
+        .context("failed to commit v9 to v10 schema migration")
 }
 
 fn migrate_v8_to_v9(conn: &mut Connection) -> anyhow::Result<()> {
@@ -2250,6 +2275,7 @@ fn decode_saved_view(row: &Row<'_>) -> rusqlite::Result<SavedView> {
     let color_rules_raw: String = row.get("color_rules_json")?;
     let composition_layers_raw: String = row.get("composition_layers_json")?;
     let overlays_raw: String = row.get("overlays_json")?;
+    let table_columns_raw: String = row.get("table_columns_json")?;
 
     Ok(SavedView {
         id: Uuid::parse_str(&id_raw).map_err(to_sql_decode_error)?,
@@ -2265,6 +2291,7 @@ fn decode_saved_view(row: &Row<'_>) -> rusqlite::Result<SavedView> {
         composition_layers: serde_json::from_str(&composition_layers_raw)
             .map_err(to_sql_decode_error)?,
         overlays: serde_json::from_str(&overlays_raw).map_err(to_sql_decode_error)?,
+        table_columns: serde_json::from_str(&table_columns_raw).map_err(to_sql_decode_error)?,
         display_timezone: row.get("display_timezone")?,
         week_start_monday: row.get("week_start_monday")?,
     })
@@ -2643,6 +2670,7 @@ mod tests {
         assert!(columns.contains(&"color_rules_json".to_string()));
         assert!(columns.contains(&"overlays_json".to_string()));
         assert!(columns.contains(&"composition_layers_json".to_string()));
+        assert!(columns.contains(&"table_columns_json".to_string()));
     }
 
     #[test]
@@ -3165,7 +3193,7 @@ mod tests {
         use crate::query::{
             ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventQuery, GroupBy,
             IntegerField, IntegerOperator, Overlay, QueryExpr, QueryPredicate, RgbColor, SavedView,
-            SortDirection, SortField, SortRule,
+            SortDirection, SortField, SortRule, TableColumn,
         };
 
         let store = TemporalStore::open_in_memory().expect("store");
@@ -3207,6 +3235,11 @@ mod tests {
                     ..EventQuery::default()
                 },
             }],
+            table_columns: vec![
+                TableColumn::Title,
+                TableColumn::Date,
+                TableColumn::Status,
+            ],
             overlays: vec![Overlay {
                 id: Uuid::new_v4(),
                 name: "California".to_string(),
@@ -3232,6 +3265,14 @@ mod tests {
         assert_eq!(loaded[0].color_rules.len(), 1);
         assert_eq!(loaded[0].composition_layers.len(), 1);
         assert_eq!(loaded[0].overlays.len(), 1);
+        assert_eq!(
+            loaded[0].table_columns,
+            vec![
+                TableColumn::Title,
+                TableColumn::Date,
+                TableColumn::Status,
+            ]
+        );
         assert_eq!(loaded[0].sort_rules.len(), 1);
         store.delete_saved_view(view.id).expect("delete");
         assert!(store.list_saved_views().expect("list").is_empty());
