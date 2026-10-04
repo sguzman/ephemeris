@@ -104,12 +104,16 @@ pub fn detect_resourcearium_root() -> Option<PathBuf> {
     }
 
     let cwd = std::env::current_dir().ok()?;
-    let candidates = [
+    let mut candidates = vec![
         cwd.clone(),
         cwd.join("..").join("taria"),
         cwd.join("taria"),
         cwd.join(".."),
     ];
+
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join("Code").join("Text").join("taria"));
+    }
 
     candidates
         .into_iter()
