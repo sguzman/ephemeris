@@ -496,7 +496,7 @@ fn decode_event(row: &Row<'_>) -> anyhow::Result<TemporalEvent> {
     Ok(TemporalEvent {
         id: parse_uuid(row.get::<_, String>("id")?)?,
         source_id: optional_text(row, "source_id")?
-            .map(|raw| parse_uuid(raw))
+            .map(parse_uuid)
             .transpose()?,
         source_record_key: row.get("source_record_key")?,
         normalized_title: row.get("normalized_title")?,
