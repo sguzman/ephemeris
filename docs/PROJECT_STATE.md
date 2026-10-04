@@ -8,7 +8,7 @@ Ephemeris is now a working native Rust + egui calendar foundation backed by an e
 
 The original documentation/inheritance phase is complete. The project has crossed the important architectural boundary that motivated the spinoff from Rivetr: calendar data is no longer forced through `TaskDto` or task-file persistence.
 
-The current application can ingest real Taria Resourcearium reconciled temporal event sets, preserve rich upstream temporal semantics and provenance references, query the resulting corpus, render standard calendar ranges, inspect records, and persist named programmable calendar views.
+The current application can ingest real Taria Resourcearium reconciled temporal event sets, preserve rich upstream temporal semantics and provenance references, query the resulting corpus, render standard calendar ranges, inspect records, and persist named programmable calendar views. Taria has now also established immutable TemporalBundleRelease packaging; Ephemeris has documented that release contract but has not yet implemented release-manifest adoption.
 
 ## Verified quality gate
 
@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the checkpoint, all 26 tests pass.
+At the checkpoint, all **38** library tests pass. The verified code head is `c6782580870297b1735b752b7b6484851d4d858e`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -120,6 +120,38 @@ Entry surfaces:
 
 - drag/drop reconciled JSON onto the GUI
 - `ephemeris-import` CLI
+
+### Taria bundle-release contract
+
+Resourcearium now owns a consumer-facing `TemporalBundleRelease` layer over frozen derivative products.
+
+The accepted Ephemeris contract is documented in:
+
+- `docs/TARIA_BUNDLE_CONTRACT.md`
+
+Current upstream state:
+
+- 429 canonical temporal Resources
+- 177 direct single-Resource RICS profiles in the first exact-lineage production tranche
+- canonical 13-projection build tooling
+- frozen release packaging and validation
+- bootstrap channel currently pointing at `temporal-bundle-release:bootstrap:2026-10-04`
+- bootstrap posture: 48 ready events, 15 represented Resources, 2 partial canonical domain slots, 10 pending slots
+- production channel independently advances as live acquisition-backed releases become available
+
+Important consumer rule:
+
+- ReconciledProjectionEventSet carries event payload.
+- CalendarSet carries membership/navigation metadata.
+- overlapping bundle membership must never clone event identity.
+
+The current direct reconciled-event-set importer is the low-level payload adapter for the future release importer.
+
+Known upstream integration gap:
+
+- current bootstrap `shards[]` expose normalized snapshot + CalendarSet paths but not reconciled-event-set paths;
+- production `bundle_artifacts[]` do expose reconciled-event-set paths/hashes;
+- therefore bootstrap is packaging-safe but not yet directly ingestible end-to-end by the existing Ephemeris importer from the manifest alone.
 
 ### Calendar presentation
 
@@ -248,6 +280,10 @@ The current milestone is a foundation, not the finished calendar.
 
 Not yet implemented:
 
+- TemporalBundleRelease v1 manifest importer
+- CalendarSet membership persistence
+- release/channel/coverage metadata persistence
+- release integrity/hash validation as one atomic adoption
 - saved-view inheritance
 - full calendar algebra beyond the current overlay-union slice
 - event-occurrence/recurrence engine
@@ -297,16 +333,21 @@ Implemented:
 
 ## Immediate next implementation boundary
 
-Generalize composition beyond overlay union:
+Implement the Taria **TemporalBundleRelease v1** consumer path before adding another large product subsystem:
 
-1. explicit union / intersection / subtraction query composition
-2. keep operands logical and event-native
-3. deterministic nested evaluation
-4. avoid saved-view reference cycles in the first slice
-5. expose composition in the advanced view editor
-6. preserve ordinary overlays as the ergonomic simultaneous-union surface
+1. load and validate immutable release manifests;
+2. support current bootstrap `shards[]` and production `bundle_artifacts[]` packaging variants;
+3. resolve rich reconciled event payloads without falling back to ICS;
+4. import canonical events exactly once across overlapping bundle domains;
+5. persist CalendarSet membership separately from event identity;
+6. persist release/channel/coverage metadata;
+7. preserve partial/pending/gap-only posture;
+8. validate hashes/fingerprints transactionally;
+9. retain the existing conservative missing-record and local-annotation semantics.
 
-After that, add user-defined Table columns and richer facets.
+The direct ReconciledProjectionEventSet importer remains the low-level event adapter beneath this release importer.
+
+After that, resume programmable-view expansion with explicit intersection/subtraction composition, user-defined Table columns, and saved-view inheritance.
 
 ## Rule going forward
 
