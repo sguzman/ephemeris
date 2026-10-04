@@ -53,7 +53,9 @@ Implemented predicates include:
 - exists / missing checks;
 - temporal-kind membership;
 - explicit civil-date overlap;
-- relative civil-date windows.
+- relative civil-date windows;
+- current-release Taria bundle membership by stable bundle ref;
+- current-release projected CalendarSet membership by stable calendar ID.
 
 Expressions may nest arbitrarily.
 
@@ -61,10 +63,19 @@ The GUI exposes a recursive editor for constructing these trees without writing 
 
 ## Temporal query context
 
-Temporal predicates are evaluated with an explicit query context containing:
+Predicates are evaluated with explicit query context.
+
+Temporal context contains:
 
 - display timezone;
 - current civil day anchor.
+
+Taria membership context is loaded separately per canonical event for the currently adopted release and contains:
+
+- bundle refs;
+- projected calendar IDs.
+
+That membership context is not copied into `TemporalEvent`.
 
 This prevents relative queries from silently depending on UTC or machine-local assumptions.
 
@@ -332,7 +343,28 @@ Ephemeris SavedView
     = local programmable runtime interpretation
 ```
 
-A saved view may filter by imported bundle membership in the future without changing that membership.
+A saved view can now filter by imported bundle or projected-calendar membership without changing that membership.
+
+Implemented membership predicates:
+
+```text
+BundleMembership {
+    bundle_ref
+}
+
+ProjectedCalendarMembership {
+    calendar_id
+}
+```
+
+They use the same recursive `QueryExpr` path as every other predicate. Therefore they work in:
+
+- base saved-view queries;
+- overlays;
+- color rules;
+- composition/algebra layers.
+
+The runtime loads membership for the currently adopted release into a separate per-event query-context index. An event may therefore match several upstream bundles/calendars while remaining one canonical event.
 
 See:
 
