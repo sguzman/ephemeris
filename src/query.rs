@@ -211,6 +211,46 @@ pub enum TextField {
     ProvenanceRefs,
 }
 
+impl TextField {
+    pub const ALL: [Self; 15] = [
+        Self::Title,
+        Self::RawTitle,
+        Self::Description,
+        Self::EventType,
+        Self::Domain,
+        Self::Jurisdiction,
+        Self::Institution,
+        Self::Renderability,
+        Self::UpstreamEventRef,
+        Self::UpstreamReconciledKey,
+        Self::SourceRecordKey,
+        Self::Tags,
+        Self::SourceRefs,
+        Self::AssertionRefs,
+        Self::ProvenanceRefs,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Title => "Title",
+            Self::RawTitle => "Raw title",
+            Self::Description => "Description",
+            Self::EventType => "Event type",
+            Self::Domain => "Domain",
+            Self::Jurisdiction => "Jurisdiction",
+            Self::Institution => "Institution",
+            Self::Renderability => "Renderability",
+            Self::UpstreamEventRef => "Upstream event ref",
+            Self::UpstreamReconciledKey => "Reconciled key",
+            Self::SourceRecordKey => "Source record key",
+            Self::Tags => "Tags",
+            Self::SourceRefs => "Source refs",
+            Self::AssertionRefs => "Assertion refs",
+            Self::ProvenanceRefs => "Provenance refs",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TextOperator {
@@ -221,11 +261,42 @@ pub enum TextOperator {
     EndsWith,
 }
 
+impl TextOperator {
+    pub const ALL: [Self; 5] = [
+        Self::Equals,
+        Self::NotEquals,
+        Self::Contains,
+        Self::StartsWith,
+        Self::EndsWith,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Equals => "equals",
+            Self::NotEquals => "does not equal",
+            Self::Contains => "contains",
+            Self::StartsWith => "starts with",
+            Self::EndsWith => "ends with",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IntegerField {
     Importance,
     PersonalRelevance,
+}
+
+impl IntegerField {
+    pub const ALL: [Self; 2] = [Self::Importance, Self::PersonalRelevance];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Importance => "Importance",
+            Self::PersonalRelevance => "Personal relevance",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,6 +308,28 @@ pub enum IntegerOperator {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
+}
+
+impl IntegerOperator {
+    pub const ALL: [Self; 6] = [
+        Self::Equal,
+        Self::NotEqual,
+        Self::LessThan,
+        Self::LessThanOrEqual,
+        Self::GreaterThan,
+        Self::GreaterThanOrEqual,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Equal => "=",
+            Self::NotEqual => "≠",
+            Self::LessThan => "<",
+            Self::LessThanOrEqual => "≤",
+            Self::GreaterThan => ">",
+            Self::GreaterThanOrEqual => "≥",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -260,6 +353,52 @@ pub enum PresenceField {
     SourceRefs,
     AssertionRefs,
     ProvenanceRefs,
+}
+
+impl PresenceField {
+    pub const ALL: [Self; 18] = [
+        Self::Source,
+        Self::RawTitle,
+        Self::Description,
+        Self::EventType,
+        Self::Domain,
+        Self::Jurisdiction,
+        Self::Institution,
+        Self::Renderability,
+        Self::Confidence,
+        Self::Importance,
+        Self::PersonalRelevance,
+        Self::UpstreamEventRef,
+        Self::UpstreamReconciledKey,
+        Self::SourceRecordKey,
+        Self::Tags,
+        Self::SourceRefs,
+        Self::AssertionRefs,
+        Self::ProvenanceRefs,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Source => "Source",
+            Self::RawTitle => "Raw title",
+            Self::Description => "Description",
+            Self::EventType => "Event type",
+            Self::Domain => "Domain",
+            Self::Jurisdiction => "Jurisdiction",
+            Self::Institution => "Institution",
+            Self::Renderability => "Renderability",
+            Self::Confidence => "Confidence",
+            Self::Importance => "Importance",
+            Self::PersonalRelevance => "Personal relevance",
+            Self::UpstreamEventRef => "Upstream event ref",
+            Self::UpstreamReconciledKey => "Reconciled key",
+            Self::SourceRecordKey => "Source record key",
+            Self::Tags => "Tags",
+            Self::SourceRefs => "Source refs",
+            Self::AssertionRefs => "Assertion refs",
+            Self::ProvenanceRefs => "Provenance refs",
+        }
+    }
 }
 
 fn text_values(event: &TemporalEvent, field: TextField) -> Vec<&str> {
