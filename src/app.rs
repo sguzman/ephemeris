@@ -316,12 +316,7 @@ impl EphemerisApp {
             .filter_map(|event| event.domain.clone())
             .collect::<BTreeSet<_>>();
         egui::ComboBox::from_id_salt("query.domain")
-            .selected_text(
-                self.state
-                    .domain_filter
-                    .as_deref()
-                    .unwrap_or("All domains"),
-            )
+            .selected_text(self.state.domain_filter.as_deref().unwrap_or("All domains"))
             .show_ui(ui, |ui| {
                 filters_changed |= ui
                     .selectable_value(&mut self.state.domain_filter, None, "All domains")
