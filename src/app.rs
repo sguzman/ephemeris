@@ -1841,7 +1841,9 @@ fn render_query_predicate_editor(
                 .changed();
         }
         QueryPredicate::BundleMembership { bundle_ref } => {
-            ui.small("Matches current adopted-release membership; this does not change event ownership.");
+            ui.small(
+                "Matches current adopted-release membership; this does not change event ownership.",
+            );
             changed |= ui
                 .add(
                     egui::TextEdit::singleline(bundle_ref)
@@ -1852,10 +1854,7 @@ fn render_query_predicate_editor(
         QueryPredicate::ProjectedCalendarMembership { calendar_id } => {
             ui.small("Matches a stable Resourcearium projected calendar ID in the current adopted release.");
             changed |= ui
-                .add(
-                    egui::TextEdit::singleline(calendar_id)
-                        .hint_text("projected-calendar:..."),
-                )
+                .add(egui::TextEdit::singleline(calendar_id).hint_text("projected-calendar:..."))
                 .changed();
         }
     }
@@ -2318,20 +2317,26 @@ fn date_group_label(event: &TemporalEvent, timezone: Tz) -> String {
 fn event_color(event: &TemporalEvent, colors: ColorPresentation<'_>) -> Color32 {
     let membership = colors.memberships.get(&event.id);
 
-    if let Some(overlay) = colors.overlays.iter().find(|overlay| {
-        overlay.matches_with_membership(event, &colors.query_context, membership)
-    }) {
-        if let Some(rule) = overlay.color_rules.iter().find(|rule| {
-            rule.matches_with_membership(event, &colors.query_context, membership)
-        }) {
+    if let Some(overlay) = colors
+        .overlays
+        .iter()
+        .find(|overlay| overlay.matches_with_membership(event, &colors.query_context, membership))
+    {
+        if let Some(rule) = overlay
+            .color_rules
+            .iter()
+            .find(|rule| rule.matches_with_membership(event, &colors.query_context, membership))
+        {
             return rgb_color(rule.color);
         }
         return semantic_color(event, overlay.color_by);
     }
 
-    if let Some(rule) = colors.rules.iter().find(|rule| {
-        rule.matches_with_membership(event, &colors.query_context, membership)
-    }) {
+    if let Some(rule) = colors
+        .rules
+        .iter()
+        .find(|rule| rule.matches_with_membership(event, &colors.query_context, membership))
+    {
         return rgb_color(rule.color);
     }
 
