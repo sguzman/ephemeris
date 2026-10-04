@@ -736,8 +736,8 @@ fn render_day(
     action
 }
 
-fn render_event_button<'a>(
-    ui: &'a mut egui::Ui,
+fn render_event_button(
+    ui: &mut egui::Ui,
     event: &TemporalEvent,
     timezone: Tz,
     selected: Option<Uuid>,
