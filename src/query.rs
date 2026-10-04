@@ -1108,6 +1108,85 @@ pub fn matches_composed_or_overlay_with_membership(
             .any(|overlay| overlay.matches_with_membership(event, context, membership))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TableColumn {
+    Date,
+    Time,
+    Title,
+    EventType,
+    Domain,
+    Jurisdiction,
+    Institution,
+    Status,
+    Importance,
+    PersonalRelevance,
+    Source,
+    Renderability,
+    Confidence,
+    Tags,
+    UpstreamEventRef,
+    ReconciledEventRef,
+}
+
+impl TableColumn {
+    pub const ALL: [Self; 16] = [
+        Self::Date,
+        Self::Time,
+        Self::Title,
+        Self::EventType,
+        Self::Domain,
+        Self::Jurisdiction,
+        Self::Institution,
+        Self::Status,
+        Self::Importance,
+        Self::PersonalRelevance,
+        Self::Source,
+        Self::Renderability,
+        Self::Confidence,
+        Self::Tags,
+        Self::UpstreamEventRef,
+        Self::ReconciledEventRef,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Date => "Date",
+            Self::Time => "Time / precision",
+            Self::Title => "Title",
+            Self::EventType => "Type",
+            Self::Domain => "Domain",
+            Self::Jurisdiction => "Jurisdiction",
+            Self::Institution => "Institution",
+            Self::Status => "Status",
+            Self::Importance => "Importance",
+            Self::PersonalRelevance => "Relevance",
+            Self::Source => "Source",
+            Self::Renderability => "Renderability",
+            Self::Confidence => "Confidence",
+            Self::Tags => "Tags",
+            Self::UpstreamEventRef => "Event ref",
+            Self::ReconciledEventRef => "Reconciled ref",
+        }
+    }
+}
+
+pub fn default_table_columns() -> Vec<TableColumn> {
+    vec![
+        TableColumn::Date,
+        TableColumn::Time,
+        TableColumn::Title,
+        TableColumn::EventType,
+        TableColumn::Domain,
+        TableColumn::Jurisdiction,
+        TableColumn::Institution,
+        TableColumn::Status,
+        TableColumn::Importance,
+        TableColumn::PersonalRelevance,
+        TableColumn::Source,
+    ]
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedView {
     pub id: Uuid,
@@ -1131,6 +1210,8 @@ pub struct SavedView {
     pub composition_layers: Vec<CompositionLayer>,
     #[serde(default)]
     pub overlays: Vec<Overlay>,
+    #[serde(default = "default_table_columns")]
+    pub table_columns: Vec<TableColumn>,
     pub display_timezone: String,
     pub week_start_monday: bool,
 }
@@ -1610,6 +1691,14 @@ mod tests {
         assert_eq!(view.composition_layers.len(), 1);
         assert_eq!(view.overlays.len(), 1);
         assert_eq!(view.sort_rules.len(), 1);
+        assert_eq!(
+            view.table_columns,
+            vec![
+                TableColumn::Title,
+                TableColumn::Date,
+                TableColumn::Jurisdiction,
+            ]
+        );
         assert!(!view.id.is_nil());
     }
 }
