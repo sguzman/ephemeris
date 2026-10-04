@@ -10,7 +10,10 @@ use crate::calendar::{
     shift_focus, week_days, window_for_view, year_months,
 };
 use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
-use crate::query::{ColorBy, GroupBy, SavedView, SortDirection, SortField, SortRule};
+use crate::query::{
+    ColorBy, GroupBy, IntegerField, IntegerOperator, PresenceField, QueryExpr, QueryPredicate,
+    SavedView, SortDirection, SortField, SortRule, TextField, TextOperator,
+};
 use crate::state::PersistedUiState;
 use crate::store::TemporalStore;
 use crate::taria::import_reconciled_event_set_file;
@@ -580,6 +583,39 @@ impl EphemerisApp {
                 }
             });
 
+        ui.collapsing("Advanced query", |ui| {
+            ui.small("Nested boolean predicates are ANDed with the simple facets above.");
+
+            if self.state.query_expression.is_none() {
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Add condition").clicked() {
+                        self.state.query_expression = Some(default_query_expr(QueryExprKind::Predicate));
+                        filters_changed = true;
+                    }
+                    if ui.button("Add AND group").clicked() {
+                        self.state.query_expression = Some(default_query_expr(QueryExprKind::All));
+                        filters_changed = true;
+                    }
+                    if ui.button("Add OR group").clicked() {
+                        self.state.query_expression = Some(default_query_expr(QueryExprKind::Any));
+                        filters_changed = true;
+                    }
+                    if ui.button("Add NOT").clicked() {
+                        self.state.query_expression = Some(default_query_expr(QueryExprKind::Not));
+                        filters_changed = true;
+                    }
+                });
+            } else {
+                if let Some(expression) = self.state.query_expression.as_mut() {
+                    filters_changed |= render_query_expr_editor(ui, expression, "root");
+                }
+                if ui.button("Clear advanced query").clicked() {
+                    self.state.query_expression = None;
+                    filters_changed = true;
+                }
+            }
+        });
+
         if filters_changed {
             self.state.active_saved_view_id = None;
             self.state.selected_event_id = None;
@@ -589,7 +625,8 @@ impl EphemerisApp {
         if (self.state.domain_filter.is_some()
             || self.state.jurisdiction_filter.is_some()
             || self.state.status_filter.is_some()
-            || !self.state.search_query.is_empty())
+            || !self.state.search_query.is_empty()
+            || self.state.query_expression.is_some())
             && ui.button("Clear query").clicked()
         {
             self.state.clear_query();
@@ -953,6 +990,346 @@ impl eframe::App for EphemerisApp {
 
         self.persist_state();
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueryExprKind {
+    Predicate,
+    All,
+    Any,
+    Not,
+}
+
+impl QueryExprKind {
+    const ALL: [Self; 4] = [Self::Predicate, Self::All, Self::Any, Self::Not];
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Predicate => "Condition",
+            Self::All => "AND",
+            Self::Any => "OR",
+            Self::Not => "NOT",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueryPredicateKind {
+    Text,
+    TextAnyOf,
+    StatusAnyOf,
+    Integer,
+    Exists,
+}
+
+impl QueryPredicateKind {
+    const ALL: [Self; 5] = [
+        Self::Text,
+        Self::TextAnyOf,
+        Self::StatusAnyOf,
+        Self::Integer,
+        Self::Exists,
+    ];
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Text => "Text",
+            Self::TextAnyOf => "Text set",
+            Self::StatusAnyOf => "Status set",
+            Self::Integer => "Integer",
+            Self::Exists => "Exists / missing",
+        }
+    }
+}
+
+fn default_query_expr(kind: QueryExprKind) -> QueryExpr {
+    let condition = || {
+        QueryExpr::Predicate(QueryPredicate::Text {
+            field: TextField::Title,
+            operator: TextOperator::Contains,
+            value: String::new(),
+            case_sensitive: false,
+        })
+    };
+
+    match kind {
+        QueryExprKind::Predicate => condition(),
+        QueryExprKind::All => QueryExpr::All(vec![condition()]),
+        QueryExprKind::Any => QueryExpr::Any(vec![condition()]),
+        QueryExprKind::Not => QueryExpr::Not(Box::new(condition())),
+    }
+}
+
+fn query_expr_kind(expression: &QueryExpr) -> QueryExprKind {
+    match expression {
+        QueryExpr::Predicate(_) => QueryExprKind::Predicate,
+        QueryExpr::All(_) => QueryExprKind::All,
+        QueryExpr::Any(_) => QueryExprKind::Any,
+        QueryExpr::Not(_) => QueryExprKind::Not,
+    }
+}
+
+fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
+    match kind {
+        QueryPredicateKind::Text => QueryPredicate::Text {
+            field: TextField::Title,
+            operator: TextOperator::Contains,
+            value: String::new(),
+            case_sensitive: false,
+        },
+        QueryPredicateKind::TextAnyOf => QueryPredicate::TextAnyOf {
+            field: TextField::Tags,
+            values: Vec::new(),
+            case_sensitive: false,
+        },
+        QueryPredicateKind::StatusAnyOf => QueryPredicate::StatusAnyOf { values: Vec::new() },
+        QueryPredicateKind::Integer => QueryPredicate::Integer {
+            field: IntegerField::Importance,
+            operator: IntegerOperator::GreaterThanOrEqual,
+            value: 0,
+        },
+        QueryPredicateKind::Exists => QueryPredicate::Exists {
+            field: PresenceField::Institution,
+            exists: true,
+        },
+    }
+}
+
+fn query_predicate_kind(predicate: &QueryPredicate) -> QueryPredicateKind {
+    match predicate {
+        QueryPredicate::Text { .. } => QueryPredicateKind::Text,
+        QueryPredicate::TextAnyOf { .. } => QueryPredicateKind::TextAnyOf,
+        QueryPredicate::StatusAnyOf { .. } => QueryPredicateKind::StatusAnyOf,
+        QueryPredicate::Integer { .. } => QueryPredicateKind::Integer,
+        QueryPredicate::Exists { .. } => QueryPredicateKind::Exists,
+    }
+}
+
+fn render_query_expr_editor(ui: &mut egui::Ui, expression: &mut QueryExpr, path: &str) -> bool {
+    let mut changed = false;
+    let mut kind = query_expr_kind(expression);
+
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt(("advanced-query-kind", path))
+                .selected_text(kind.label())
+                .show_ui(ui, |ui| {
+                    for candidate in QueryExprKind::ALL {
+                        changed |= ui
+                            .selectable_value(&mut kind, candidate, candidate.label())
+                            .changed();
+                    }
+                });
+
+            if kind != query_expr_kind(expression) {
+                *expression = default_query_expr(kind);
+                changed = true;
+            }
+        });
+
+        match expression {
+            QueryExpr::Predicate(predicate) => {
+                changed |= render_query_predicate_editor(ui, predicate, path);
+            }
+            QueryExpr::All(children) | QueryExpr::Any(children) => {
+                let mut remove = None;
+                for (index, child) in children.iter_mut().enumerate() {
+                    let child_path = format!("{path}.{index}");
+                    ui.horizontal_top(|ui| {
+                        if ui.small_button("×").on_hover_text("Remove clause").clicked() {
+                            remove = Some(index);
+                        }
+                        ui.vertical(|ui| {
+                            changed |= render_query_expr_editor(ui, child, &child_path);
+                        });
+                    });
+                }
+
+                if let Some(index) = remove {
+                    children.remove(index);
+                    changed = true;
+                }
+
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("+ condition").clicked() {
+                        children.push(default_query_expr(QueryExprKind::Predicate));
+                        changed = true;
+                    }
+                    if ui.button("+ AND").clicked() {
+                        children.push(default_query_expr(QueryExprKind::All));
+                        changed = true;
+                    }
+                    if ui.button("+ OR").clicked() {
+                        children.push(default_query_expr(QueryExprKind::Any));
+                        changed = true;
+                    }
+                    if ui.button("+ NOT").clicked() {
+                        children.push(default_query_expr(QueryExprKind::Not));
+                        changed = true;
+                    }
+                });
+            }
+            QueryExpr::Not(child) => {
+                ui.strong("Negates:");
+                changed |= render_query_expr_editor(ui, child, &format!("{path}.not"));
+            }
+        }
+    });
+
+    changed
+}
+
+fn render_query_predicate_editor(
+    ui: &mut egui::Ui,
+    predicate: &mut QueryPredicate,
+    path: &str,
+) -> bool {
+    let mut changed = false;
+    let mut kind = query_predicate_kind(predicate);
+
+    egui::ComboBox::from_id_salt(("advanced-predicate-kind", path))
+        .selected_text(kind.label())
+        .show_ui(ui, |ui| {
+            for candidate in QueryPredicateKind::ALL {
+                changed |= ui
+                    .selectable_value(&mut kind, candidate, candidate.label())
+                    .changed();
+            }
+        });
+
+    if kind != query_predicate_kind(predicate) {
+        *predicate = default_query_predicate(kind);
+        changed = true;
+    }
+
+    match predicate {
+        QueryPredicate::Text {
+            field,
+            operator,
+            value,
+            case_sensitive,
+        } => {
+            ui.horizontal_wrapped(|ui| {
+                egui::ComboBox::from_id_salt(("advanced-text-field", path))
+                    .selected_text(field.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in TextField::ALL {
+                            changed |= ui
+                                .selectable_value(field, candidate, candidate.label())
+                                .changed();
+                        }
+                    });
+                egui::ComboBox::from_id_salt(("advanced-text-op", path))
+                    .selected_text(operator.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in TextOperator::ALL {
+                            changed |= ui
+                                .selectable_value(operator, candidate, candidate.label())
+                                .changed();
+                        }
+                    });
+            });
+            changed |= ui
+                .add(egui::TextEdit::singleline(value).hint_text("value"))
+                .changed();
+            changed |= ui.checkbox(case_sensitive, "Case sensitive").changed();
+        }
+        QueryPredicate::TextAnyOf {
+            field,
+            values,
+            case_sensitive,
+        } => {
+            egui::ComboBox::from_id_salt(("advanced-set-field", path))
+                .selected_text(field.label())
+                .show_ui(ui, |ui| {
+                    for candidate in TextField::ALL {
+                        changed |= ui
+                            .selectable_value(field, candidate, candidate.label())
+                            .changed();
+                    }
+                });
+            let mut joined = values.join(", ");
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut joined)
+                        .hint_text("comma-separated accepted values"),
+                )
+                .changed()
+            {
+                *values = joined
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                changed = true;
+            }
+            changed |= ui.checkbox(case_sensitive, "Case sensitive").changed();
+        }
+        QueryPredicate::StatusAnyOf { values } => {
+            ui.horizontal_wrapped(|ui| {
+                for status in EventStatus::ALL {
+                    let mut selected = values.contains(&status);
+                    if ui.checkbox(&mut selected, status.as_str()).changed() {
+                        if selected {
+                            values.push(status);
+                        } else {
+                            values.retain(|value| *value != status);
+                        }
+                        changed = true;
+                    }
+                }
+            });
+        }
+        QueryPredicate::Integer {
+            field,
+            operator,
+            value,
+        } => {
+            ui.horizontal_wrapped(|ui| {
+                egui::ComboBox::from_id_salt(("advanced-int-field", path))
+                    .selected_text(field.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in IntegerField::ALL {
+                            changed |= ui
+                                .selectable_value(field, candidate, candidate.label())
+                                .changed();
+                        }
+                    });
+                egui::ComboBox::from_id_salt(("advanced-int-op", path))
+                    .selected_text(operator.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in IntegerOperator::ALL {
+                            changed |= ui
+                                .selectable_value(operator, candidate, candidate.label())
+                                .changed();
+                        }
+                    });
+                changed |= ui.add(egui::DragValue::new(value)).changed();
+            });
+        }
+        QueryPredicate::Exists { field, exists } => {
+            ui.horizontal_wrapped(|ui| {
+                egui::ComboBox::from_id_salt(("advanced-exists-field", path))
+                    .selected_text(field.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in PresenceField::ALL {
+                            changed |= ui
+                                .selectable_value(field, candidate, candidate.label())
+                                .changed();
+                        }
+                    });
+                changed |= ui
+                    .selectable_value(exists, true, "exists")
+                    .changed();
+                changed |= ui
+                    .selectable_value(exists, false, "is missing")
+                    .changed();
+            });
+        }
+    }
+
+    changed
 }
 
 #[derive(Debug, Clone, Copy)]
