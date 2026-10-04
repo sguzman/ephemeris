@@ -657,83 +657,8 @@ impl EphemerisApp {
         ui.strong("Color rules");
         ui.small("Rules are evaluated top to bottom; the first enabled match wins.");
 
-        let mut remove_color_rule = None;
-        let mut swap_color_rule = None;
-        let color_rule_count = self.state.color_rules.len();
-
-        for (index, rule) in self.state.color_rules.iter_mut().enumerate() {
-            ui.group(|ui| {
-                ui.horizontal_wrapped(|ui| {
-                    presentation_changed |= ui.checkbox(&mut rule.enabled, "").changed();
-                    presentation_changed |= ui
-                        .add(
-                            egui::TextEdit::singleline(&mut rule.name).hint_text("Color rule name"),
-                        )
-                        .changed();
-
-                    ui.label("RGB");
-                    presentation_changed |= ui
-                        .add(egui::DragValue::new(&mut rule.color.r).range(0..=255))
-                        .changed();
-                    presentation_changed |= ui
-                        .add(egui::DragValue::new(&mut rule.color.g).range(0..=255))
-                        .changed();
-                    presentation_changed |= ui
-                        .add(egui::DragValue::new(&mut rule.color.b).range(0..=255))
-                        .changed();
-
-                    if index > 0
-                        && ui
-                            .small_button("↑")
-                            .on_hover_text("Higher precedence")
-                            .clicked()
-                    {
-                        swap_color_rule = Some((index, index - 1));
-                    }
-                    if index + 1 < color_rule_count
-                        && ui
-                            .small_button("↓")
-                            .on_hover_text("Lower precedence")
-                            .clicked()
-                    {
-                        swap_color_rule = Some((index, index + 1));
-                    }
-                    if ui
-                        .small_button("×")
-                        .on_hover_text("Delete color rule")
-                        .clicked()
-                    {
-                        remove_color_rule = Some(index);
-                    }
-                });
-
-                presentation_changed |= render_query_expr_editor(
-                    ui,
-                    &mut rule.when,
-                    &format!("color-rule-{}", rule.id),
-                );
-            });
-        }
-
-        if let Some((left, right)) = swap_color_rule {
-            self.state.color_rules.swap(left, right);
-            presentation_changed = true;
-        }
-        if let Some(index) = remove_color_rule {
-            self.state.color_rules.remove(index);
-            presentation_changed = true;
-        }
-
-        if ui.button("Add color rule").clicked() {
-            self.state.color_rules.push(ColorRule {
-                id: Uuid::new_v4(),
-                name: format!("Rule {}", self.state.color_rules.len() + 1),
-                enabled: false,
-                when: default_query_expr(QueryExprKind::Predicate),
-                color: RgbColor::default(),
-            });
-            presentation_changed = true;
-        }
+        presentation_changed |=
+            render_color_rules_editor(ui, &mut self.state.color_rules, "base-color-rule");
 
         ui.horizontal_wrapped(|ui| {
             ui.label("Fallback:");
@@ -826,12 +751,13 @@ impl EphemerisApp {
                     );
                 }
 
-                if !overlay.color_rules.is_empty() {
-                    ui.small(format!(
-                        "{} overlay-specific color rules are preserved and evaluated before its fallback.",
-                        overlay.color_rules.len()
-                    ));
-                }
+                ui.collapsing("Overlay color rules", |ui| {
+                    presentation_changed |= render_color_rules_editor(
+                        ui,
+                        &mut overlay.color_rules,
+                        &format!("overlay-color-rule-{}", overlay.id),
+                    );
+                });
             });
         }
 
@@ -1203,6 +1129,91 @@ impl eframe::App for EphemerisApp {
 
         self.persist_state();
     }
+}
+
+fn render_color_rules_editor(
+    ui: &mut egui::Ui,
+    rules: &mut Vec<ColorRule>,
+    id_prefix: &str,
+) -> bool {
+    let mut changed = false;
+    let mut remove_rule = None;
+    let mut swap_rule = None;
+    let rule_count = rules.len();
+
+    for (index, rule) in rules.iter_mut().enumerate() {
+        ui.group(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                changed |= ui.checkbox(&mut rule.enabled, "").changed();
+                changed |= ui
+                    .add(egui::TextEdit::singleline(&mut rule.name).hint_text("Color rule name"))
+                    .changed();
+
+                ui.label("RGB");
+                changed |= ui
+                    .add(egui::DragValue::new(&mut rule.color.r).range(0..=255))
+                    .changed();
+                changed |= ui
+                    .add(egui::DragValue::new(&mut rule.color.g).range(0..=255))
+                    .changed();
+                changed |= ui
+                    .add(egui::DragValue::new(&mut rule.color.b).range(0..=255))
+                    .changed();
+
+                if index > 0
+                    && ui
+                        .small_button("↑")
+                        .on_hover_text("Higher precedence")
+                        .clicked()
+                {
+                    swap_rule = Some((index, index - 1));
+                }
+                if index + 1 < rule_count
+                    && ui
+                        .small_button("↓")
+                        .on_hover_text("Lower precedence")
+                        .clicked()
+                {
+                    swap_rule = Some((index, index + 1));
+                }
+                if ui
+                    .small_button("×")
+                    .on_hover_text("Delete color rule")
+                    .clicked()
+                {
+                    remove_rule = Some(index);
+                }
+            });
+
+            changed |= render_query_expr_editor(
+                ui,
+                &mut rule.when,
+                &format!("{id_prefix}-{}", rule.id),
+            );
+        });
+    }
+
+    if let Some((left, right)) = swap_rule {
+        rules.swap(left, right);
+        changed = true;
+    }
+    if let Some(index) = remove_rule {
+        rules.remove(index);
+        changed = true;
+    }
+
+    if ui.button("Add color rule").clicked() {
+        rules.push(ColorRule {
+            id: Uuid::new_v4(),
+            name: format!("Rule {}", rules.len() + 1),
+            enabled: false,
+            when: default_query_expr(QueryExprKind::Predicate),
+            color: RgbColor::default(),
+        });
+        changed = true;
+    }
+
+    changed
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
