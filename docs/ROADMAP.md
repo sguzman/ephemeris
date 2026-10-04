@@ -232,9 +232,24 @@ Implemented overlay foundation:
 - independent overlay fallback coloring and color rules
 - saved-view persistence and UI editing
 
+Implemented calendar-algebra foundation:
+
+- ordered `CompositionLayer` model
+- union
+- intersection
+- subtraction
+- deterministic sequential evaluation over the base query
+- runtime visibility integration
+- UI-state persistence
+- SavedView persistence
+- SQLite schema v8 persistence and migration
+- tests for ordering and disabled layers
+
+The composition-layer GUI editor is not implemented yet.
+
 Next after the Taria release-consumer slice:
 
-- explicit intersection/subtraction composition in addition to union
+- composition-layer GUI editor
 - richer facets
 - user-defined table columns
 - saved-view inheritance with cycle-safe semantics
