@@ -145,7 +145,7 @@ Important contract rules:
 - partial/pending/gap-only coverage must remain visible and must not be interpreted as an empty world.
 - ICS/JSCalendar/jCal/CSV are downstream projections, not the canonical interchange.
 
-The current bootstrap Taria release is integration-safe but does not yet expose reconciled-event-set paths in its shard manifest, so the existing Ephemeris event importer cannot consume that release end-to-end from the manifest alone. Production bundle artifacts already expose the richer reconciled payload path/hash shape.
+The current bootstrap channel is `temporal-bundle-release:bootstrap:2026-10-04:r3`: 1,114 ready events across Politics, Sports, and Holidays while nine canonical domain slots remain pending. Recovered Politics/Holidays shards now expose pinned `CompactReconciledEventIndex` payloads, but the Elections/Sports specimen shards still lack an explicit rich reconciled payload path in the release manifest. The existing Ephemeris importer therefore cannot yet consume the entire bootstrap release end-to-end from the manifest alone. Production bundle artifacts already expose full ReconciledProjectionEventSet path/hash metadata.
 
 See:
 
