@@ -634,7 +634,7 @@ impl eframe::App for EphemerisApp {
                 .raw
                 .dropped_files
                 .iter()
-                .filter_map(|file| file.path().map(std::path::Path::to_path_buf))
+                .map(|file| file.path().to_path_buf())
                 .collect::<Vec<_>>()
         });
         for path in dropped_paths {
