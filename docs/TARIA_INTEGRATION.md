@@ -112,28 +112,29 @@ At the current 2026-10-04 boundary, Resourcearium has:
 The current bootstrap release is:
 
 ```text
-temporal-bundle-release:bootstrap:2026-10-04:r4
+temporal-bundle-release:bootstrap:2026-10-04:r10
 ```
 
 It is explicitly `bootstrap-partial` and currently exposes:
 
-- 1,114 ready events;
+- 1,357 unique ready events;
 - 15 represented canonical Resource identities;
-- 2 typed recovered ingestion profiles;
+- 38 selected ingestion profiles;
 - 196 recovered source surfaces;
-- 3 partially populated canonical domain slots;
-- 9 pending canonical domain slots;
+- 8 partially populated canonical domain slots;
+- 4 explicit gap-only canonical domain slots;
+- 0 pending canonical domain slots;
 - consumer-safe integration posture;
 - non-production-complete status.
 
-Populated data currently includes:
+The current release combines:
 
-- 1,038 recovered 2026 U.S. Politics events;
-- 11 2027 European national-election events;
-- 37 2026 U.S. pro-sports events excluding hockey;
-- 28 recovered U.S. Holidays events.
+- recovered downstream-derived U.S. Politics and U.S. Holidays state;
+- full reconciled Elections and Sports specimen sets;
+- frozen-rebuild compact reconciled indexes for Economics, Finance, Business, Culture, and Education;
+- explicit gap-only shards for Science/Technology/Space, Public Health, Environment/Weather, and Transportation/Civic Infrastructure.
 
-The recovered U.S. Politics and Holidays shards are explicitly downstream-derived recovery state rather than fresh upstream publisher observations.
+Gap-only remains explicit evidence about current coverage and must not be interpreted as an empty real-world domain.
 
 The production channel remains independently advanceable as acquisition coverage improves.
 
@@ -244,12 +245,12 @@ shards[]
 
 A shard identifies a bundle, frozen normalized snapshot, CalendarSet, counts, integrity fingerprints, data posture, and an accepted post-reconciliation payload.
 
-Bootstrap r4 uses two payload classes:
+Bootstrap r10 uses both accepted payload classes:
 
-- recovered Politics/Holidays -> `CompactReconciledEventIndex`;
+- recovered/frozen-rebuild shards -> `CompactReconciledEventIndex`;
 - Elections/Sports -> full `ReconciledProjectionEventSet`.
 
-All four populated r4 shards are therefore directly consumable.
+All populated r10 shards are directly consumable, while gap-only shards preserve explicit zero-ready-event coverage posture.
 
 ### Production partial/complete
 
@@ -274,16 +275,11 @@ Ephemeris treats these as packaging variants of the same release concept.
 
 ## Current bootstrap payload posture
 
-Bootstrap r4 closes the prior payload gap.
+Bootstrap r10 closes the prior payload gap.
 
-Current populated shards:
+Current r10 populated shards use either pinned `CompactReconciledEventIndex` or pinned `ReconciledProjectionEventSet` payloads. Ephemeris consumes both through the same local release updater and persists each shard's CalendarSet independently.
 
-- U.S. Politics recovery -> pinned `CompactReconciledEventIndex`;
-- U.S. Holidays recovery -> pinned `CompactReconciledEventIndex`;
-- 2027 European national elections -> pinned `ReconciledProjectionEventSet`;
-- 2026 U.S. pro sports excluding hockey -> pinned `ReconciledProjectionEventSet`.
-
-Ephemeris now consumes both payload classes through the same local release updater and persists each shard's CalendarSet independently.
+Four canonical domains are intentionally represented as gap-only in r10. Their gap posture is preserved and shown in the adopted-release UI.
 
 CalendarSet remains membership metadata rather than event payload, and ICS is not used as a bridge.
 
@@ -309,7 +305,7 @@ selected-but-uningested != empty source
 
 A partial release is still useful and may be adopted immediately.
 
-The UI should eventually expose release coverage and acquisition posture directly.
+The Sources/Taria UI now exposes adopted release coverage and per-bundle partial/pending/gap-only posture directly from the persisted manifest.
 
 ## Identity
 
@@ -467,21 +463,26 @@ Implemented now:
 - global cross-bundle event deduplication;
 - one-click **Update Taria Sources**;
 - persisted last release/update summary;
-- explicit skipped-artifact reporting.
+- explicit skipped-artifact reporting;
+- adopted release coverage/status UI;
+- per-bundle partial/pending/gap-only posture;
+- bundle/projected-calendar membership predicates;
+- release-backed membership selectors in the query editor.
 
-Current bootstrap r4 behavior:
+Current bootstrap r10 behavior:
 
-- recovered Politics -> imported from CompactReconciledEventIndex;
-- recovered Holidays -> imported from CompactReconciledEventIndex;
-- Elections -> imported from ReconciledProjectionEventSet;
-- Sports -> imported from ReconciledProjectionEventSet;
-- all four CalendarSets/memberships are retained independently.
+- all populated shards are imported through accepted post-reconciliation payloads;
+- compact recovery/frozen-rebuild and full reconciled payloads coexist;
+- CalendarSets/memberships are retained independently from event identity;
+- eight bundle slots are partially populated;
+- four bundle slots are explicit gap-only;
+- zero bundle slots are pending;
+- release posture is visible in the Sources panel.
 
 Production support is implemented and regression-tested with overlapping domain projections. The live Resourcearium production channel is still unset.
 
 Not implemented yet:
 
-- release coverage UI;
 - whole-release transaction/rollback across multiple payloads;
 - asynchronous large-release adoption;
 - release-history/diff inspection.
