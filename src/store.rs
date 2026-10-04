@@ -1341,12 +1341,12 @@ mod tests {
         store.upsert_source(&source).expect("source");
 
         let day = NaiveDate::from_ymd_opt(2026, 10, 4).expect("date");
-        let mut first = TemporalEvent::new("One", TimeSpec::DateOnly { date: day });
+        let mut first = TemporalEvent::new("One", TimeSpec::DateOnly { start: day, end_exclusive: None });
         first.source_id = Some(source.id);
         first.source_record_key = Some("uid-1".to_string());
         store.upsert_event(&first).expect("first");
 
-        let mut second = TemporalEvent::new("Two", TimeSpec::DateOnly { date: day });
+        let mut second = TemporalEvent::new("Two", TimeSpec::DateOnly { start: day, end_exclusive: None });
         second.source_id = Some(source.id);
         second.source_record_key = Some("uid-1".to_string());
 
