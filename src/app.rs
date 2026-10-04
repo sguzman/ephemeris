@@ -971,7 +971,10 @@ fn render_agenda(
     ordered.sort_by(|left, right| {
         agenda_sort_date(left, timezone)
             .cmp(&agenda_sort_date(right, timezone))
-            .then_with(|| left.display_time_label(timezone).cmp(&right.display_time_label(timezone)))
+            .then_with(|| {
+                left.display_time_label(timezone)
+                    .cmp(&right.display_time_label(timezone))
+            })
             .then_with(|| left.normalized_title.cmp(&right.normalized_title))
     });
 
