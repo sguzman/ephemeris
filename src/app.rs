@@ -117,7 +117,7 @@ impl EphemerisApp {
     }
 
     fn handle_shortcuts(&mut self, ui: &egui::Ui) {
-        if ui.ctx().wants_keyboard_input() {
+        if ui.ctx().egui_wants_keyboard_input() {
             return;
         }
 
