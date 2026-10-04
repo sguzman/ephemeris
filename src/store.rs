@@ -2308,11 +2308,7 @@ mod tests {
                 .bundle_refs
                 .contains("bundle:temporal/politics-government")
         );
-        assert!(
-            membership
-                .calendar_refs
-                .contains("projected-calendar:test")
-        );
+        assert!(membership.calendar_refs.contains("projected-calendar:test"));
         assert!(event.domain.is_none());
     }
 
