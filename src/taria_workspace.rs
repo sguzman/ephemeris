@@ -257,8 +257,9 @@ pub fn update_taria_sources(
     }
 
     report.resolved_calendar_memberships += store.resolve_taria_calendar_memberships()?;
-    report.resolved_calendar_memberships =
-        report.resolved_calendar_memberships.min(report.calendar_memberships);
+    report.resolved_calendar_memberships = report
+        .resolved_calendar_memberships
+        .min(report.calendar_memberships);
 
     Ok(report)
 }
@@ -393,8 +394,7 @@ fn import_calendar_set_from_container(
 
     let calendar_set_id = required_string(object, "calendar_set_id")?;
     let projection_ref = required_string(object, "projection_ref")?;
-    let input_reconciled_event_set_ref =
-        required_string(object, "input_reconciled_event_set_ref")?;
+    let input_reconciled_event_set_ref = required_string(object, "input_reconciled_event_set_ref")?;
 
     let calendars = object
         .get("calendars")
@@ -422,9 +422,9 @@ fn import_calendar_set_from_container(
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("Taria CalendarSet is missing event_membership[]"))?
     {
-        let membership = membership.as_object().ok_or_else(|| {
-            anyhow!("CalendarSet event_membership[] contains a non-object value")
-        })?;
+        let membership = membership
+            .as_object()
+            .ok_or_else(|| anyhow!("CalendarSet event_membership[] contains a non-object value"))?;
         let reconciled_event_ref = required_string(membership, "reconciled_event_ref")?;
         let calendar_refs = membership
             .get("calendar_refs")
