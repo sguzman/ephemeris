@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the schema-v9 release-consumer checkpoint, all **47** library tests pass. Verified implementation head: `41738386168f3ae9d3d803fee0dd1d925a59cfd8`, with format, check, strict Clippy, and tests all green.
+At the membership-query checkpoint, all **49** library tests pass. Verified implementation head: `5c25e3adc85fad67a97704100d60a70a7439515c`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -204,6 +204,8 @@ Current query surface:
 - jurisdiction
 - lifecycle status
 - source visibility
+- current-release Taria bundle membership
+- current-release projected CalendarSet membership
 
 Source visibility is independent from the event query.
 
@@ -232,6 +234,8 @@ Advanced queries support:
 - timezone-aware instant-to-date evaluation
 - opt-in month/year imprecise-span matching
 - relative civil-date windows anchored to the view timezone's current day
+- Taria bundle-membership predicates by stable bundle ref
+- Taria projected-calendar-membership predicates by stable calendar ID
 - recursive GUI editing
 - persistence through UI state and saved views
 - backward-compatible loading of older saved query JSON
@@ -387,18 +391,23 @@ Implemented:
 
 ## Immediate next implementation boundary
 
-Expose the newly persisted **Taria bundle/CalendarSet membership** to the programmable view/query layer without making it event ownership.
+Expose **release coverage / pending / gap posture** in the Sources/Taria UI, then harden release adoption execution.
+
+Membership-aware programmable views are now implemented:
+
+1. current-release bundle membership is queryable by stable bundle ref;
+2. projected CalendarSet membership is queryable by stable calendar ID;
+3. both predicates flow through the same recursive `QueryExpr` used by saved views, overlays, color rules, and calendar algebra;
+4. membership remains external query context and is not copied into `TemporalEvent`;
+5. event coloring and unplaced/conflicted rendering use the same membership-aware query semantics.
 
 The next slice should:
 
-1. make current-release bundle membership queryable by stable bundle ref;
-2. make projected CalendarSet membership queryable by stable calendar ID;
-3. expose those predicates in saved views, overlays, color rules, and calendar algebra;
-4. keep membership as independent query context rather than copying bundle/container identity into `TemporalEvent`;
-5. expose current release coverage/pending/gap posture in the source/release UI;
-6. then move large release adoption to a worker boundary and add whole-release transaction/rollback semantics.
-
-The transport, rich bootstrap-r4 payload adoption, CalendarSet persistence, upstream aliasing, and production cross-bundle deduplication are now implemented.
+1. expose current adopted release status, completeness, ready counts, pending/gap bundle posture, and CalendarSet/membership counts in the Taria source panel;
+2. expose stable bundle/calendar references ergonomically so membership predicates do not require remembering raw IDs;
+3. move large release adoption to a worker boundary;
+4. add whole-release transaction/rollback semantics;
+5. add release-history/diff inspection.
 
 After that, continue programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
 
