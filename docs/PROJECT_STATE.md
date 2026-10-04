@@ -8,7 +8,7 @@ Ephemeris is now a working native Rust + egui calendar foundation backed by an e
 
 The original documentation/inheritance phase is complete. The project has crossed the important architectural boundary that motivated the spinoff from Rivetr: calendar data is no longer forced through `TaskDto` or task-file persistence.
 
-The current application can ingest real Taria Resourcearium reconciled temporal event sets, preserve rich upstream temporal semantics and provenance references, query the resulting corpus, render standard calendar ranges, inspect records, and persist named programmable calendar views. Taria has now also established immutable TemporalBundleRelease packaging; Ephemeris has documented that release contract but has not yet implemented release-manifest adoption.
+The current application can ingest real Taria Resourcearium reconciled temporal event sets and compact recovered reconciled indexes, preserve rich upstream temporal semantics and provenance references, query the resulting corpus, render standard calendar ranges, inspect records, and persist named programmable calendar views. Taria has established immutable TemporalBundleRelease packaging, and Ephemeris now has the first filesystem-first release consumer slice: local Resourcearium discovery, local channel/manifest resolution, hash validation, and one-click supported-shard adoption.
 
 ## Verified quality gate
 
@@ -118,6 +118,8 @@ Import behavior:
 
 Entry surfaces:
 
+- one-click **Update Taria Sources** against a configured local Resourcearium tree
+- automatic sibling/local Taria checkout detection
 - drag/drop reconciled JSON onto the GUI
 - `ephemeris-import` CLI
 
@@ -145,15 +147,14 @@ Important consumer rule:
 - CalendarSet carries membership/navigation metadata.
 - overlapping bundle membership must never clone event identity.
 
-The current direct reconciled-event-set importer is the low-level payload adapter for the future release importer.
+The direct reconciled-event-set importer and CompactReconciledEventIndex importer are now low-level payload adapters beneath the local release updater.
 
-Current bootstrap payload posture:
+Current bootstrap update behavior:
 
-- recovered U.S. Politics and U.S. Holidays shards expose pinned `CompactReconciledEventIndex` paths/hashes;
-- those compact indexes are explicitly post-reconciliation and preserve stable event/assertion/provenance identity;
-- the European Elections and U.S. Sports specimen shards still do not expose a rich reconciled payload path in the release manifest;
-- production `bundle_artifacts[]` expose full ReconciledProjectionEventSet paths/hashes;
-- therefore bootstrap r3 is materially closer to direct adoption, but the existing Ephemeris importer still cannot adopt the full release end-to-end from the manifest alone.
+- recovered U.S. Politics and U.S. Holidays shards expose pinned `CompactReconciledEventIndex` paths/hashes and are now directly consumable through **Update Taria Sources**;
+- local artifact paths are constrained to the configured Resourcearium tree and SHA-256 checked;
+- European Elections and U.S. Sports are reported skipped because their release shards still lack an accepted reconciled payload path;
+- production `bundle_artifacts[]` are recognized but deliberately not imported yet because overlapping domain projections require release-level global deduplication plus CalendarSet membership persistence.
 
 ### Calendar presentation
 
@@ -283,11 +284,13 @@ The current milestone is a foundation, not the finished calendar.
 
 Not yet implemented:
 
-- TemporalBundleRelease v1 manifest importer
-- CompactReconciledEventIndex payload adapter
+- complete TemporalBundleRelease adoption across every populated shard/artifact
 - CalendarSet membership persistence
-- release/channel/coverage metadata persistence
-- release integrity/hash validation as one atomic adoption
+- canonical release/channel/coverage metadata persistence in SQLite
+- production cross-bundle identity reconciliation
+- production partial/complete adoption through the one-click updater
+- release coverage/pending/gap UI
+- whole-release atomic rollback across multiple source imports
 - composition-layer GUI editor
 - saved-view-reference composition / inheritance with cycle-safe semantics
 - event-occurrence/recurrence engine
@@ -368,19 +371,17 @@ Implemented:
 
 ## Immediate next implementation boundary
 
-Implement the Taria **TemporalBundleRelease v1** consumer path before adding another large product subsystem:
+Finish the **release semantics** behind the now-materialized filesystem workflow:
 
-1. load and validate immutable release manifests;
-2. support current bootstrap `shards[]` and production `bundle_artifacts[]` packaging variants;
-3. resolve full ReconciledProjectionEventSet or accepted CompactReconciledEventIndex payloads without falling back to ICS;
-4. import canonical events exactly once across overlapping bundle domains;
-5. persist CalendarSet membership separately from event identity;
-6. persist release/channel/coverage metadata;
-7. preserve partial/pending/gap-only posture;
-8. validate hashes/fingerprints transactionally;
-9. retain the existing conservative missing-record and local-annotation semantics.
+1. persist adopted release/channel/coverage metadata canonically in SQLite;
+2. persist CalendarSet membership separately from event identity;
+3. implement release-level global event identity reconciliation across overlapping production bundles;
+4. adopt production `bundle_artifacts[]` through the same **Update Taria Sources** button;
+5. surface partial/pending/gap-only release posture in the UI;
+6. make multi-artifact release adoption atomic as a whole;
+7. move large updates to an explicit worker boundary so the egui frame loop never stalls.
 
-The direct ReconciledProjectionEventSet importer remains the low-level event adapter beneath this release importer.
+The transport problem is intentionally no longer in scope: local filesystem Resourcearium is the default transport and already works.
 
 After that, resume programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
 
