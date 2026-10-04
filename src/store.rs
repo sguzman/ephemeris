@@ -482,6 +482,31 @@ impl TemporalStore {
         reconciled_ref: Option<&str>,
         event_ref: Option<&str>,
     ) -> anyhow::Result<Option<TemporalEvent>> {
+        for (kind, value) in [
+            ("reconciled", reconciled_ref),
+            ("event", event_ref),
+        ] {
+            let Some(value) = value else {
+                continue;
+            };
+            let sql = event_select_sql(
+                "WHERE id = (
+                    SELECT event_id
+                    FROM temporal_event_upstream_identities
+                    WHERE identity_kind = ?1 AND identity_value = ?2
+                )",
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            if let Some(event) = stmt
+                .query_row(params![kind, value], decode_event)
+                .optional()
+                .context("failed to query event by upstream identity alias")?
+            {
+                return Ok(Some(event));
+            }
+        }
+
+        // Compatibility fallback for databases populated before the alias table existed.
         if let Some(reconciled_ref) = reconciled_ref {
             let sql = event_select_sql(
                 "WHERE upstream_reconciled_key = ?1
@@ -670,10 +695,9 @@ impl TemporalStore {
                 let event_id: Option<String> = tx
                     .query_row(
                         r#"
-                        SELECT id
-                        FROM temporal_events
-                        WHERE upstream_reconciled_key = ?1
-                        ORDER BY created_at, id
+                        SELECT event_id
+                        FROM temporal_event_upstream_identities
+                        WHERE identity_kind = 'reconciled' AND identity_value = ?1
                         LIMIT 1
                         "#,
                         params![membership.reconciled_event_ref],
@@ -729,18 +753,19 @@ impl TemporalStore {
                 r#"
                 UPDATE taria_calendar_memberships
                 SET event_id = (
-                    SELECT id
-                    FROM temporal_events
-                    WHERE upstream_reconciled_key =
+                    SELECT event_id
+                    FROM temporal_event_upstream_identities
+                    WHERE identity_kind = 'reconciled'
+                      AND identity_value =
                         taria_calendar_memberships.reconciled_event_ref
-                    ORDER BY created_at, id
                     LIMIT 1
                 )
                 WHERE event_id IS NULL
                   AND EXISTS (
                     SELECT 1
-                    FROM temporal_events
-                    WHERE upstream_reconciled_key =
+                    FROM temporal_event_upstream_identities
+                    WHERE identity_kind = 'reconciled'
+                      AND identity_value =
                         taria_calendar_memberships.reconciled_event_ref
                   )
                 "#,
@@ -979,6 +1004,48 @@ impl TemporalStore {
                 } else {
                     self.upsert_event(event)?;
                     created += 1;
+                }
+
+                for (identity_kind, identity_value) in [
+                    ("event", event.upstream_event_ref.as_deref()),
+                    ("reconciled", event.upstream_reconciled_key.as_deref()),
+                ] {
+                    let Some(identity_value) = identity_value else {
+                        continue;
+                    };
+                    let existing_event_id: Option<String> = tx
+                        .query_row(
+                            r#"
+                            SELECT event_id
+                            FROM temporal_event_upstream_identities
+                            WHERE identity_kind = ?1 AND identity_value = ?2
+                            "#,
+                            params![identity_kind, identity_value],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .context("failed to check Taria upstream identity alias")?;
+                    if let Some(existing_event_id) = existing_event_id {
+                        if existing_event_id != event.id.to_string() {
+                            return Err(anyhow!(
+                                "Taria upstream identity collision for {}:{}: {} != {}",
+                                identity_kind,
+                                identity_value,
+                                existing_event_id,
+                                event.id
+                            ));
+                        }
+                    } else {
+                        tx.execute(
+                            r#"
+                            INSERT INTO temporal_event_upstream_identities (
+                                identity_kind, identity_value, event_id
+                            ) VALUES (?1, ?2, ?3)
+                            "#,
+                            params![identity_kind, identity_value, event.id.to_string()],
+                        )
+                        .context("failed to record Taria upstream identity alias")?;
+                    }
                 }
 
                 tx.execute(
@@ -1316,6 +1383,16 @@ fn create_taria_release_schema_current(conn: &Connection) -> anyhow::Result<()> 
         CREATE INDEX temporal_event_import_records_event
             ON temporal_event_import_records(event_id);
 
+        CREATE TABLE temporal_event_upstream_identities (
+            identity_kind TEXT NOT NULL,
+            identity_value TEXT NOT NULL,
+            event_id TEXT NOT NULL REFERENCES temporal_events(id) ON DELETE CASCADE,
+            PRIMARY KEY (identity_kind, identity_value)
+        );
+
+        CREATE INDEX temporal_event_upstream_identities_event
+            ON temporal_event_upstream_identities(event_id);
+
         CREATE INDEX temporal_events_upstream_reconciled_key
             ON temporal_events(upstream_reconciled_key);
 
@@ -1395,6 +1472,32 @@ fn create_taria_release_schema_current(conn: &Connection) -> anyhow::Result<()> 
         [],
     )
     .context("failed to backfill temporal import-record identities")?;
+
+    conn.execute(
+        r#"
+        INSERT OR IGNORE INTO temporal_event_upstream_identities (
+            identity_kind, identity_value, event_id
+        )
+        SELECT 'event', upstream_event_ref, id
+        FROM temporal_events
+        WHERE upstream_event_ref IS NOT NULL
+        "#,
+        [],
+    )
+    .context("failed to backfill Taria event identity aliases")?;
+
+    conn.execute(
+        r#"
+        INSERT OR IGNORE INTO temporal_event_upstream_identities (
+            identity_kind, identity_value, event_id
+        )
+        SELECT 'reconciled', upstream_reconciled_key, id
+        FROM temporal_events
+        WHERE upstream_reconciled_key IS NOT NULL
+        "#,
+        [],
+    )
+    .context("failed to backfill Taria reconciled identity aliases")?;
 
     Ok(())
 }
