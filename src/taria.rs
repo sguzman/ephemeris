@@ -20,6 +20,7 @@ pub struct TariaImportReport {
     pub created: usize,
     pub updated: usize,
     pub unchanged: usize,
+    pub retained_missing: usize,
     pub imprecise: usize,
     pub unplaced: usize,
     pub blocked_or_undated: usize,
@@ -84,7 +85,6 @@ pub fn import_reconciled_event_set_json(
     source.locator = locator.map(ToOwned::to_owned);
     source.updated_at = Utc::now();
     source.properties = source_properties(object);
-    store.upsert_source(&source)?;
 
     let mut report = TariaImportReport {
         projection_ref: projection_ref.clone(),
@@ -94,10 +94,13 @@ pub fn import_reconciled_event_set_json(
         created: 0,
         updated: 0,
         unchanged: 0,
+        retained_missing: 0,
         imprecise: 0,
         unplaced: 0,
         blocked_or_undated: 0,
     };
+
+    let mut normalized_events = Vec::with_capacity(events.len());
 
     for raw_event in events {
         let event_object = raw_event
@@ -116,8 +119,7 @@ pub fn import_reconciled_event_set_json(
             })?
             .to_string();
 
-        let existing = store.event_by_source_record(source.id, &record_key)?;
-        let mut event = normalized_event(
+        let event = normalized_event(
             event_object,
             source.id,
             &record_key,
@@ -139,22 +141,14 @@ pub fn import_reconciled_event_set_json(
             report.blocked_or_undated += 1;
         }
 
-        if let Some(existing) = existing {
-            event.id = existing.id;
-            event.created_at = existing.created_at;
-            event.updated_at = existing.updated_at;
-            if event == existing {
-                report.unchanged += 1;
-                continue;
-            }
-            event.updated_at = Utc::now();
-            store.upsert_event(&event)?;
-            report.updated += 1;
-        } else {
-            store.upsert_event(&event)?;
-            report.created += 1;
-        }
+        normalized_events.push(event);
     }
+
+    let batch = store.import_batch(&source, &mut normalized_events)?;
+    report.created = batch.created;
+    report.updated = batch.updated;
+    report.unchanged = batch.unchanged;
+    report.retained_missing = batch.retained_missing;
 
     Ok(report)
 }
