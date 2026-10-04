@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the whole-release atomic-adoption checkpoint, all **51** library tests pass. Verified implementation head: `17cef55daf6acf8dc3a43693d42c6c3b461a5585`, with format, check, strict Clippy, and tests all green.
+At the background-update checkpoint, all **51** library tests pass. Verified implementation head: `9c55239ba1309dd5d15a13126d0188dc26be1076`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -310,7 +310,6 @@ The current milestone is a foundation, not the finished calendar.
 Not yet implemented:
 
 - richer release-history/diff inspection
-- background/worker execution for large release adoption
 - composition-layer GUI editor
 - saved-view-reference composition / inheritance with cycle-safe semantics
 - event-occurrence/recurrence engine
@@ -409,11 +408,19 @@ Whole-release transaction/rollback is now implemented and verified:
 - if any later shard/artifact fails, all earlier mutations from that release are rolled back;
 - the rollback regression deliberately imports one valid shard, fails a later shard integrity check, and verifies zero events, zero release metadata, and zero memberships remain.
 
+Background execution is now implemented and verified:
+
+- **Update Taria Sources** starts a worker thread;
+- the worker opens its own SQLite connection to the same WAL database;
+- release adoption remains one atomic transaction in that worker connection;
+- Taria path/channel controls are disabled while the update runs;
+- both update buttons show a running state;
+- egui polls the worker without blocking and reloads the calendar only after completion.
+
 The next slice should:
 
-1. move large release adoption to a worker boundary so **Update Taria Sources** never stalls egui;
-2. add release-history/diff inspection;
-3. then continue programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
+1. add release-history/diff inspection;
+2. then continue programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
 
 ## Rule going forward
 
