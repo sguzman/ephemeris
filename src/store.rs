@@ -2810,10 +2810,7 @@ mod tests {
         new_event.upstream_reconciled_key = Some("reconciled-event:new".to_string());
 
         store
-            .import_taria_batch(
-                &source,
-                &mut [old_event.clone(), new_event.clone()],
-            )
+            .import_taria_batch(&source, &mut [old_event.clone(), new_event.clone()])
             .expect("events");
 
         for release_id in ["release:old", "release:new"] {
