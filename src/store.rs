@@ -17,6 +17,7 @@ const SCHEMA_VERSION: i64 = 2;
 pub struct ImportBatchResult {
     pub created: usize,
     pub updated: usize,
+    pub unchanged: usize,
     pub retained_missing: usize,
 }
 
@@ -403,6 +404,7 @@ impl TemporalStore {
 
             let mut created = 0usize;
             let mut updated = 0usize;
+            let mut unchanged = 0usize;
 
             for event in events {
                 event.source_id = Some(source.id);
@@ -412,6 +414,11 @@ impl TemporalStore {
                 {
                     event.id = existing.id;
                     event.created_at = existing.created_at;
+                    event.updated_at = existing.updated_at;
+                    if *event == existing {
+                        unchanged += 1;
+                        continue;
+                    }
                     event.updated_at = Utc::now();
                     updated += 1;
                 } else {
@@ -423,6 +430,7 @@ impl TemporalStore {
             Ok(ImportBatchResult {
                 created,
                 updated,
+                unchanged,
                 retained_missing: existing_keys.difference(&incoming_keys).count(),
             })
         })();
