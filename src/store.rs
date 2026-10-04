@@ -500,7 +500,9 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
     }
 
     if current == 0 {
-        let tx = conn\n            .transaction()\n            .context("failed to start schema migration")?;
+        let tx = conn
+            .transaction()
+            .context("failed to start schema migration")?;
         create_schema_v2(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
@@ -625,7 +627,9 @@ fn create_schema_v2(conn: &Connection) -> anyhow::Result<()> {
 }
 
 fn migrate_v1_to_v2(conn: &mut Connection) -> anyhow::Result<()> {
-    let tx = conn\n        .transaction()\n        .context("failed to start v1 to v2 migration")?;
+    let tx = conn
+        .transaction()
+        .context("failed to start v1 to v2 migration")?;
 
     tx.execute_batch(
         r#"
