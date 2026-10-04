@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use chrono::{Datelike, NaiveDate, NaiveTime, Utc};
+use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -171,6 +171,12 @@ pub enum QueryPredicate {
         #[serde(default)]
         include_imprecise: bool,
     },
+    RelativeDateOverlaps {
+        start_offset_days: i32,
+        end_offset_days_exclusive: i32,
+        #[serde(default)]
+        include_imprecise: bool,
+    },
 }
 
 impl QueryPredicate {
@@ -222,6 +228,32 @@ impl QueryPredicate {
                         && end_exclusive
                             .is_none_or(|query_end_exclusive| event_start < query_end_exclusive)
                 }),
+            Self::RelativeDateOverlaps {
+                start_offset_days,
+                end_offset_days_exclusive,
+                include_imprecise,
+            } => {
+                let start = context
+                    .today
+                    .checked_add_signed(Duration::days(i64::from(*start_offset_days)));
+                let end_exclusive = context.today.checked_add_signed(Duration::days(i64::from(
+                    *end_offset_days_exclusive,
+                )));
+
+                match (start, end_exclusive) {
+                    (Some(start), Some(end_exclusive)) if end_exclusive > start => {
+                        event_date_span(
+                            &event.time,
+                            context.display_timezone,
+                            *include_imprecise,
+                        )
+                        .is_some_and(|(event_start, event_end_exclusive)| {
+                            event_end_exclusive > start && event_start < end_exclusive
+                        })
+                    }
+                    _ => false,
+                }
+            }
         }
     }
 }
@@ -1062,6 +1094,46 @@ mod tests {
             ..EventQuery::default()
         };
         assert!(inclusive.matches(&month_event, &test_context()));
+    }
+
+    #[test]
+    fn relative_date_window_uses_explicit_today_anchor() {
+        let query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::RelativeDateOverlaps {
+                start_offset_days: 1,
+                end_offset_days_exclusive: 31,
+                include_imprecise: false,
+            })),
+            ..EventQuery::default()
+        };
+
+        let mut future = event();
+        future.time = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 11, 3).expect("future"),
+            end_exclusive: None,
+        };
+        assert!(query.matches(&future, &test_context()));
+
+        let mut today = event();
+        today.time = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 4).expect("today"),
+            end_exclusive: None,
+        };
+        assert!(!query.matches(&today, &test_context()));
+    }
+
+    #[test]
+    fn invalid_relative_date_window_matches_nothing() {
+        let query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::RelativeDateOverlaps {
+                start_offset_days: 10,
+                end_offset_days_exclusive: 5,
+                include_imprecise: true,
+            })),
+            ..EventQuery::default()
+        };
+
+        assert!(!query.matches(&event(), &test_context()));
     }
 
     #[test]
