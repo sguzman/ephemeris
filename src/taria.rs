@@ -165,6 +165,222 @@ pub fn import_reconciled_event_set_json(
     })
 }
 
+pub fn import_compact_reconciled_event_index_file(
+    store: &TemporalStore,
+    path: impl AsRef<Path>,
+    bundle_ref: Option<&str>,
+) -> anyhow::Result<TariaImportReport> {
+    let path = path.as_ref();
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read Taria compact event index {}", path.display()))?;
+    import_compact_reconciled_event_index_json(
+        store,
+        &raw,
+        Some(&path.display().to_string()),
+        bundle_ref,
+    )
+}
+
+pub fn import_compact_reconciled_event_index_json(
+    store: &TemporalStore,
+    raw: &str,
+    locator: Option<&str>,
+    bundle_ref: Option<&str>,
+) -> anyhow::Result<TariaImportReport> {
+    let root: Value =
+        serde_json::from_str(raw).context("failed to decode Taria compact event index JSON")?;
+    let object = root
+        .as_object()
+        .ok_or_else(|| anyhow!("Taria compact event index must be a JSON object"))?;
+
+    let schema_version = object
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    if schema_version != 1 {
+        return Err(anyhow!(
+            "unsupported Taria compact event index schema version {schema_version}"
+        ));
+    }
+
+    let kind = object.get("kind").and_then(Value::as_str).unwrap_or("");
+    if kind != "CompactReconciledEventIndex" {
+        return Err(anyhow!(
+            "unsupported Taria compact event index kind {kind:?}"
+        ));
+    }
+
+    let projection_ref = required_string(object, "projection_ref")?;
+    let events = object
+        .get("events")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("Taria compact event index is missing events[]"))?;
+
+    let mut source = match store.source_by_external_ref(&projection_ref)? {
+        Some(source) => source,
+        None => {
+            let mut source = TemporalSource::new(
+                projection_display_name(object, &projection_ref),
+                SourceKind::Taria,
+                SourceAuthority::Derived,
+            );
+            source.external_ref = Some(projection_ref.clone());
+            source
+        }
+    };
+
+    source.name = projection_display_name(object, &projection_ref);
+    source.kind = SourceKind::Taria;
+    source.authority = SourceAuthority::Derived;
+    source.read_only = true;
+    source.enabled = true;
+    source.locator = locator.map(ToOwned::to_owned);
+    source.updated_at = Utc::now();
+
+    let mut source_meta = Map::new();
+    for key in [
+        "schema_version",
+        "kind",
+        "storage_posture",
+        "generated_at",
+        "projection_ref",
+        "normalized_event_snapshot_ref",
+        "normalized_event_snapshot_payload_sha256",
+        "reconciliation_policy_ref",
+        "semantics",
+        "content_fingerprint",
+        "summary",
+    ] {
+        copy_if_present(object, &mut source_meta, key);
+    }
+    if let Some(bundle_ref) = bundle_ref {
+        source_meta.insert(
+            "bundle_ref".to_string(),
+            Value::String(bundle_ref.to_string()),
+        );
+    }
+    source.properties = json!({ "taria": Value::Object(source_meta) });
+
+    let mut normalized = Vec::with_capacity(events.len());
+    let mut normalized_keys = std::collections::BTreeSet::new();
+    for raw_event in events {
+        let event_object = raw_event
+            .as_object()
+            .ok_or_else(|| anyhow!("Taria compact events[] contains a non-object value"))?;
+        let record_key = optional_string(event_object, "reconciled_event_ref")
+            .or_else(|| optional_string(event_object, "event_ref"))
+            .ok_or_else(|| {
+                anyhow!("Taria compact event is missing reconciled_event_ref/event_ref")
+            })?;
+        if !normalized_keys.insert(record_key.clone()) {
+            return Err(anyhow!(
+                "Taria compact event index contains duplicate record key {record_key}"
+            ));
+        }
+        normalized.push(normalized_compact_event(
+            event_object,
+            source.id,
+            &record_key,
+            &projection_ref,
+            object,
+            bundle_ref,
+        )?);
+    }
+
+    let imprecise = normalized
+        .iter()
+        .filter(|event| event.time.is_imprecise())
+        .count();
+    let unplaced = normalized
+        .iter()
+        .filter(|event| matches!(event.time, TimeSpec::Unknown { .. }))
+        .count();
+    let suggested_focus = normalized.iter().filter_map(event_focus_date).min();
+    let batch = store.import_batch(&source, &mut normalized)?;
+
+    Ok(TariaImportReport {
+        projection_ref,
+        reconciled_set_ref: None,
+        source_id: source.id,
+        total_events: normalized.len(),
+        created: batch.created,
+        updated: batch.updated,
+        unchanged: batch.unchanged,
+        retained_missing: batch.retained_missing,
+        imprecise,
+        unplaced,
+        blocked_or_undated: unplaced,
+        suggested_focus,
+    })
+}
+
+fn normalized_compact_event(
+    raw: &Map<String, Value>,
+    source_id: Uuid,
+    record_key: &str,
+    projection_ref: &str,
+    root: &Map<String, Value>,
+    bundle_ref: Option<&str>,
+) -> anyhow::Result<TemporalEvent> {
+    let title = raw
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or(record_key)
+        .to_string();
+    let time = parse_temporal_value(raw.get("temporal_value"))?;
+    let mut event = TemporalEvent::new(title, time);
+
+    event.source_id = Some(source_id);
+    event.source_record_key = Some(record_key.to_string());
+    event.upstream_event_ref = optional_string(raw, "event_ref");
+    event.upstream_reconciled_key = optional_string(raw, "reconciled_event_ref");
+    event.assertion_refs = optional_string(raw, "assertion_ref").into_iter().collect();
+    event.provenance_refs = optional_string(raw, "provenance_ref").into_iter().collect();
+    event.renderability = Some("ready".to_string());
+    event.event_type = optional_string(raw, "event_class");
+    event.domain = bundle_ref.map(|value| {
+        value
+            .strip_prefix("bundle:temporal/")
+            .unwrap_or(value)
+            .to_string()
+    });
+    event.jurisdiction = optional_string(raw, "jurisdiction");
+    event.institution = optional_string(raw, "institution");
+    event.status = raw
+        .get("schedule_status")
+        .and_then(Value::as_str)
+        .and_then(EventStatus::parse)
+        .unwrap_or(EventStatus::Unknown);
+    event.tags = string_array(raw.get("categories"));
+
+    let mut taria = Map::new();
+    taria.insert(
+        "raw_compact_reconciled_event".to_string(),
+        Value::Object(raw.clone()),
+    );
+    taria.insert(
+        "projection_ref".to_string(),
+        Value::String(projection_ref.to_string()),
+    );
+    if let Some(bundle_ref) = bundle_ref {
+        taria.insert(
+            "bundle_ref".to_string(),
+            Value::String(bundle_ref.to_string()),
+        );
+    }
+    copy_if_present(root, &mut taria, "normalized_event_snapshot_ref");
+    copy_if_present(root, &mut taria, "normalized_event_snapshot_payload_sha256");
+    copy_if_present(root, &mut taria, "storage_posture");
+    copy_if_present(raw, &mut taria, "geography");
+    copy_if_present(raw, &mut taria, "jurisdiction_level");
+    copy_if_present(raw, &mut taria, "source_subtype");
+    copy_if_present(raw, &mut taria, "recovered_source_name");
+    copy_if_present(raw, &mut taria, "recovered_source_url");
+    event.properties = json!({ "taria": Value::Object(taria) });
+
+    Ok(event)
+}
+
 fn normalized_event(
     raw: &Map<String, Value>,
     source_id: Uuid,
