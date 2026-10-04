@@ -147,7 +147,7 @@ pub fn import_reconciled_event_set_json(
         .count();
     let suggested_focus = normalized.iter().filter_map(event_focus_date).min();
 
-    let batch = store.import_batch(&source, &mut normalized)?;
+    let batch = store.import_taria_batch(&source, &mut normalized)?;
 
     Ok(TariaImportReport {
         projection_ref,
@@ -300,7 +300,7 @@ pub fn import_compact_reconciled_event_index_json(
         .filter(|event| matches!(event.time, TimeSpec::Unknown { .. }))
         .count();
     let suggested_focus = normalized.iter().filter_map(event_focus_date).min();
-    let batch = store.import_batch(&source, &mut normalized)?;
+    let batch = store.import_taria_batch(&source, &mut normalized)?;
 
     Ok(TariaImportReport {
         projection_ref,
