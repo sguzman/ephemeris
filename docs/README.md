@@ -1,0 +1,44 @@
+# Ephemeris Documentation
+
+This directory is the design and project-memory surface for Ephemeris.
+
+## Start here
+
+1. [PRODUCT.md](PRODUCT.md)
+2. [LINEAGE.md](LINEAGE.md)
+3. [PROJECT_STATE.md](PROJECT_STATE.md)
+4. [ROADMAP.md](ROADMAP.md)
+
+## Domain and architecture
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) - system boundaries and layering
+- [DATA_MODEL.md](DATA_MODEL.md) - canonical temporal entities and identity
+- [TIME_SEMANTICS.md](TIME_SEMANTICS.md) - recurrence, timezones, all-day, floating time, lifecycle
+- [QUERY_AND_VIEWS.md](QUERY_AND_VIEWS.md) - saved views, queries, overlays, color, grouping, sorting
+- [TARIA_INTEGRATION.md](TARIA_INTEGRATION.md) - native Taria temporal handoff
+- [INGESTION_AND_SYNC.md](INGESTION_AND_SYNC.md) - adapters, refresh, reconciliation, sync, export
+- [RIVETR_INHERITANCE.md](RIVETR_INHERITANCE.md) - what to reuse from the immediate ancestor
+
+## Product behavior
+
+- [UX.md](UX.md) - interaction and visualization contract
+- [PERFORMANCE.md](PERFORMANCE.md) - scale and latency expectations
+- [QUALITY.md](QUALITY.md) - correctness, tests, migrations, observability
+- [FUTURE_CAPABILITIES.md](FUTURE_CAPABILITIES.md) - full long-horizon feature envelope
+- [GLOSSARY.md](GLOSSARY.md) - project terminology
+
+## Decisions
+
+Architectural Decision Records live under [adr/](adr/).
+
+Current ADRs:
+
+- [0001-dedicated-calendar-product.md](adr/0001-dedicated-calendar-product.md)
+- [0002-events-canonical-views-programmable.md](adr/0002-events-canonical-views-programmable.md)
+- [0003-native-local-first-rust-egui.md](adr/0003-native-local-first-rust-egui.md)
+
+## Maintenance rule
+
+When a design or implementation decision changes project behavior, update the relevant canonical document and add an ADR when the change affects durable architecture.
+
+Do not rely on chat history as the only record of project decisions.
