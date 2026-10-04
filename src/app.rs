@@ -23,6 +23,7 @@ pub struct EphemerisApp {
     last_message: Option<String>,
     last_error: Option<String>,
     dirty_state: bool,
+    saved_view_name: String,
 }
 
 impl EphemerisApp {
@@ -38,6 +39,7 @@ impl EphemerisApp {
             last_message: None,
             last_error: None,
             dirty_state: false,
+            saved_view_name: String::new(),
         };
         app.reload()?;
         Ok(app)
@@ -148,9 +150,68 @@ impl EphemerisApp {
             return;
         }
         self.state.calendar_view = view;
+        self.state.active_saved_view_id = None;
         self.state.selected_event_id = None;
         self.mark_state_dirty();
         self.reload_or_report();
+    }
+
+    fn save_current_view(&mut self) {
+        let name = self.saved_view_name.trim();
+        if name.is_empty() {
+            return;
+        }
+
+        let view = self.state.capture_saved_view(name);
+        self.state.active_saved_view_id = Some(view.id);
+        self.state.saved_views.push(view);
+        self.saved_view_name.clear();
+        self.last_message = Some("Saved programmable calendar view.".to_string());
+        self.last_error = None;
+        self.mark_state_dirty();
+    }
+
+    fn apply_saved_view(&mut self, id: Uuid) {
+        let Some(view) = self
+            .state
+            .saved_views
+            .iter()
+            .find(|view| view.id == id)
+            .cloned()
+        else {
+            return;
+        };
+
+        self.state.apply_saved_view(&view);
+        self.mark_state_dirty();
+        self.reload_or_report();
+    }
+
+    fn update_active_saved_view(&mut self) {
+        let Some(id) = self.state.active_saved_view_id else {
+            return;
+        };
+        let Some(index) = self.state.saved_views.iter().position(|view| view.id == id) else {
+            self.state.active_saved_view_id = None;
+            self.mark_state_dirty();
+            return;
+        };
+
+        let name = self.state.saved_views[index].name.clone();
+        let mut replacement = self.state.capture_saved_view(name);
+        replacement.id = id;
+        self.state.saved_views[index] = replacement;
+        self.last_message = Some("Updated saved view from current query and presentation.".to_string());
+        self.last_error = None;
+        self.mark_state_dirty();
+    }
+
+    fn delete_saved_view(&mut self, id: Uuid) {
+        self.state.saved_views.retain(|view| view.id != id);
+        if self.state.active_saved_view_id == Some(id) {
+            self.state.active_saved_view_id = None;
+        }
+        self.mark_state_dirty();
     }
 
     fn visible_events(&self) -> Vec<TemporalEvent> {
@@ -290,7 +351,59 @@ impl EphemerisApp {
     }
 
     fn render_sources(&mut self, ui: &mut egui::Ui) {
-        ui.set_width(260.0);
+        ui.set_width(280.0);
+
+        ui.heading("Saved Views");
+        ui.small("Named calendars are queries and presentation over one event corpus.");
+
+        let saved_views = self.state.saved_views.clone();
+        let mut apply_view = None;
+        let mut delete_view = None;
+        for view in saved_views {
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(
+                        self.state.active_saved_view_id == Some(view.id),
+                        &view.name,
+                    )
+                    .clicked()
+                {
+                    apply_view = Some(view.id);
+                }
+                if ui.small_button("×").on_hover_text("Delete saved view").clicked() {
+                    delete_view = Some(view.id);
+                }
+            });
+        }
+
+        if let Some(id) = apply_view {
+            self.apply_saved_view(id);
+        }
+        if let Some(id) = delete_view {
+            self.delete_saved_view(id);
+        }
+
+        if self.state.active_saved_view_id.is_some()
+            && ui.button("Update active view").clicked()
+        {
+            self.update_active_saved_view();
+        }
+
+        ui.horizontal(|ui| {
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.saved_view_name)
+                    .hint_text("New view name"),
+            );
+            let submit = response.lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            if (ui.button("Save").clicked() || submit)
+                && !self.saved_view_name.trim().is_empty()
+            {
+                self.save_current_view();
+            }
+        });
+
+        ui.separator();
         ui.heading("Query");
         ui.small("Filtering is independent from source organization.");
 
@@ -387,6 +500,7 @@ impl EphemerisApp {
             });
 
         if filters_changed {
+            self.state.active_saved_view_id = None;
             self.state.selected_event_id = None;
             self.mark_state_dirty();
         }
@@ -397,10 +511,7 @@ impl EphemerisApp {
             || !self.state.search_query.is_empty()
         {
             if ui.button("Clear query").clicked() {
-                self.state.search_query.clear();
-                self.state.domain_filter = None;
-                self.state.jurisdiction_filter = None;
-                self.state.status_filter = None;
+                self.state.clear_query();
                 self.state.selected_event_id = None;
                 self.mark_state_dirty();
             }
@@ -427,6 +538,7 @@ impl EphemerisApp {
                     } else {
                         self.state.hidden_source_ids.insert(source.id);
                     }
+                    self.state.active_saved_view_id = None;
                     self.mark_state_dirty();
                 }
                 ui.small(format!(
