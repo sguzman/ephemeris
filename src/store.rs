@@ -764,7 +764,10 @@ fn decode_event(row: &Row<'_>) -> rusqlite::Result<TemporalEvent> {
 fn decode_time(row: &Row<'_>, time_kind: &str) -> anyhow::Result<TimeSpec> {
     match time_kind {
         "date_only" => Ok(TimeSpec::DateOnly {
-            date: parse_date(&required_text(row, "start_date")?)?,
+            start: parse_date(&required_text(row, "start_date")?)?,
+            end_exclusive: optional_text(row, "end_date_exclusive")?
+                .map(|raw| parse_date(&raw))
+                .transpose()?,
         }),
         "all_day" => Ok(TimeSpec::AllDay {
             start: parse_date(&required_text(row, "start_date")?)?,
@@ -886,13 +889,17 @@ struct EncodedTime {
 impl EncodedTime {
     fn from_time_spec(time: &TimeSpec) -> anyhow::Result<Self> {
         match time {
-            TimeSpec::DateOnly { date } => Ok(Self {
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive,
+            } => Ok(Self {
                 kind: "date_only",
                 start_utc: None,
                 end_utc: None,
                 source_timezone: None,
-                start_date: Some(date.format("%Y-%m-%d").to_string()),
-                end_date_exclusive: None,
+                start_date: Some(start.format("%Y-%m-%d").to_string()),
+                end_date_exclusive: end_exclusive
+                    .map(|value| value.format("%Y-%m-%d").to_string()),
                 start_local: None,
                 end_local: None,
                 original_value: None,
@@ -1036,7 +1043,13 @@ mod tests {
 
         let day = NaiveDate::from_ymd_opt(2026, 10, 4).expect("date");
 
-        let mut date_only = TemporalEvent::new("Date only", TimeSpec::DateOnly { date: day });
+        let mut date_only = TemporalEvent::new(
+            "Date only",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
         date_only.source_id = Some(source.id);
         store.upsert_event(&date_only).expect("date-only event");
 
