@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::calendar::{CalendarLayout, CalendarView};
 use crate::domain::EventStatus;
-use crate::query::{ColorBy, EventQuery, GroupBy, SavedView, SortRule};
+use crate::query::{ColorBy, EventQuery, GroupBy, QueryExpr, SavedView, SortRule};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedUiState {
@@ -32,6 +32,8 @@ pub struct PersistedUiState {
     #[serde(default)]
     pub status_filter: Option<EventStatus>,
     #[serde(default)]
+    pub query_expression: Option<QueryExpr>,
+    #[serde(default)]
     pub group_by: GroupBy,
     #[serde(default)]
     pub sort_rules: Vec<SortRule>,
@@ -47,7 +49,7 @@ pub struct PersistedUiState {
 impl Default for PersistedUiState {
     fn default() -> Self {
         Self {
-            version: 4,
+            version: 5,
             calendar_view: CalendarView::Month,
             calendar_layout: CalendarLayout::Grid,
             focus_date: Local::now().date_naive().to_string(),
@@ -60,6 +62,7 @@ impl Default for PersistedUiState {
             domain_filter: None,
             jurisdiction_filter: None,
             status_filter: None,
+            query_expression: None,
             group_by: GroupBy::Date,
             sort_rules: vec![SortRule::default()],
             color_by: ColorBy::Status,
@@ -92,8 +95,8 @@ impl PersistedUiState {
             .with_context(|| format!("failed to read {}", path.display()))?;
         let mut state: Self = serde_json::from_str(&raw)
             .with_context(|| format!("failed to decode {}", path.display()))?;
-        if state.version < 4 {
-            state.version = 4;
+        if state.version < 5 {
+            state.version = 5;
         }
         if state.sort_rules.is_empty() {
             state.sort_rules.push(SortRule::default());
@@ -131,6 +134,7 @@ impl PersistedUiState {
             domain: self.domain_filter.clone(),
             jurisdiction: self.jurisdiction_filter.clone(),
             status: self.status_filter,
+            expression: self.query_expression.clone(),
         }
     }
 
@@ -139,6 +143,7 @@ impl PersistedUiState {
         self.domain_filter.clone_from(&query.domain);
         self.jurisdiction_filter.clone_from(&query.jurisdiction);
         self.status_filter = query.status;
+        self.query_expression.clone_from(&query.expression);
     }
 
     pub fn clear_query(&mut self) {
@@ -146,6 +151,7 @@ impl PersistedUiState {
         self.domain_filter = None;
         self.jurisdiction_filter = None;
         self.status_filter = None;
+        self.query_expression = None;
         self.active_saved_view_id = None;
     }
 
@@ -210,6 +216,12 @@ mod tests {
             calendar_layout: CalendarLayout::Agenda,
             display_timezone: "UTC".to_string(),
             domain_filter: Some("elections".to_string()),
+            query_expression: Some(QueryExpr::Predicate(
+                crate::query::QueryPredicate::Exists {
+                    field: crate::query::PresenceField::Institution,
+                    exists: true,
+                },
+            )),
             group_by: GroupBy::Jurisdiction,
             color_by: ColorBy::EventType,
             ..PersistedUiState::default()
@@ -224,6 +236,7 @@ mod tests {
         assert_eq!(loaded.domain_filter.as_deref(), Some("elections"));
         assert_eq!(loaded.group_by, GroupBy::Jurisdiction);
         assert_eq!(loaded.color_by, ColorBy::EventType);
+        assert!(loaded.query_expression.is_some());
         assert!(loaded.legacy_saved_views.is_empty());
     }
 
@@ -233,6 +246,12 @@ mod tests {
             domain_filter: Some("elections".to_string()),
             calendar_view: CalendarView::Year,
             calendar_layout: CalendarLayout::Agenda,
+            query_expression: Some(QueryExpr::Predicate(
+                crate::query::QueryPredicate::Exists {
+                    field: crate::query::PresenceField::Domain,
+                    exists: true,
+                },
+            )),
             group_by: GroupBy::Domain,
             color_by: ColorBy::Jurisdiction,
             ..PersistedUiState::default()
@@ -248,6 +267,7 @@ mod tests {
         assert_eq!(state.calendar_layout, CalendarLayout::Agenda);
         assert_eq!(state.group_by, GroupBy::Domain);
         assert_eq!(state.color_by, ColorBy::Jurisdiction);
+        assert!(state.query_expression.is_some());
         assert_eq!(state.active_saved_view_id, Some(view.id));
     }
 }
