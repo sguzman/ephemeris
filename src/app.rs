@@ -133,9 +133,9 @@ impl EphemerisApp {
         }
 
         let configured = std::path::PathBuf::from(&self.state.taria_resourcearium_root);
-        match normalize_resourcearium_root(&configured).and_then(|root| {
-            update_taria_workspace(&self.store, &root, &self.state.taria_channel)
-        }) {
+        match normalize_resourcearium_root(&configured)
+            .and_then(|root| update_taria_workspace(&self.store, &root, &self.state.taria_channel))
+        {
             Ok(report) => {
                 self.state.taria_resourcearium_root =
                     report.resourcearium_root.display().to_string();
@@ -148,7 +148,11 @@ impl EphemerisApp {
                 } else {
                     format!("; skipped: {}", report.skipped.join(" | "))
                 };
-                self.last_message = Some(format!("Updated Taria sources: {}{}", report.summary(), skipped));
+                self.last_message = Some(format!(
+                    "Updated Taria sources: {}{}",
+                    report.summary(),
+                    skipped
+                ));
                 self.last_error = None;
                 self.mark_state_dirty();
                 self.reload_or_report();
