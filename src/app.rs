@@ -589,7 +589,8 @@ impl EphemerisApp {
             if self.state.query_expression.is_none() {
                 ui.horizontal_wrapped(|ui| {
                     if ui.button("Add condition").clicked() {
-                        self.state.query_expression = Some(default_query_expr(QueryExprKind::Predicate));
+                        self.state.query_expression =
+                            Some(default_query_expr(QueryExprKind::Predicate));
                         filters_changed = true;
                     }
                     if ui.button("Add AND group").clicked() {
@@ -1136,7 +1137,11 @@ fn render_query_expr_editor(ui: &mut egui::Ui, expression: &mut QueryExpr, path:
                 for (index, child) in children.iter_mut().enumerate() {
                     let child_path = format!("{path}.{index}");
                     ui.horizontal_top(|ui| {
-                        if ui.small_button("×").on_hover_text("Remove clause").clicked() {
+                        if ui
+                            .small_button("×")
+                            .on_hover_text("Remove clause")
+                            .clicked()
+                        {
                             remove = Some(index);
                         }
                         ui.vertical(|ui| {
@@ -1319,12 +1324,8 @@ fn render_query_predicate_editor(
                                 .changed();
                         }
                     });
-                changed |= ui
-                    .selectable_value(exists, true, "exists")
-                    .changed();
-                changed |= ui
-                    .selectable_value(exists, false, "is missing")
-                    .changed();
+                changed |= ui.selectable_value(exists, true, "exists").changed();
+                changed |= ui.selectable_value(exists, false, "is missing").changed();
             });
         }
     }
