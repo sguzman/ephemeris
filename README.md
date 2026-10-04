@@ -46,8 +46,9 @@ Implemented:
 - independent true grouping and stable multi-key sorting
 - ordered query-driven color rules with first-match precedence and semantic fallback coloring
 - embedded overlays with independent query/styling rules
+- ordered union / intersection / subtraction composition layers over the base query
 - durable named saved views stored in SQLite
-- saved views that retain query, source visibility, date range, layout, grouping, sort rules, color rules, overlays, timezone, and week-start behavior
+- saved views that retain query, source visibility, date range, layout, grouping, sort rules, color rules, composition layers, overlays, timezone, and week-start behavior
 - event inspector with Taria identity/provenance details
 - separate unplaced/conflicted event surface
 - native persisted transient UI state
@@ -59,7 +60,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation milestone at 2026-10-04 passes the full CI gate: format, compile, strict Clippy, and **38 library tests**.
+The verified implementation milestone at 2026-10-04 passes the full CI gate: format, compile, strict Clippy, and **40 library tests**.
 
 ## Product boundary
 
@@ -109,6 +110,7 @@ Snapshot
 EventRelation
 EventCollection
 SavedView
+CompositionLayer
 Overlay
 Query
 ColorRuleSet
