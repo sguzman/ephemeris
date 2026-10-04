@@ -8,8 +8,7 @@ use sha2::{Digest, Sha256};
 
 use crate::store::TemporalStore;
 use crate::taria::{
-    TariaImportReport, import_compact_reconciled_event_index_file,
-    import_reconciled_event_set_file,
+    TariaImportReport, import_compact_reconciled_event_index_file, import_reconciled_event_set_file,
 };
 
 const RELEASE_REGISTRY_RELATIVE: &str = "registry/temporal-bundle-releases.yml";
@@ -47,10 +46,7 @@ impl TariaWorkspaceUpdateReport {
             self.unchanged
         );
         if self.retained_missing > 0 {
-            summary.push_str(&format!(
-                ", {} retained missing",
-                self.retained_missing
-            ));
+            summary.push_str(&format!(", {} retained missing", self.retained_missing));
         }
         summary
     }
@@ -85,10 +81,7 @@ pub fn normalize_resourcearium_root(path: impl AsRef<Path>) -> anyhow::Result<Pa
         return validate_resourcearium_root(root);
     }
 
-    if path
-        .join(RELEASE_REGISTRY_RELATIVE)
-        .is_file()
-    {
+    if path.join(RELEASE_REGISTRY_RELATIVE).is_file() {
         return validate_resourcearium_root(path);
     }
 
@@ -242,8 +235,7 @@ fn import_bootstrap_shard(
             &path,
             optional_string(shard, "event_index_content_sha256").as_deref(),
         )?;
-        let imported =
-            import_compact_reconciled_event_index_file(store, &path, Some(&bundle_ref))?;
+        let imported = import_compact_reconciled_event_index_file(store, &path, Some(&bundle_ref))?;
         merge_import_report(report, &imported);
         report.imported_artifacts += 1;
         return Ok(());
@@ -270,10 +262,7 @@ fn import_bootstrap_shard(
     Ok(())
 }
 
-fn merge_import_report(
-    aggregate: &mut TariaWorkspaceUpdateReport,
-    imported: &TariaImportReport,
-) {
+fn merge_import_report(aggregate: &mut TariaWorkspaceUpdateReport, imported: &TariaImportReport) {
     aggregate.imported_events += imported.total_events;
     aggregate.created += imported.created;
     aggregate.updated += imported.updated;
