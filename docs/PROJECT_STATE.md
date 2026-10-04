@@ -135,8 +135,8 @@ Current upstream state:
 - 177 direct single-Resource RICS profiles in the first exact-lineage production tranche
 - canonical 13-projection build tooling
 - frozen release packaging and validation
-- bootstrap channel currently pointing at `temporal-bundle-release:bootstrap:2026-10-04`
-- bootstrap posture: 48 ready events, 15 represented Resources, 2 partial canonical domain slots, 10 pending slots
+- bootstrap channel currently pointing at `temporal-bundle-release:bootstrap:2026-10-04:r3`
+- bootstrap posture: 1,114 ready events, 15 represented canonical Resources, 2 typed recovered ingestion profiles, 196 recovered source surfaces, 3 partial canonical domain slots, 9 pending slots
 - production channel independently advances as live acquisition-backed releases become available
 
 Important consumer rule:
@@ -147,11 +147,13 @@ Important consumer rule:
 
 The current direct reconciled-event-set importer is the low-level payload adapter for the future release importer.
 
-Known upstream integration gap:
+Current bootstrap payload posture:
 
-- current bootstrap `shards[]` expose normalized snapshot + CalendarSet paths but not reconciled-event-set paths;
-- production `bundle_artifacts[]` do expose reconciled-event-set paths/hashes;
-- therefore bootstrap is packaging-safe but not yet directly ingestible end-to-end by the existing Ephemeris importer from the manifest alone.
+- recovered U.S. Politics and U.S. Holidays shards expose pinned `CompactReconciledEventIndex` paths/hashes;
+- those compact indexes are explicitly post-reconciliation and preserve stable event/assertion/provenance identity;
+- the European Elections and U.S. Sports specimen shards still do not expose a rich reconciled payload path in the release manifest;
+- production `bundle_artifacts[]` expose full ReconciledProjectionEventSet paths/hashes;
+- therefore bootstrap r3 is materially closer to direct adoption, but the existing Ephemeris importer still cannot adopt the full release end-to-end from the manifest alone.
 
 ### Calendar presentation
 
@@ -282,6 +284,7 @@ The current milestone is a foundation, not the finished calendar.
 Not yet implemented:
 
 - TemporalBundleRelease v1 manifest importer
+- CompactReconciledEventIndex payload adapter
 - CalendarSet membership persistence
 - release/channel/coverage metadata persistence
 - release integrity/hash validation as one atomic adoption
@@ -369,7 +372,7 @@ Implement the Taria **TemporalBundleRelease v1** consumer path before adding ano
 
 1. load and validate immutable release manifests;
 2. support current bootstrap `shards[]` and production `bundle_artifacts[]` packaging variants;
-3. resolve rich reconciled event payloads without falling back to ICS;
+3. resolve full ReconciledProjectionEventSet or accepted CompactReconciledEventIndex payloads without falling back to ICS;
 4. import canonical events exactly once across overlapping bundle domains;
 5. persist CalendarSet membership separately from event identity;
 6. persist release/channel/coverage metadata;
