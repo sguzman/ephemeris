@@ -402,15 +402,16 @@ impl EphemerisApp {
         for view in saved_views {
             ui.horizontal(|ui| {
                 if ui
-                    .selectable_label(
-                        self.state.active_saved_view_id == Some(view.id),
-                        &view.name,
-                    )
+                    .selectable_label(self.state.active_saved_view_id == Some(view.id), &view.name)
                     .clicked()
                 {
                     apply_view = Some(view.id);
                 }
-                if ui.small_button("×").on_hover_text("Delete saved view").clicked() {
+                if ui
+                    .small_button("×")
+                    .on_hover_text("Delete saved view")
+                    .clicked()
+                {
                     delete_view = Some(view.id);
                 }
             });
@@ -423,22 +424,17 @@ impl EphemerisApp {
             self.delete_saved_view(id);
         }
 
-        if self.state.active_saved_view_id.is_some()
-            && ui.button("Update active view").clicked()
-        {
+        if self.state.active_saved_view_id.is_some() && ui.button("Update active view").clicked() {
             self.update_active_saved_view();
         }
 
         ui.horizontal(|ui| {
             let response = ui.add(
-                egui::TextEdit::singleline(&mut self.saved_view_name)
-                    .hint_text("New view name"),
+                egui::TextEdit::singleline(&mut self.saved_view_name).hint_text("New view name"),
             );
-            let submit = response.lost_focus()
-                && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            if (ui.button("Save").clicked() || submit)
-                && !self.saved_view_name.trim().is_empty()
-            {
+            let submit =
+                response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            if (ui.button("Save").clicked() || submit) && !self.saved_view_name.trim().is_empty() {
                 self.save_current_view();
             }
         });
