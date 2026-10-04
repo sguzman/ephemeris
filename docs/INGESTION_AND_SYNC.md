@@ -6,11 +6,14 @@ Import should be promiscuous; canonical storage should be normalized.
 
 Source formats are adapters, not the ontology.
 
+For Taria specifically, Ephemeris is a **release consumer**, not a source-acquisition engine.
+
 ## Input classes
 
 Long-term inputs may include:
 
-- Taria native temporal bundles
+- Taria TemporalBundleRelease packages
+- direct Taria ReconciledProjectionEventSet artifacts
 - ICS
 - webcal/webcals
 - CalDAV
@@ -19,28 +22,172 @@ Long-term inputs may include:
 - JSON
 - CSV
 - APIs
-- generated projections
 - manual local events
 
-## Ingestion pipeline
+## Two ingestion classes
+
+Ephemeris distinguishes two broad classes.
+
+### 1. Upstream-normalized Taria products
+
+Taria has already performed acquisition, normalization, identity reasoning, projection, and reconciliation.
+
+Ephemeris should not repeat that work.
+
+Preferred flow:
 
 ```text
-acquire
-  -> parse
-  -> validate
-  -> normalize
-  -> identify/match
-  -> reconcile
-  -> transact
-  -> index
-  -> record provenance/snapshot
+TemporalBundleRelease
+    -> validate manifest + hashes
+    -> resolve ReconciledProjectionEventSet payloads
+    -> reconcile/upsert local canonical events
+    -> import CalendarSet memberships
+    -> import coverage/release metadata
+    -> transact
+    -> index
+```
+
+The existing direct reconciled-event-set importer is the low-level payload adapter underneath this future release importer.
+
+### 2. Non-Taria source formats
+
+For ICS, CalDAV, CSV, generic JSON, APIs, and locally authored events, Ephemeris may own more of the adapter pipeline:
+
+```text
+acquire/read
+    -> parse
+    -> validate
+    -> normalize
+    -> identify/match
+    -> reconcile
+    -> transact
+    -> index
+    -> record provenance/snapshot
 ```
 
 Each stage should provide diagnostics.
 
+## Taria release adoption
+
+The authoritative contract is:
+
+- [TARIA_BUNDLE_CONTRACT.md](TARIA_BUNDLE_CONTRACT.md)
+
+A Taria release adoption is not equivalent to individually refreshing 429 upstream sources.
+
+Taria owns those upstream sources.
+
+Ephemeris adopts a frozen release.
+
+### Required release behavior
+
+Ephemeris should:
+
+- validate release schema/version;
+- validate release ID and status;
+- validate canonical bundle slots;
+- verify referenced hashes/fingerprints;
+- reject missing required artifacts;
+- preserve partial/pending/gap-only posture;
+- resolve rich event payloads;
+- deduplicate overlapping bundle membership by stable upstream event identity;
+- persist CalendarSet membership separately from event identity;
+- preserve local annotations;
+- record release metadata;
+- commit atomically.
+
+### Accepted release states
+
+Ephemeris may consume:
+
+- `bootstrap-partial`
+- `production-partial`
+- `production-complete`
+
+A superseded release may remain manually reproducible but should not be preferred automatically.
+
+### Partial releases
+
+A partial release is useful.
+
+Do not interpret:
+
+- pending
+- gap-only
+- selected-but-uningested
+
+as "there are no events."
+
+Coverage state is data and must survive import.
+
+## Event identity during bundle adoption
+
+Canonical domain bundles overlap.
+
+Ephemeris must not duplicate events merely because several Taria bundles include the same reconciled event.
+
+The intended mapping is:
+
+```text
+upstream reconciled/event identity
+    -> one local TemporalEvent
+
+CalendarSet / bundle membership
+    -> separate local membership rows/metadata
+```
+
+Identity matching should prefer:
+
+- stable Taria reconciled/event identity;
+- source-record identity;
+- source-native UID where retained;
+- occurrence/series identity when available;
+- canonical publisher identity.
+
+Weak heuristics should produce diagnostics rather than irreversible silent merges.
+
+## Current Taria payload boundary
+
+The current direct importer accepts ReconciledProjectionEventSet JSON.
+
+That payload contains the rich resolved event state Ephemeris needs.
+
+CalendarSet alone is not a complete event payload; it references reconciled events and carries membership/navigation metadata.
+
+The release importer therefore needs both:
+
+- event payload;
+- CalendarSet membership.
+
+## Current release-v1 variants
+
+Taria currently validates:
+
+### Bootstrap
+
+`shards[]`
+
+The current bootstrap manifest contains normalized-snapshot and CalendarSet paths but no reconciled-event-set paths.
+
+Therefore the current Ephemeris importer cannot yet adopt that bootstrap manifest end-to-end without an additional resolver contract.
+
+### Production
+
+`bundle_artifacts[]`
+
+Production artifacts expose:
+
+- ProjectionEventSet path/hash;
+- ReconciledProjectionEventSet path/hash;
+- CalendarSet path/hash;
+- rendered JSON directory;
+- rendered ICS directory.
+
+This directly matches the rich payload adapter Ephemeris already has.
+
 ## Source definitions
 
-A source definition should describe:
+For non-Taria external sources, a source definition should describe:
 
 - identity
 - locator(s)
@@ -54,54 +201,58 @@ A source definition should describe:
 - rollover behavior
 - adapter configuration
 
+For Taria, the release manifest/channel is the upstream boundary; Ephemeris does not need one local source definition per Resourcearium Resource.
+
 ## Refresh semantics
 
-A refresh should be repeatable and idempotent where possible.
+A refresh/adoption should be repeatable and identity-aware.
 
 It should report:
 
-- records observed
+- records/events observed
 - events created
 - events updated
 - events unchanged
 - events moved/rescheduled
-- events cancelled
-- events removed/superseded
+- events explicitly cancelled
+- retained records missing from the newer payload
 - conflicts
-- parse failures
+- parse/validation failures
 - identity ambiguities
+- bundle-slot coverage changes
+- release identity/status
 
 ## Deletion semantics
 
 A source record disappearing does not always mean the real-world event should be erased.
 
-Policies may include:
+Current conservative policy:
 
-- source record removed -> canonical event remains with provenance history
-- source record removed -> mark source assertion inactive
-- source explicitly cancelled -> event becomes cancelled
-- generated projection rebuild -> remove obsolete projection records while preserving history
+- disappeared upstream record -> retain canonical event unless stronger semantics say otherwise
+- explicit cancellation -> update lifecycle to cancelled
+- explicit supersession -> preserve history/identity and mark supersession when supported
+- projection rebuild -> adjust membership without cloning/deleting canonical identity
 
 Adapters/source classes may require different policy.
 
-## Duplicate resolution
+## Release history
 
-Matching should use the strongest available identifiers first.
+A newer Taria release is a new frozen upstream state.
 
-Potential signals:
+Ephemeris should eventually retain:
 
-- source-native UID
-- canonical publisher ID
-- stable Taria ID
-- recurrence ID
-- canonical URL
-- normalized time
-- institution
-- title similarity
-- location
-- relation context
+- release ID
+- channel
+- manifest hash
+- generated-at time
+- import time
+- production-complete flag
+- normalized snapshot ref/fingerprint
+- artifact/shard refs
+- coverage summary
+- prior adopted release
 
-Weak heuristics should produce candidates/diagnostics, not irreversible silent merges.
+This will support release diffing and reproducibility.
 
 ## Raw source retention
 
@@ -111,28 +262,29 @@ Depending on format and size, retain:
 - content hash
 - source-record excerpt
 - raw field map
-- or a stable reference to an external snapshot
+- or a stable reference to an external frozen artifact.
 
-This supports debugging and future re-normalization.
+For Taria releases, immutable upstream artifact refs/hashes may be sufficient without copying every raw acquisition payload into Ephemeris.
 
 ## Network refresh
 
-Network refresh should be subordinate to local operation.
+Ephemeris must remain local-first.
 
-Requirements:
+Future network-assisted release discovery may:
 
-- background execution
-- timeout
-- cancellation
-- retry policy
-- visible status
-- ETag/Last-Modified where useful
-- CalDAV sync tokens where applicable
-- no frame-loop blocking
+- check a Taria release channel;
+- discover a newer immutable manifest;
+- download/fetch its frozen artifacts;
+- validate them;
+- offer or perform adoption.
+
+Rendering/querying must never require live Taria/GitHub access.
+
+Large imports, network work, and indexing must not block the egui frame loop.
 
 ## Source health
 
-The UI should eventually show:
+For directly managed external sources, the UI may eventually show:
 
 - last successful update
 - last attempt
@@ -142,6 +294,8 @@ The UI should eventually show:
 - stale state
 - rollover state
 - HTTP/cache metadata where useful
+
+For Taria sources, Ephemeris should prefer Taria's own release/coverage/source-health state rather than reproducing its acquisition diagnostics.
 
 ## External synchronization
 
