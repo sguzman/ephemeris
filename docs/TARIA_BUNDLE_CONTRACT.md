@@ -335,14 +335,15 @@ CalendarSet alone is insufficient because it contains event references and membe
 
 ### Current bootstrap payload posture
 
-Bootstrap r4 is fully payload-resolvable for every populated shard:
+Bootstrap r10 is fully payload-resolvable for every populated shard.
 
-- recovered U.S. Politics -> `CompactReconciledEventIndex`;
-- recovered U.S. Holidays -> `CompactReconciledEventIndex`;
-- 2027 European national elections -> `ReconciledProjectionEventSet`;
-- 2026 U.S. pro sports excluding hockey -> `ReconciledProjectionEventSet`.
+It combines:
 
-Ephemeris implements both adapters and can adopt all four populated shards from the local r4 manifest.
+- `CompactReconciledEventIndex` payloads for recovered/frozen-rebuild shards;
+- full `ReconciledProjectionEventSet` payloads for Elections/Sports;
+- explicit gap-only shards where no ready events are materialized.
+
+Ephemeris implements both payload adapters and can adopt every populated shard from the local r10 manifest while preserving gap-only posture separately.
 
 Bootstrap integrity values are Resourcearium content fingerprints, not necessarily raw file hashes. Ephemeris validates the embedded `content_fingerprint.value` according to the producer contract.
 
@@ -502,35 +503,38 @@ Other composite/family-mediated/surface/local/non-RICS inputs can be layered int
 The current bootstrap channel points to:
 
 ```text
-temporal-bundle-release:bootstrap:2026-10-04:r4
+temporal-bundle-release:bootstrap:2026-10-04:r10
 ```
 
 It is:
 
 - `bootstrap-partial`;
 - consumer-safe for integration testing;
-- **1,114 ready events**;
+- **1,357 unique ready events**;
 - 15 represented canonical Resource identities;
-- 2 typed recovered ingestion profiles;
+- 38 selected ingestion profiles;
 - 196 recovered source surfaces;
-- **3** partially populated canonical bundle slots;
-- **9** pending canonical bundle slots;
+- **8** partially populated canonical bundle slots;
+- **4** explicit gap-only canonical bundle slots;
+- **0** pending canonical bundle slots;
 - explicitly not production-complete.
 
-Current populated shards:
+Current domain posture includes:
 
-- U.S. Politics recovery: 1,038 ready events;
-- 2027 European national elections: 11 ready events;
-- 2026 U.S. pro sports excluding hockey: 37 ready events;
-- U.S. Holidays recovery: 28 ready events.
+- Politics & Government: partial, 1,049 ready;
+- Economics & Public Statistics: partial, 133 ready;
+- Finance & Markets: partial, 87 ready;
+- Business & Corporate: partial, 1 ready;
+- Sports & Competition: partial, 37 ready;
+- Culture & Media: partial, 21 ready;
+- Holidays & Observances: partial, 28 ready;
+- Education & Academia: partial, 1 ready;
+- Science, Technology & Space: gap-only;
+- Public Health: gap-only;
+- Environment & Weather: gap-only;
+- Transportation & Civic Infrastructure: gap-only.
 
-Current domain totals:
-
-- Politics & Government: 1,049;
-- Sports & Competition: 37;
-- Holidays & Observances: 28.
-
-The recovered Politics/Holidays shards are downstream-derived recovered state, not fresh upstream publisher observations, and Ephemeris must preserve that data posture.
+The release reports 1,357 bundle-membership ready events and 1,357 unique ready event identities, with zero duplicate identities/memberships and complete identity coverage. Recovered/frozen-rebuild state must retain its declared data posture rather than being represented as fresh upstream observation.
 
 Ephemeris must preserve the release's partial posture if/when it imports it.
 
@@ -563,14 +567,19 @@ Implemented:
 
 The overlap invariant is regression-tested: a shared Politics/Finance event remains one canonical local event with two CalendarSet memberships.
 
-The current bootstrap r4 release is fully consumable for all populated shards.
+The current bootstrap r10 release is fully consumable for all populated shards, and its explicit gap-only posture is preserved.
 
 The live production channel remains unset, so production adoption is implemented and tested synthetically but awaits a real production release.
 
+Implemented beyond the core release consumer:
+
+- adopted release coverage/status UI;
+- per-bundle partial/pending/gap-only posture;
+- query/view predicates over imported bundle/CalendarSet membership;
+- release-backed selectors for stable bundle refs and projected calendar IDs.
+
 Still required:
 
-- release coverage/pending/gap UI;
 - whole-release atomic rollback across multiple payload imports;
 - asynchronous/background adoption for large releases;
-- release-history/diff inspection;
-- query/view predicates over imported bundle/CalendarSet membership.
+- release-history/diff inspection.
