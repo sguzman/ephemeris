@@ -10,6 +10,7 @@ use crate::calendar::{
     week_days, window_for_view, year_months,
 };
 use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
+use crate::query::SavedView;
 use crate::state::PersistedUiState;
 use crate::store::TemporalStore;
 use crate::taria::import_reconciled_event_set_file;
@@ -24,12 +25,23 @@ pub struct EphemerisApp {
     last_error: Option<String>,
     dirty_state: bool,
     saved_view_name: String,
+    saved_views: Vec<SavedView>,
 }
 
 impl EphemerisApp {
     pub fn open() -> anyhow::Result<Self> {
         let store = TemporalStore::open_default()?;
-        let state = PersistedUiState::load_or_default();
+        let mut state = PersistedUiState::load_or_default();
+
+        if !state.legacy_saved_views.is_empty() {
+            for view in &state.legacy_saved_views {
+                store.upsert_saved_view(view)?;
+            }
+            state.legacy_saved_views.clear();
+            state.save()?;
+        }
+
+        let saved_views = store.list_saved_views()?;
         let mut app = Self {
             store,
             state,
@@ -40,6 +52,7 @@ impl EphemerisApp {
             last_error: None,
             dirty_state: false,
             saved_view_name: String::new(),
+            saved_views,
         };
         app.reload()?;
         Ok(app)
@@ -163,17 +176,26 @@ impl EphemerisApp {
         }
 
         let view = self.state.capture_saved_view(name);
-        self.state.active_saved_view_id = Some(view.id);
-        self.state.saved_views.push(view);
-        self.saved_view_name.clear();
-        self.last_message = Some("Saved programmable calendar view.".to_string());
-        self.last_error = None;
-        self.mark_state_dirty();
+        match self.store.upsert_saved_view(&view) {
+            Ok(()) => {
+                self.state.active_saved_view_id = Some(view.id);
+                self.saved_views.push(view);
+                self.saved_views
+                    .sort_by_key(|saved| saved.name.to_ascii_lowercase());
+                self.saved_view_name.clear();
+                self.last_message = Some("Saved programmable calendar view.".to_string());
+                self.last_error = None;
+                self.mark_state_dirty();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to save view: {error:#}"));
+            }
+        }
     }
 
     fn apply_saved_view(&mut self, id: Uuid) {
         let Some(view) = self
-            .state
             .saved_views
             .iter()
             .find(|view| view.id == id)
@@ -191,27 +213,45 @@ impl EphemerisApp {
         let Some(id) = self.state.active_saved_view_id else {
             return;
         };
-        let Some(index) = self.state.saved_views.iter().position(|view| view.id == id) else {
+        let Some(index) = self.saved_views.iter().position(|view| view.id == id) else {
             self.state.active_saved_view_id = None;
             self.mark_state_dirty();
             return;
         };
 
-        let name = self.state.saved_views[index].name.clone();
+        let name = self.saved_views[index].name.clone();
         let mut replacement = self.state.capture_saved_view(name);
         replacement.id = id;
-        self.state.saved_views[index] = replacement;
-        self.last_message = Some("Updated saved view from current query and presentation.".to_string());
-        self.last_error = None;
-        self.mark_state_dirty();
+
+        match self.store.upsert_saved_view(&replacement) {
+            Ok(()) => {
+                self.saved_views[index] = replacement;
+                self.last_message =
+                    Some("Updated saved view from current query and presentation.".to_string());
+                self.last_error = None;
+                self.mark_state_dirty();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to update saved view: {error:#}"));
+            }
+        }
     }
 
     fn delete_saved_view(&mut self, id: Uuid) {
-        self.state.saved_views.retain(|view| view.id != id);
-        if self.state.active_saved_view_id == Some(id) {
-            self.state.active_saved_view_id = None;
+        match self.store.delete_saved_view(id) {
+            Ok(()) => {
+                self.saved_views.retain(|view| view.id != id);
+                if self.state.active_saved_view_id == Some(id) {
+                    self.state.active_saved_view_id = None;
+                }
+                self.mark_state_dirty();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to delete saved view: {error:#}"));
+            }
         }
-        self.mark_state_dirty();
     }
 
     fn visible_events(&self) -> Vec<TemporalEvent> {
@@ -356,7 +396,7 @@ impl EphemerisApp {
         ui.heading("Saved Views");
         ui.small("Named calendars are queries and presentation over one event corpus.");
 
-        let saved_views = self.state.saved_views.clone();
+        let saved_views = self.saved_views.clone();
         let mut apply_view = None;
         let mut delete_view = None;
         for view in saved_views {
