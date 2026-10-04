@@ -70,7 +70,7 @@ Still required:
 
 ## Phase 3 - Taria ingestion and bundle-release adoption
 
-Status: **filesystem-first bootstrap release adoption working; complete release semantics next**
+Status: **filesystem-first bootstrap/production release adoption working; query exposure next**
 
 Implemented:
 
@@ -82,6 +82,12 @@ Implemented:
 - local artifact path confinement + SHA-256 verification
 - one-click Update Taria Sources UI
 - explicit skipped-shard reporting
+- immutable release metadata persistence
+- immutable CalendarSet persistence + release association
+- projected-calendar/event-membership persistence
+- upstream event/reconciled identity aliasing
+- cross-bundle canonical-event deduplication
+- production `bundle_artifacts[]` adoption
 - Taria projection/source identity retention
 - assertion/source/provenance refs
 - source contexts and rich Taria properties
@@ -105,10 +111,8 @@ Now established upstream:
 
 Next Ephemeris implementation:
 
-- CalendarSet membership persistence
-- canonical release/channel/coverage metadata persistence
-- production cross-bundle identity reconciliation
-- production `bundle_artifacts[]` adoption through the existing filesystem updater
+- bundle/CalendarSet membership predicates in programmable queries
+- saved-view/overlay/color-rule/calendar-algebra use of membership predicates
 - partial/pending/gap-only UI posture
 - whole-release atomic adoption/rollback
 - release-to-release adoption/diff foundation
@@ -122,7 +126,7 @@ Still later:
 
 ## Immediate program priority
 
-The highest-priority integration boundary is now completing Taria **TemporalBundleRelease v1** semantics on top of the implemented filesystem-first updater.
+The highest-priority integration boundary is now exposing persisted Taria **bundle/CalendarSet membership** to Ephemeris programmable views without turning membership into event ownership.
 
 Resourcearium is independently building/populating frozen bundles. Ephemeris should consume those releases rather than duplicate acquisition work.
 
@@ -130,7 +134,7 @@ The consumer contract is frozen in:
 
 - `docs/TARIA_BUNDLE_CONTRACT.md`
 
-The local filesystem transport and bootstrap r3 compact-index adapter are implemented. Current low-level direct reconciled-event-set import remains valid underneath the release updater.
+The local filesystem transport, bootstrap r4 mixed-payload adoption, CalendarSet persistence, identity aliasing, and production overlap-safe adoption are implemented.
 
 ## Phase 4 - Calendar views
 
