@@ -254,6 +254,21 @@ The aggregate identifies the materialized `bundle:temporal/everything` CalendarS
 
 Ephemeris should treat both as release-v1 packaging variants, not as different temporal ontologies.
 
+## 8.1. Upstream schema/validator convergence
+
+The current Resourcearium implementation has one release-v1 schema-description mismatch:
+
+- `temporal-bundle-release-schema.yml` globally lists `shards` as required;
+- the validator conditionally expects `shards[]` for `bootstrap-partial`;
+- the validator conditionally expects `bundle_artifacts[]` for `production-partial` / `production-complete`;
+- the production packager emits `bundle_artifacts[]`.
+
+Ephemeris treats the **validated status-discriminated behavior** as the operative v1 contract.
+
+Resourcearium should update its machine-readable release schema so the conditional packaging variants are expressed formally rather than leaving the schema and validator divergent.
+
+Ephemeris should not invent a third packaging shape.
+
 ## 9. Required event-payload resolution
 
 For Ephemeris to import a populated release slot, it needs a resolvable rich event payload.
