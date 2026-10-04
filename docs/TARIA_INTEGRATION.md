@@ -2,90 +2,113 @@
 
 ## Relationship
 
-Taria and Ephemeris solve different problems.
+Taria / Resourcearium and Ephemeris solve different parts of the same temporal-information problem.
 
-- **Taria** owns knowledge acquisition, Resourcearium source curation, source evidence, temporal assertions, identity/revision reasoning, frozen normalized snapshots, reconciliation, projections, CalendarSets, rollover, and rendered/export artifacts.
-- **Ephemeris** owns interactive local temporal exploration, visualization, querying, inspection, annotations, saved views, overlays, and ordinary personal calendar behavior.
+- **Taria / Resourcearium** owns source acquisition, source/resource identity, temporal assertions, normalization, reconciliation, projection, CalendarSet construction, coverage accounting, frozen bundle releases, rollover/source health, and rendered export artifacts.
+- **Ephemeris** owns local adoption, indexing, interactive querying, inspection, saved views, grouping, sorting, color rules, overlays, annotations, and desktop calendar behavior.
 
-Ephemeris consumes Taria's rich temporal state. It must not force Taria to imitate a desktop calendar database, and it must not flatten Taria into ICS before ingestion.
+Ephemeris consumes Taria's rich temporal products. It must not reproduce Taria's acquisition pipeline and must not flatten Taria through ICS before ingestion.
 
-## Existing Taria contracts
+The canonical producer/consumer agreement is:
 
-The integration is no longer speculative. Resourcearium already defines the temporal contracts Ephemeris needs.
-
-The important upstream contracts include:
-
-- `temporal-event-assertion-schema.yml`
-- `temporal-source-time-interpretation-schema.yml`
-- `temporal-event-identity-revision-schema.yml`
-- `temporal-normalized-event-snapshot-schema.yml`
-- `temporal-calendar-projection-schema.yml`
-- `temporal-calendar-set-schema.yml`
-- `temporal-bundle-projection-ontology.yml`
-
-Ephemeris should align with those contracts rather than invent a competing temporal ontology.
+- [TARIA_BUNDLE_CONTRACT.md](TARIA_BUNDLE_CONTRACT.md)
 
 ## Upstream lifecycle
 
-Taria's accepted staged projection lifecycle is:
+The accepted Taria lifecycle is now:
 
 ```text
-CalendarProjectionSpec
-    -> SourceResolutionSet
-    -> AcquisitionSnapshotSet
+raw temporal sources
+    -> acquisition
     -> NormalizedEventSnapshot
     -> ProjectionEventSet
     -> ReconciledProjectionEventSet
     -> CalendarSet
-    -> RenderedCalendarArtifact
+    -> TemporalBundleRelease
+    -> Ephemeris adoption
 ```
 
-Ephemeris is primarily a **consumer after normalization/reconciliation**, before lossy rendering.
+Rendered ICS / JSCalendar / jCal / CSV artifacts are downstream projections, not the canonical Taria -> Ephemeris interchange.
 
-The initial integration boundary should therefore be a frozen/reconciled JSON artifact, not an ICS rendering.
+## Primary consumer boundary
 
-## Initial consumer boundary
+The primary handoff is now a **TemporalBundleRelease manifest plus its referenced frozen artifacts**.
 
-The first implementation target is:
+Canonical upstream files include:
 
-**ReconciledProjectionEventSet + its source/provenance context**
+- `registry/temporal-bundle-release-schema.yml`
+- `registry/temporal-bundle-releases.yml`
+- `registry/temporal-bundle-projection-ontology.yml`
+- `registry/temporal-calendar-set-schema.yml`
+- `registry/temporal-projection-reconciliation-schema.yml`
+- `registry/temporal-normalized-event-snapshot-schema.yml`
 
-This is a better application boundary than raw TemporalEventAssertions because Taria has already done identity grouping and conflict handling.
+A release is packaging over already-frozen derivative state. It does not redefine canonical event identity.
 
-A reconciled event can provide:
+## Release channels
 
-- `reconciled_event_key`
-- `event_ref`
-- assertion references
-- source references
-- source contexts/facets
-- retained provenance references
-- renderability state
-- resolved display fields
-- field-resolution decisions
+Taria currently exposes two logical channels:
 
-Ephemeris must preserve these upstream references even when it maps them into local indexed fields.
+- `bootstrap`
+- `production`
 
-## CalendarSet boundary
+Release manifests are immutable. Channel pointers may advance. Older releases remain addressable.
 
-A Taria `CalendarSet` is useful as imported organizational/view metadata.
+Ephemeris may pin a specific release ID and must not silently rewrite that release merely because a channel advances.
 
-Its semantics explicitly match Ephemeris:
+### Bootstrap
 
-- calendar membership is not event identity
-- the same event may belong to multiple calendars
-- partitioning does not clone events
-- hierarchy is logical, not an ICS-folder constraint
-- merged and partitioned calendars may coexist
-- unresolved/blocked/undated events remain accounted for
+Bootstrap releases are valid for integration work and client development.
 
-Therefore Ephemeris should import CalendarSet membership as **view/grouping metadata**, never by duplicating events.
+They may contain specimen data and partial bundle coverage.
 
-## Bundle boundary
+They must remain visibly non-production.
 
-Taria's canonical temporal bundle ontology currently includes:
+### Production
 
-- Temporal Everything
+Production may be:
+
+- `production-partial`
+- `production-complete`
+
+A production-partial release is still consumable. Missing coverage is a property of the release, not evidence that the real world contains zero events.
+
+## Current Taria bundle state
+
+At the current 2026-10-04 boundary, Resourcearium has:
+
+- 429 canonical temporal Resources;
+- 221 pinned RICS profiles in the broader crosswalk;
+- 177 direct single-Resource RICS profiles in the first exact-lineage production tranche;
+- resilient batch acquisition tooling;
+- normalization into a master `NormalizedEventSnapshot`;
+- 13 canonical projection builds from one frozen snapshot;
+- reconciliation;
+- CalendarSet construction;
+- JSON/ICS rendering;
+- immutable TemporalBundleRelease packaging and validation.
+
+The current bootstrap release is:
+
+```text
+temporal-bundle-release:bootstrap:2026-10-04
+```
+
+It is explicitly `bootstrap-partial` and currently exposes:
+
+- 48 ready events;
+- 15 represented Resource identities;
+- 2 partially populated canonical domain slots;
+- 10 pending canonical domain slots;
+- consumer-safe integration posture;
+- non-production-complete status.
+
+The production channel remains independently advanceable as acquisition coverage improves.
+
+## Canonical bundle ontology
+
+The canonical domain slots are:
+
 - Politics & Government
 - Economics & Public Statistics
 - Finance & Markets
@@ -98,187 +121,310 @@ Taria's canonical temporal bundle ontology currently includes:
 - Transportation & Civic Infrastructure
 - Holidays & Observances
 - Education & Academia
-- Temporal Unclassified
-- Temporal Projection Gaps
 
-Domain membership is explicitly nonexclusive and orthogonal to geography.
+The logical root is:
 
-Runtime views are consumer-owned. Taria explicitly allows consumers to:
+```text
+bundle:temporal/everything
+```
 
-- filter
-- group
-- sort
-- color
-- search
-- overlay
-- facet
-- annotate
-- save views
+Domain membership is intentionally non-exclusive.
 
-A runtime view does not rebuild the upstream source pipeline. This is exactly the Ephemeris programmable-view model.
+The same event may belong to several canonical bundles without becoming several event identities.
+
+## Event payload versus CalendarSet membership
+
+This distinction is fundamental.
+
+### ReconciledProjectionEventSet
+
+The reconciled event set supplies rich event payload:
+
+- reconciled event identity;
+- upstream event identity;
+- assertion/source/provenance refs;
+- display fields;
+- temporal values;
+- lifecycle and renderability;
+- source contexts/facets;
+- field-resolution decisions.
+
+Ephemeris already has a direct importer for this shape.
+
+### CalendarSet
+
+CalendarSet supplies logical membership/navigation metadata:
+
+- projected calendars;
+- merged and partition calendars;
+- event membership by reconciled-event reference;
+- groups/hierarchy;
+- partition values;
+- blocked/undated accounting.
+
+CalendarSet references events. It does not replace event payload.
+
+Therefore the consumer mapping is:
+
+```text
+ReconciledProjectionEventSet
+    -> canonical local TemporalEvent rows
+
+CalendarSet
+    -> local bundle/calendar membership metadata
+```
+
+## Overlapping bundle import
+
+Canonical domain bundles overlap by design.
+
+Ephemeris must never create one local event per bundle membership.
+
+For example:
+
+```text
+one FOMC event
+    -> politics-government
+    -> economics-public-statistics
+    -> finance-markets
+```
+
+must remain:
+
+```text
+one local TemporalEvent
+    + three bundle memberships
+```
+
+Stable upstream event/reconciled-event identity is authoritative for deduplication.
+
+## Release-v1 packaging variants
+
+Taria currently validates two release-v1 packaging forms.
+
+### Bootstrap-partial
+
+Bootstrap manifests use:
+
+```text
+shards[]
+```
+
+A shard identifies a bundle, frozen normalized snapshot, CalendarSet, counts, hashes, and data posture.
+
+### Production partial/complete
+
+The production packager uses:
+
+```text
+bundle_artifacts[]
+```
+
+Each artifact carries paths/hashes for:
+
+- ProjectionEventSet;
+- ReconciledProjectionEventSet;
+- CalendarSet;
+- rendered JSON;
+- rendered ICS;
+- ready/blocked/undated counts.
+
+The aggregate carries the materialized `bundle:temporal/everything` CalendarSet.
+
+Ephemeris treats these as packaging variants of the same release concept.
+
+## Known bootstrap payload gap
+
+The current bootstrap manifest exposes normalized-snapshot and CalendarSet paths, but does not expose reconciled-event-set paths.
+
+That means the bootstrap release is already valid for release/channel/coverage integration, but the **current Ephemeris reconciled-event-set importer cannot ingest it end-to-end from the manifest alone**.
+
+This is an explicit producer/consumer contract gap.
+
+Preferred upstream resolution:
+
+- add a reconciled-event-set path and integrity hash for each populated bootstrap shard, matching the production artifact contract.
+
+An alternative Ephemeris normalized-snapshot importer is possible, but it must not duplicate Resourcearium's reconciliation logic.
+
+CalendarSet must not be mistaken for event payload, and ICS must not be used as a workaround.
+
+## Partial coverage semantics
+
+Ephemeris must preserve Taria's coverage posture.
+
+These states are distinct:
+
+- populated;
+- partial;
+- pending;
+- gap-only;
+- selected-but-uningested.
+
+In particular:
+
+```text
+pending != zero events
+gap-only != zero events
+selected-but-uningested != empty source
+```
+
+A partial release is still useful and may be adopted immediately.
+
+The UI should eventually expose release coverage and acquisition posture directly.
 
 ## Identity
 
-Taria explicitly separates:
+Taria separates:
 
-- assertion identity
-- event identity
-- occurrence identity
-- series identity
-- event-version identity
+- assertion identity;
+- event identity;
+- occurrence identity;
+- series identity;
+- event-version identity.
 
 Ephemeris must preserve that distinction.
 
-A stable event ID does not imply immutable title, time, or status.
+An internal UUID is a local database key, not a replacement for upstream identity.
 
-A changed time alone does not prove a new event.
+Important retained IDs include:
 
-A cancellation does not delete event identity.
+- `event_ref`;
+- `reconciled_event_key` / reconciled-event refs;
+- assertion refs;
+- source refs;
+- provenance refs;
+- occurrence refs;
+- series refs;
+- version refs.
+
+A changed time alone does not imply a new event.
+
+Cancellation does not erase event identity.
 
 Unresolved continuity must remain unresolved rather than being forced.
 
-### Local identity
-
-Ephemeris may use an internal UUID as a database primary key, but it must also preserve upstream Taria identity strings such as:
-
-- `event_ref`
-- `reconciled_event_key`
-- assertion refs
-- occurrence refs
-- series refs
-- version refs
-
-The internal UUID must never replace or erase those identifiers.
-
 ## Temporal precision
 
-Taria's source-facing temporal contract distinguishes:
+Taria distinguishes:
 
-### Value kinds
+- exact instant;
+- local datetime;
+- date-only;
+- explicit all-day date;
+- interval;
+- month precision;
+- year precision;
+- unknown/unresolved.
 
-- instant
-- local-datetime
-- date-only
-- all-day-date
-- interval
-- unknown
+Critical rules:
 
-### Clock bases
+- all-day date is not a midnight instant;
+- date-only is not automatically all-day;
+- timezone-unknown must not be guessed;
+- floating-local is not timezone-unknown;
+- month/year precision must not invent a day;
+- original published values and inference evidence should remain recoverable.
 
-- UTC
-- explicit offset
-- named timezone
-- jurisdiction local
-- venue local
-- floating local
-- timezone unknown
-- not applicable
-
-### Precision
-
-- second
-- minute
-- hour
-- date
-- multi-day
-- unknown
-
-Critical upstream rules include:
-
-- all-day date is not a midnight instant
-- date-only is not automatically all-day
-- timezone-unknown must not be guessed
-- floating-local is not timezone-unknown
-- normalization must preserve the original published value
-- timezone inference must record its evidence
-- ingestion-default timezone is provenance, not a source assertion
-
-Ephemeris must retain those distinctions.
-
-## Broader projection precision
-
-Taria projection fixtures also contain intentionally imprecise future timing such as:
-
-- year-only
-- month-only
-
-Ephemeris must not invent a day merely to place these events on a conventional grid.
-
-The local model therefore needs explicit support for imprecise temporal values and undated/unrenderable temporal records.
+Ephemeris already models these distinctions locally.
 
 ## Renderability
 
-A reconciled Taria event can be:
+Reconciled Taria events can be:
 
-- ready
-- blocked by temporal conflict
-- blocked by operative-status conflict
-- blocked by multiple conflicts
-- undated
+- ready;
+- blocked by temporal conflict;
+- blocked by operative-status conflict;
+- blocked by multiple conflicts;
+- undated/unresolved.
 
-Blocked and undated events must remain locally inspectable/accounted for.
+Blocked and undated records remain locally inspectable.
 
-They must not be silently dropped and must not be coerced to arbitrary dates.
+They are not silently discarded or assigned fake dates.
 
 ## Provenance
 
-Taria provenance includes source/resource lineage, captures, transformations, assertion refs, snapshot refs, and evidence classes.
+Taria provenance includes:
 
-For a Taria event, Ephemeris should eventually be able to answer:
+- Resource/source lineage;
+- RICS/profile lineage where applicable;
+- acquisition/capture state;
+- transformations;
+- assertion refs;
+- snapshot refs;
+- reconciliation decisions;
+- evidence/authority posture.
 
-- Which canonical event is this?
-- Which assertions support it?
-- Which resources/surfaces support those assertions?
-- Which provenance traces were retained?
-- Which snapshot produced this state?
-- Which reconciliation decisions resolved conflicting fields?
-- Was the evidence direct, derived, historical, or otherwise classified?
-- Was the source official/first-party/secondary/etc.?
+Ephemeris should eventually be able to answer not just "what event is this?" but "why does Taria believe this event exists in this state?"
 
-## Import ownership
+## Release adoption
 
-Taria-supplied event state is upstream-owned.
+Release adoption should be transactional:
 
-Ephemeris may layer user-owned data such as:
+```text
+validate release
+    -> verify identities/hashes
+    -> resolve rich event payloads
+    -> reconcile/upsert canonical local events
+    -> import CalendarSet membership
+    -> retain explicit coverage gaps
+    -> preserve local annotations
+    -> record adopted release metadata
+    -> commit
+```
 
-- watched state
-- personal relevance
-- notes
-- reminder rules
-- local tags
-- suppression
-- display classification
-- saved-view membership/rules
+Failure must leave the previously adopted local state usable.
 
-A Taria refresh must not destroy local annotations.
+A newer release is a new frozen upstream state, not merely "the same URL fetched again."
 
-## Snapshots
+## Missing records
 
-Taria's `NormalizedEventSnapshot` is a frozen state, not a fresh observation merely because it was materialized later.
+A record disappearing from a later release does not automatically mean the real-world event was cancelled or should be deleted.
 
-Ephemeris must preserve the difference between:
+Ephemeris keeps its current conservative rule:
 
-- source observation time
-- acquisition time
-- snapshot creation time
-- local import time
+- explicit upstream cancellation/status change is meaningful;
+- disappearance alone is not cancellation;
+- identity/history remains inspectable;
+- future snapshot/history support may make supersession explicit.
 
-This enables reliable history and diffing.
+## Runtime views are consumer-owned
 
-## Refresh
+Taria materializes canonical bundles and selected durable derivatives.
 
-The preferred first workflow is deterministic local import of a Taria-produced frozen/reconciled JSON artifact.
+Ephemeris owns ad-hoc runtime views such as:
 
-Later integrations may automate discovery of new Taria snapshots, but Ephemeris rendering and querying must never depend on live GitHub/Taria access.
+- US politics excluding hearings over the next 45 days;
+- California courts plus federal elections;
+- high-importance economic releases this month;
+- finance events overlaid with government meetings;
+- sports grouped by league and colored by lifecycle status.
 
-## Rendered artifacts
+These do not require Resourcearium to rebuild a bundle.
 
-ICS, JSCalendar, jCal, CSV, and remote calendar targets are downstream projections.
+## Current Ephemeris support
 
-They are not the canonical Taria -> Ephemeris interchange layer.
+Implemented now:
+
+- direct ReconciledProjectionEventSet import;
+- stable upstream identity retention;
+- Taria source/provenance refs;
+- blocked/unplaced preservation;
+- transactional re-import;
+- created/updated/unchanged/retained-missing accounting.
+
+Not implemented yet:
+
+- TemporalBundleRelease v1 manifest import;
+- CalendarSet membership persistence;
+- release/channel metadata persistence;
+- release coverage UI;
+- release integrity/hash validation as one adoption transaction.
+
+Those are now the next Taria-facing integration boundary.
 
 ## Rollover and source health
 
-Taria already owns rich rollover/source-health semantics.
+Taria owns upstream rollover and source-health semantics.
 
-Ephemeris should consume and display that state rather than implementing a competing source-discovery system unless a future workflow explicitly requires it.
+Ephemeris should consume and display that state rather than invent a competing source-discovery/acquisition system.
