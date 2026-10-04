@@ -4,11 +4,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum EventStatus {
     Announced,
     Tentative,
+    #[default]
     Scheduled,
     Confirmed,
     Rescheduled,
@@ -59,12 +60,6 @@ impl EventStatus {
 
     pub fn parse(raw: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|status| status.as_str() == raw)
-    }
-}
-
-impl Default for EventStatus {
-    fn default() -> Self {
-        Self::Scheduled
     }
 }
 
@@ -317,6 +312,8 @@ impl TemporalEvent {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     #[test]
