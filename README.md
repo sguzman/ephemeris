@@ -64,6 +64,9 @@ Implemented:
 - CalendarSet projected-calendar and event-membership persistence
 - many-to-one upstream identity aliases across overlapping Taria projections
 - production `bundle_artifacts[]` adoption with cross-bundle canonical-event deduplication
+- current-release Taria bundle membership predicates
+- projected CalendarSet membership predicates
+- membership-aware saved views, overlays, color rules, and calendar algebra without copying membership into events
 - repeatable Taria re-import using stable source-record and upstream event identity
 - transactional source import reconciliation
 - created / updated / unchanged / retained-missing accounting
@@ -71,7 +74,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation milestone at 2026-10-04 passes the full CI gate at `41738386168f3ae9d3d803fee0dd1d925a59cfd8`: format, compile, strict Clippy, and **47 library tests**.
+The verified implementation milestone at 2026-10-04 passes the full CI gate at `5c25e3adc85fad67a97704100d60a70a7439515c`: format, compile, strict Clippy, and **49 library tests**.
 
 ## Product boundary
 
