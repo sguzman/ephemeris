@@ -515,6 +515,26 @@ impl TemporalStore {
     }
 
     pub fn upsert_taria_release(&self, release: &TariaReleaseRecord) -> anyhow::Result<()> {
+        let existing_hash: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT manifest_sha256 FROM taria_releases WHERE release_id = ?1",
+                params![release.release_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("failed to check Taria release immutability")?;
+        if let Some(existing_hash) = existing_hash
+            && existing_hash != release.manifest_sha256
+        {
+            return Err(anyhow!(
+                "Taria release {} changed content: immutable release hash {} != {}",
+                release.release_id,
+                existing_hash,
+                release.manifest_sha256
+            ));
+        }
+
         self.conn
             .execute(
                 r#"
@@ -529,13 +549,7 @@ impl TemporalStore {
                 )
                 ON CONFLICT(release_id) DO UPDATE SET
                     channel = excluded.channel,
-                    status = excluded.status,
-                    production_complete = excluded.production_complete,
                     manifest_path = excluded.manifest_path,
-                    manifest_sha256 = excluded.manifest_sha256,
-                    generated_at = excluded.generated_at,
-                    coverage_json = excluded.coverage_json,
-                    manifest_json = excluded.manifest_json,
                     adopted_at = excluded.adopted_at
                 "#,
                 named_params! {
@@ -561,6 +575,26 @@ impl TemporalStore {
         calendars: &[TariaProjectedCalendarRecord],
         memberships: &[TariaCalendarMembershipRecord],
     ) -> anyhow::Result<TariaCalendarSetImportResult> {
+        let existing_hash: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT content_sha256 FROM taria_calendar_sets WHERE calendar_set_id = ?1",
+                params![set.calendar_set_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("failed to check CalendarSet immutability")?;
+        if let Some(existing_hash) = existing_hash
+            && existing_hash != set.content_sha256
+        {
+            return Err(anyhow!(
+                "Taria CalendarSet {} changed content: immutable content hash {} != {}",
+                set.calendar_set_id,
+                existing_hash,
+                set.content_sha256
+            ));
+        }
+
         let tx = self
             .conn
             .unchecked_transaction()
@@ -570,27 +604,18 @@ impl TemporalStore {
             tx.execute(
                 r#"
                 INSERT INTO taria_calendar_sets (
-                    calendar_set_id, release_id, bundle_ref, projection_ref,
+                    calendar_set_id, projection_ref,
                     input_reconciled_event_set_ref, source_path,
                     content_sha256, raw_json
                 ) VALUES (
-                    :calendar_set_id, :release_id, :bundle_ref, :projection_ref,
+                    :calendar_set_id, :projection_ref,
                     :input_reconciled_event_set_ref, :source_path,
                     :content_sha256, :raw_json
                 )
-                ON CONFLICT(calendar_set_id) DO UPDATE SET
-                    release_id = excluded.release_id,
-                    bundle_ref = excluded.bundle_ref,
-                    projection_ref = excluded.projection_ref,
-                    input_reconciled_event_set_ref = excluded.input_reconciled_event_set_ref,
-                    source_path = excluded.source_path,
-                    content_sha256 = excluded.content_sha256,
-                    raw_json = excluded.raw_json
+                ON CONFLICT(calendar_set_id) DO NOTHING
                 "#,
                 named_params! {
                     ":calendar_set_id": set.calendar_set_id,
-                    ":release_id": set.release_id,
-                    ":bundle_ref": set.bundle_ref,
                     ":projection_ref": set.projection_ref,
                     ":input_reconciled_event_set_ref": set.input_reconciled_event_set_ref,
                     ":source_path": set.source_path,
@@ -598,7 +623,18 @@ impl TemporalStore {
                     ":raw_json": set.raw_json,
                 },
             )
-            .context("failed to upsert Taria CalendarSet")?;
+            .context("failed to insert immutable Taria CalendarSet")?;
+
+            tx.execute(
+                r#"
+                INSERT INTO taria_release_calendar_sets (
+                    release_id, calendar_set_id, bundle_ref
+                ) VALUES (?1, ?2, ?3)
+                ON CONFLICT(release_id, calendar_set_id, bundle_ref) DO NOTHING
+                "#,
+                params![set.release_id, set.calendar_set_id, set.bundle_ref],
+            )
+            .context("failed to associate CalendarSet with Taria release")?;
 
             tx.execute(
                 "DELETE FROM taria_calendar_memberships WHERE calendar_set_id = ?1",
@@ -1301,8 +1337,6 @@ fn create_taria_release_schema_current(conn: &Connection) -> anyhow::Result<()> 
 
         CREATE TABLE taria_calendar_sets (
             calendar_set_id TEXT PRIMARY KEY,
-            release_id TEXT NOT NULL REFERENCES taria_releases(release_id) ON DELETE CASCADE,
-            bundle_ref TEXT NOT NULL,
             projection_ref TEXT NOT NULL,
             input_reconciled_event_set_ref TEXT NOT NULL,
             source_path TEXT NOT NULL,
@@ -1310,11 +1344,16 @@ fn create_taria_release_schema_current(conn: &Connection) -> anyhow::Result<()> 
             raw_json TEXT NOT NULL
         );
 
-        CREATE INDEX taria_calendar_sets_release
-            ON taria_calendar_sets(release_id);
+        CREATE TABLE taria_release_calendar_sets (
+            release_id TEXT NOT NULL REFERENCES taria_releases(release_id) ON DELETE CASCADE,
+            calendar_set_id TEXT NOT NULL REFERENCES taria_calendar_sets(calendar_set_id)
+                ON DELETE CASCADE,
+            bundle_ref TEXT NOT NULL,
+            PRIMARY KEY (release_id, calendar_set_id, bundle_ref)
+        );
 
-        CREATE INDEX taria_calendar_sets_bundle
-            ON taria_calendar_sets(bundle_ref);
+        CREATE INDEX taria_release_calendar_sets_bundle
+            ON taria_release_calendar_sets(bundle_ref, release_id);
 
         CREATE TABLE taria_projected_calendars (
             calendar_set_id TEXT NOT NULL REFERENCES taria_calendar_sets(calendar_set_id)
