@@ -21,7 +21,7 @@ The baseline is no longer speculative:
 - filesystem-first Taria release/channel resolution
 - one-click local Taria source update
 
-Current SQLite schema version: **8**.
+Current SQLite schema version: **9**.
 
 ## Architectural goals
 
@@ -127,6 +127,12 @@ The current database owns:
 
 - temporal sources;
 - canonical temporal events;
+- many-to-one Taria import-record mappings;
+- all retained upstream Taria event/reconciled identity aliases;
+- immutable Taria releases;
+- immutable CalendarSets;
+- release-to-CalendarSet associations;
+- projected calendars and event memberships;
 - durable saved views.
 
 Saved views currently embed their query/presentation state, including ordered composition layers, overlays, and ordered color rules.
@@ -143,7 +149,7 @@ SQLite was selected because Ephemeris requires:
 - durable saved-view state;
 - portable native packaging.
 
-Future schema work will add release-adoption metadata, CalendarSet membership, provenance/history, annotations, relations, and occurrences without changing the storage-engine decision.
+Future schema work will add richer provenance/history, annotations, relations, occurrences, release-diff state, and coverage presentation without changing the storage-engine decision.
 
 ## Query/view engine
 
@@ -209,20 +215,23 @@ The direct `ReconciledProjectionEventSet` importer remains the preferred full ev
 The implemented filesystem release layer now:
 
 - persists a local Resourcearium root/channel in UI state;
-- auto-detects common local Taria checkout layouts;
+- auto-detects common local Taria checkout layouts, including `$HOME/Code/Text/taria`;
 - resolves the local channel registry and immutable manifest;
 - confines artifact paths under the Resourcearium tree;
-- verifies declared SHA-256 payload hashes;
-- imports supported bootstrap post-reconciliation payloads;
-- reports unsupported populated shards explicitly.
+- validates bootstrap content fingerprints and production raw-file SHA-256 according to Resourcearium's producer rules;
+- imports mixed bootstrap post-reconciliation payloads;
+- imports production `bundle_artifacts[]`;
+- stores immutable release metadata;
+- stores immutable CalendarSets independently from release membership;
+- stores projected calendars and CalendarSet event memberships;
+- retains all upstream Taria event/reconciled aliases;
+- deduplicates overlapping production projections into one canonical local event.
 
-The next architecture slice must complete release semantics:
+The next architecture slice must:
 
-- import canonical event payload once across overlapping production bundles;
-- persist CalendarSet membership separately;
-- preserve release coverage/gap posture canonically;
-- record adopted release identity/coverage in SQLite;
-- make multi-artifact adoption atomic;
+- expose bundle/CalendarSet membership as query context without copying it into canonical event fields;
+- preserve and display release coverage/gap posture;
+- make multi-artifact adoption atomic as a whole;
 - execute large adoptions off the egui frame loop.
 
 CalendarSet is membership metadata, not event payload.
