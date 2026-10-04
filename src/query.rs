@@ -25,9 +25,7 @@ impl QueryContext {
     pub fn for_timezone(display_timezone: Tz) -> Self {
         Self {
             display_timezone,
-            today: Utc::now()
-                .with_timezone(&display_timezone)
-                .date_naive(),
+            today: Utc::now().with_timezone(&display_timezone).date_naive(),
         }
     }
 }
@@ -218,16 +216,12 @@ impl QueryPredicate {
                 start,
                 end_exclusive,
                 include_imprecise,
-            } => event_date_span(
-                &event.time,
-                context.display_timezone,
-                *include_imprecise,
-            )
-            .is_some_and(|(event_start, event_end_exclusive)| {
-                start.is_none_or(|query_start| event_end_exclusive > query_start)
-                    && end_exclusive
-                        .is_none_or(|query_end_exclusive| event_start < query_end_exclusive)
-            }),
+            } => event_date_span(&event.time, context.display_timezone, *include_imprecise)
+                .is_some_and(|(event_start, event_end_exclusive)| {
+                    start.is_none_or(|query_start| event_end_exclusive > query_start)
+                        && end_exclusive
+                            .is_none_or(|query_end_exclusive| event_start < query_end_exclusive)
+                }),
         }
     }
 }
@@ -581,9 +575,7 @@ fn event_date_span(
             end_exclusive.unwrap_or_else(|| start.succ_opt().unwrap_or(*start)),
         )),
         TimeSpec::Instant {
-            start_utc,
-            end_utc,
-            ..
+            start_utc, end_utc, ..
         } => {
             let start = start_utc.with_timezone(&timezone);
             let end_exclusive = end_utc
