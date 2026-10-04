@@ -53,12 +53,22 @@ pub struct PersistedUiState {
     #[serde(default)]
     pub active_saved_view_id: Option<Uuid>,
     pub selected_event_id: Option<Uuid>,
+    #[serde(default)]
+    pub taria_resourcearium_root: String,
+    #[serde(default = "default_taria_channel")]
+    pub taria_channel: String,
+    #[serde(default)]
+    pub taria_last_release_id: Option<String>,
+    #[serde(default)]
+    pub taria_last_update_at: Option<String>,
+    #[serde(default)]
+    pub taria_last_update_summary: Option<String>,
 }
 
 impl Default for PersistedUiState {
     fn default() -> Self {
         Self {
-            version: 8,
+            version: 9,
             calendar_view: CalendarView::Month,
             calendar_layout: CalendarLayout::Grid,
             focus_date: Local::now().date_naive().to_string(),
@@ -81,6 +91,11 @@ impl Default for PersistedUiState {
             legacy_saved_views: Vec::new(),
             active_saved_view_id: None,
             selected_event_id: None,
+            taria_resourcearium_root: String::new(),
+            taria_channel: default_taria_channel(),
+            taria_last_release_id: None,
+            taria_last_update_at: None,
+            taria_last_update_summary: None,
         }
     }
 }
@@ -107,8 +122,11 @@ impl PersistedUiState {
             .with_context(|| format!("failed to read {}", path.display()))?;
         let mut state: Self = serde_json::from_str(&raw)
             .with_context(|| format!("failed to decode {}", path.display()))?;
-        if state.version < 8 {
-            state.version = 8;
+        if state.version < 9 {
+            state.version = 9;
+        }
+        if state.taria_channel.trim().is_empty() {
+            state.taria_channel = default_taria_channel();
         }
         if state.sort_rules.is_empty() {
             state.sort_rules.push(SortRule::default());
@@ -207,6 +225,10 @@ impl PersistedUiState {
     }
 }
 
+fn default_taria_channel() -> String {
+    "bootstrap".to_string()
+}
+
 fn default_state_path() -> anyhow::Result<PathBuf> {
     if let Some(path) = dirs::data_local_dir() {
         return Ok(path.join("ephemeris").join("ui-state.json"));
@@ -256,6 +278,8 @@ mod tests {
         assert!(loaded.overlays.is_empty());
         assert!(loaded.query_expression.is_some());
         assert!(loaded.legacy_saved_views.is_empty());
+        assert_eq!(loaded.taria_channel, "bootstrap");
+        assert!(loaded.taria_resourcearium_root.is_empty());
     }
 
     #[test]
