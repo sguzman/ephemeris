@@ -872,6 +872,10 @@ fn render_time_spec(ui: &mut egui::Ui, time: &TimeSpec, timezone: Tz) {
             inspector_row(ui, "Date", &date.to_string());
             ui.small("Date-only: the source did not assert full-day semantics.");
         }
+        TimeSpec::DateOnly { date } => {
+            inspector_row(ui, "Civil date", &date.to_string());
+            ui.small("Source precision is date-only; no all-day semantics were invented.");
+        }
         TimeSpec::AllDay {
             start,
             end_exclusive,
