@@ -15,8 +15,7 @@ use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
-    RgbColor, SavedView, SortDirection,
-    SortField, SortRule, TemporalKind, TextField, TextOperator,
+    RgbColor, SavedView, SortDirection, SortField, SortRule, TemporalKind, TextField, TextOperator,
     matches_composed_or_overlay_with_membership,
 };
 use crate::state::PersistedUiState;
@@ -1209,8 +1208,7 @@ impl EphemerisApp {
                     }
 
                     if ui.button("Add layer condition").clicked() {
-                        layer.query.expression =
-                            Some(default_query_expr(QueryExprKind::Predicate));
+                        layer.query.expression = Some(default_query_expr(QueryExprKind::Predicate));
                         presentation_changed = true;
                     }
                 } else if let Some(expression) = layer.query.expression.as_mut() {
@@ -1236,10 +1234,7 @@ impl EphemerisApp {
         if ui.button("Add algebra layer").clicked() {
             self.state.composition_layers.push(CompositionLayer {
                 id: Uuid::new_v4(),
-                name: format!(
-                    "Layer {}",
-                    self.state.composition_layers.len() + 1
-                ),
+                name: format!("Layer {}", self.state.composition_layers.len() + 1),
                 enabled: false,
                 operator: CompositionOperator::Union,
                 query: crate::query::EventQuery {
