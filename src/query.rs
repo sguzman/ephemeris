@@ -81,6 +81,169 @@ impl EventQuery {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupBy {
+    None,
+    #[default]
+    Date,
+    Week,
+    Month,
+    Source,
+    Domain,
+    Jurisdiction,
+    Institution,
+    EventType,
+    Status,
+}
+
+impl GroupBy {
+    pub const ALL: [Self; 10] = [
+        Self::None,
+        Self::Date,
+        Self::Week,
+        Self::Month,
+        Self::Source,
+        Self::Domain,
+        Self::Jurisdiction,
+        Self::Institution,
+        Self::EventType,
+        Self::Status,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "No grouping",
+            Self::Date => "Date",
+            Self::Week => "Week",
+            Self::Month => "Month",
+            Self::Source => "Source",
+            Self::Domain => "Domain",
+            Self::Jurisdiction => "Jurisdiction",
+            Self::Institution => "Institution",
+            Self::EventType => "Event type",
+            Self::Status => "Status",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortField {
+    #[default]
+    Time,
+    Title,
+    Importance,
+    PersonalRelevance,
+    Source,
+    Domain,
+    Jurisdiction,
+    Institution,
+    EventType,
+    Status,
+}
+
+impl SortField {
+    pub const ALL: [Self; 10] = [
+        Self::Time,
+        Self::Title,
+        Self::Importance,
+        Self::PersonalRelevance,
+        Self::Source,
+        Self::Domain,
+        Self::Jurisdiction,
+        Self::Institution,
+        Self::EventType,
+        Self::Status,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Time => "Time",
+            Self::Title => "Title",
+            Self::Importance => "Importance",
+            Self::PersonalRelevance => "Personal relevance",
+            Self::Source => "Source",
+            Self::Domain => "Domain",
+            Self::Jurisdiction => "Jurisdiction",
+            Self::Institution => "Institution",
+            Self::EventType => "Event type",
+            Self::Status => "Status",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortDirection {
+    #[default]
+    Ascending,
+    Descending,
+}
+
+impl SortDirection {
+    pub const ALL: [Self; 2] = [Self::Ascending, Self::Descending];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ascending => "Ascending",
+            Self::Descending => "Descending",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SortRule {
+    pub field: SortField,
+    pub direction: SortDirection,
+}
+
+impl Default for SortRule {
+    fn default() -> Self {
+        Self {
+            field: SortField::Time,
+            direction: SortDirection::Ascending,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorBy {
+    None,
+    Source,
+    Domain,
+    Jurisdiction,
+    Institution,
+    EventType,
+    #[default]
+    Status,
+}
+
+impl ColorBy {
+    pub const ALL: [Self; 7] = [
+        Self::None,
+        Self::Source,
+        Self::Domain,
+        Self::Jurisdiction,
+        Self::Institution,
+        Self::EventType,
+        Self::Status,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "No semantic color",
+            Self::Source => "Source",
+            Self::Domain => "Domain",
+            Self::Jurisdiction => "Jurisdiction",
+            Self::Institution => "Institution",
+            Self::EventType => "Event type",
+            Self::Status => "Status",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedView {
     pub id: Uuid,
@@ -92,6 +255,12 @@ pub struct SavedView {
     pub calendar_view: CalendarView,
     #[serde(default)]
     pub calendar_layout: CalendarLayout,
+    #[serde(default)]
+    pub group_by: GroupBy,
+    #[serde(default)]
+    pub sort_rules: Vec<SortRule>,
+    #[serde(default)]
+    pub color_by: ColorBy,
     pub display_timezone: String,
     pub week_start_monday: bool,
 }
@@ -103,6 +272,9 @@ impl SavedView {
         hidden_source_ids: BTreeSet<Uuid>,
         calendar_view: CalendarView,
         calendar_layout: CalendarLayout,
+        group_by: GroupBy,
+        sort_rules: Vec<SortRule>,
+        color_by: ColorBy,
         display_timezone: impl Into<String>,
         week_start_monday: bool,
     ) -> Self {
@@ -113,6 +285,9 @@ impl SavedView {
             hidden_source_ids,
             calendar_view,
             calendar_layout,
+            group_by,
+            sort_rules,
+            color_by,
             display_timezone: display_timezone.into(),
             week_start_monday,
         }
@@ -166,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_view_has_stable_identity() {
+    fn saved_view_keeps_independent_presentation_dimensions() {
         let view = SavedView::new(
             "California Elections",
             EventQuery {
@@ -177,12 +352,21 @@ mod tests {
             BTreeSet::new(),
             CalendarView::Month,
             CalendarLayout::Agenda,
+            GroupBy::Jurisdiction,
+            vec![SortRule {
+                field: SortField::Importance,
+                direction: SortDirection::Descending,
+            }],
+            ColorBy::EventType,
             "America/Mexico_City",
             false,
         );
 
         assert_eq!(view.name, "California Elections");
         assert_eq!(view.calendar_layout, CalendarLayout::Agenda);
+        assert_eq!(view.group_by, GroupBy::Jurisdiction);
+        assert_eq!(view.color_by, ColorBy::EventType);
+        assert_eq!(view.sort_rules.len(), 1);
         assert!(!view.id.is_nil());
     }
 }
