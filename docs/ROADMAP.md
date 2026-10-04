@@ -110,6 +110,7 @@ Implemented layouts:
 
 - Grid
 - Agenda
+- Table
 
 Also implemented:
 
@@ -174,11 +175,19 @@ Implemented temporal query predicates:
 - relative date windows with deterministic day offsets
 - editor presets for Today, Next 7, Next 30, and Previous 7 days
 
+Implemented dense table foundation:
+
+- reusable Table layout over the same event corpus
+- Taria-oriented core columns
+- direct row selection into the existing inspector
+- reuse of saved query, sort, grouping, and semantic color state
+- true grouping partitions independent from sorting
+
 Next:
 
-- table layout for dense corpora
+- ordered color-rule sets with precedence/fallback
 - richer facets
-- ordered color-rule sets
+- user-defined table columns
 - view composition/calendar algebra
 
 Exit criterion remains:
@@ -204,7 +213,6 @@ Status: **started through Agenda**
 Goals:
 
 - compact agenda
-- table mode
 - chronological stream
 - timeline
 - heatmap/density
