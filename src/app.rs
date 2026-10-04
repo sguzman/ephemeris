@@ -13,7 +13,7 @@ use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
 use crate::query::{
     ColorBy, ColorRule, GroupBy, IntegerField, IntegerOperator, Overlay, PresenceField,
     QueryContext, QueryExpr, QueryPredicate, RgbColor, SavedView, SortDirection, SortField,
-    SortRule, TemporalKind, TextField, TextOperator, matches_base_or_overlay,
+    SortRule, TemporalKind, TextField, TextOperator, matches_composed_or_overlay,
 };
 use crate::state::PersistedUiState;
 use crate::store::TemporalStore;
@@ -273,7 +273,13 @@ impl EphemerisApp {
                 event
                     .source_id
                     .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-                    && matches_base_or_overlay(&query, &self.state.overlays, event, &context)
+                    && matches_composed_or_overlay(
+                        &query,
+                        &self.state.composition_layers,
+                        &self.state.overlays,
+                        event,
+                        &context,
+                    )
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -291,7 +297,13 @@ impl EphemerisApp {
                 event
                     .source_id
                     .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-                    && matches_base_or_overlay(&query, &self.state.overlays, event, &context)
+                    && matches_composed_or_overlay(
+                        &query,
+                        &self.state.composition_layers,
+                        &self.state.overlays,
+                        event,
+                        &context,
+                    )
             })
             .cloned()
             .collect::<Vec<_>>();
