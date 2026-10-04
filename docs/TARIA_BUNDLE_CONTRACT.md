@@ -71,6 +71,33 @@ Ephemeris does **not** acquire Taria's individual upstream sources and does not 
 
 The preferred producer/consumer boundary is a **TemporalBundleRelease manifest plus its referenced frozen artifacts**.
 
+### Transport is filesystem-first
+
+The normal transport is the local filesystem.
+
+Ephemeris is configured with a local Taria/Resourcearium path and reads:
+
+```text
+registry/temporal-bundle-releases.yml
+    -> selected local channel
+    -> immutable local release manifest
+    -> local referenced artifacts
+```
+
+directly from disk.
+
+No GitHub/API/HTTP download step is part of normal operation.
+
+The configured path may point to:
+
+- the Taria repository root;
+- `incubator/resourcearium` directly;
+- or the local release-registry file.
+
+Ephemeris normalizes these forms to the Resourcearium root.
+
+See `TARIA_FILESYSTEM_WORKFLOW.md` for the implemented operator workflow.
+
 Canonical upstream files:
 
 - `registry/temporal-bundle-release-schema.yml`
@@ -317,7 +344,7 @@ Bootstrap r3 is mixed:
 
 Therefore **the current Ephemeris importer still cannot adopt bootstrap r3 end-to-end from the release manifest alone**, but two of its four populated shards now have a defined compact post-reconciliation payload path.
 
-Ephemeris should add a `CompactReconciledEventIndex` adapter rather than re-run Resourcearium reconciliation.
+Ephemeris now has a `CompactReconciledEventIndex` adapter and uses it from the local filesystem release updater rather than re-running Resourcearium reconciliation.
 
 For remaining bootstrap shards, the preferred upstream convergence is to expose a reconciled-event-set path/hash (or another explicitly versioned accepted reconciled payload) in the manifest.
 
@@ -509,20 +536,40 @@ The recovered Politics/Holidays shards are downstream-derived recovered state, n
 
 Ephemeris must preserve the release's partial posture if/when it imports it.
 
-## 19. Immediate Ephemeris implementation target
+## 19. Current Ephemeris release-consumer implementation
 
-The next Taria-facing implementation slice should be a **TemporalBundleRelease v1 importer**.
+The filesystem-first release consumer baseline is implemented.
 
-It should:
+Implemented now:
 
-1. load and validate a release manifest;
-2. support both current release-v1 packaging variants;
-3. resolve full ReconciledProjectionEventSet and accepted CompactReconciledEventIndex payloads;
-4. import canonical events once;
-5. import CalendarSet membership separately;
-6. retain release/coverage metadata;
-7. surface partial/pending/gap posture;
-8. preserve current source-record reconciliation and local annotations;
-9. reject malformed hashes/identity mismatches transactionally.
+1. persisted Resourcearium root path;
+2. persisted release channel;
+3. auto-detection of a local/sibling Taria checkout;
+4. local `temporal-bundle-releases.yml` resolution;
+5. local immutable release-manifest resolution;
+6. path confinement under Resourcearium root;
+7. declared SHA-256 validation;
+8. direct `ReconciledProjectionEventSet` adapter reuse;
+9. `CompactReconciledEventIndex` adapter;
+10. bootstrap `shards[]` traversal;
+11. explicit skipped-shard reporting for populated shards without accepted payloads;
+12. one-click **Update Taria Sources** UI;
+13. persisted last release/update summary.
 
-The existing direct `ReconciledProjectionEventSet` importer remains useful as the low-level event-payload adapter beneath this release importer.
+Current bootstrap r3 behavior:
+
+- recovered Politics is locally consumable;
+- recovered Holidays is locally consumable;
+- Elections is reported skipped because its release shard does not expose an accepted reconciled payload path;
+- Sports is reported skipped for the same reason.
+
+Still required for complete release adoption:
+
+- CalendarSet membership persistence;
+- canonical release/channel/coverage metadata in SQLite;
+- cross-bundle identity reconciliation for production `bundle_artifacts[]`;
+- production partial/complete adoption through the same button;
+- release coverage/pending/gap UI;
+- asynchronous/background adoption for very large releases.
+
+Production `bundle_artifacts[]` are recognized but deliberately not imported yet because importing overlapping domain projections independently through the current source-scoped adapter could duplicate canonical events.
