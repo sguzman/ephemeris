@@ -112,7 +112,7 @@ At the current 2026-10-04 boundary, Resourcearium has:
 The current bootstrap release is:
 
 ```text
-temporal-bundle-release:bootstrap:2026-10-04:r3
+temporal-bundle-release:bootstrap:2026-10-04:r4
 ```
 
 It is explicitly `bootstrap-partial` and currently exposes:
@@ -242,16 +242,14 @@ Bootstrap manifests use:
 shards[]
 ```
 
-A shard identifies a bundle, frozen normalized snapshot, CalendarSet, counts, hashes, and data posture.
+A shard identifies a bundle, frozen normalized snapshot, CalendarSet, counts, integrity fingerprints, data posture, and an accepted post-reconciliation payload.
 
-Bootstrap r3 also demonstrates an optional compact post-reconciliation payload:
+Bootstrap r4 uses two payload classes:
 
-```text
-event_index_path
-kind = CompactReconciledEventIndex
-```
+- recovered Politics/Holidays -> `CompactReconciledEventIndex`;
+- Elections/Sports -> full `ReconciledProjectionEventSet`.
 
-Recovered Politics and Holidays shards expose this compact payload with a content hash. It preserves stable reconciled/event/assertion/provenance IDs and temporal/display fields while explicitly retaining the full normalized snapshot as authoritative.
+All four populated r4 shards are therefore directly consumable.
 
 ### Production partial/complete
 
@@ -276,28 +274,18 @@ Ephemeris treats these as packaging variants of the same release concept.
 
 ## Current bootstrap payload posture
 
-Bootstrap r3 contains two payload classes.
+Bootstrap r4 closes the prior payload gap.
 
-Recovered shards:
+Current populated shards:
 
 - U.S. Politics recovery -> pinned `CompactReconciledEventIndex`;
-- U.S. Holidays recovery -> pinned `CompactReconciledEventIndex`.
+- U.S. Holidays recovery -> pinned `CompactReconciledEventIndex`;
+- 2027 European national elections -> pinned `ReconciledProjectionEventSet`;
+- 2026 U.S. pro sports excluding hockey -> pinned `ReconciledProjectionEventSet`.
 
-Specimen shards:
+Ephemeris now consumes both payload classes through the same local release updater and persists each shard's CalendarSet independently.
 
-- 2027 European national elections -> no rich reconciled payload path in the release manifest;
-- 2026 U.S. pro sports excluding hockey -> no rich reconciled payload path in the release manifest.
-
-Therefore the **current Ephemeris importer still cannot adopt bootstrap r3 end-to-end from the release manifest alone**.
-
-The correct convergence is:
-
-- Ephemeris adds a `CompactReconciledEventIndex` adapter for explicitly pinned compact reconciled indexes;
-- Resourcearium exposes a reconciled-event-set path/hash or another accepted post-reconciliation payload for the remaining populated bootstrap shards.
-
-Ephemeris should not implement a normalized-snapshot reconciliation clone merely to bridge packaging.
-
-CalendarSet must not be mistaken for event payload, and ICS must not be used as a workaround.
+CalendarSet remains membership metadata rather than event payload, and ICS is not used as a bridge.
 
 ## Partial coverage semantics
 
@@ -458,37 +446,45 @@ Implemented now:
 
 - direct ReconciledProjectionEventSet import;
 - direct CompactReconciledEventIndex import;
-- stable upstream identity retention;
+- stable source/import-record identity;
+- persistent many-to-one upstream event/reconciled identity aliases;
 - Taria source/provenance refs;
 - blocked/unplaced preservation;
 - transactional per-source re-import;
 - created/updated/unchanged/retained-missing accounting;
 - persisted local Resourcearium root;
 - persisted bootstrap/production channel selection;
-- auto-detection of common local Taria checkout locations;
+- auto-detection of common local Taria checkout locations including `$HOME/Code/Text/taria`;
 - local channel registry and immutable manifest resolution;
 - Resourcearium-root path confinement;
-- SHA-256 verification for consumed release payloads;
+- bootstrap content-fingerprint validation;
+- production file-SHA validation;
+- immutable release metadata in SQLite;
+- immutable CalendarSets plus release associations;
+- projected-calendar and event-membership persistence;
+- bootstrap `shards[]` adoption;
+- production `bundle_artifacts[]` adoption;
+- global cross-bundle event deduplication;
 - one-click **Update Taria Sources**;
 - persisted last release/update summary;
-- explicit skipped-shard reporting.
+- explicit skipped-artifact reporting.
 
-Current bootstrap r3 behavior:
+Current bootstrap r4 behavior:
 
 - recovered Politics -> imported from CompactReconciledEventIndex;
 - recovered Holidays -> imported from CompactReconciledEventIndex;
-- Elections -> skipped until its shard exposes an accepted reconciled payload;
-- Sports -> skipped until its shard exposes an accepted reconciled payload.
+- Elections -> imported from ReconciledProjectionEventSet;
+- Sports -> imported from ReconciledProjectionEventSet;
+- all four CalendarSets/memberships are retained independently.
+
+Production support is implemented and regression-tested with overlapping domain projections. The live Resourcearium production channel is still unset.
 
 Not implemented yet:
 
-- CalendarSet membership persistence;
-- canonical release/channel/coverage metadata in SQLite;
-- release-level global identity reconciliation across overlapping production bundles;
-- production `bundle_artifacts[]` adoption;
 - release coverage UI;
 - whole-release transaction/rollback across multiple payloads;
-- asynchronous large-release adoption.
+- asynchronous large-release adoption;
+- release-history/diff inspection.
 
 Those are now the next Taria-facing integration boundary.
 
