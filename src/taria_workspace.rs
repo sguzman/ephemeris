@@ -307,10 +307,11 @@ fn import_bootstrap_shard(
         false
     };
 
+    let release_id = report.release_id.clone();
     import_calendar_set_from_container(
         store,
         root,
-        &report.release_id,
+        &release_id,
         &bundle_ref,
         shard,
         "calendar_set_path",
@@ -350,10 +351,11 @@ fn import_production_artifact(
     merge_import_report(report, &imported);
     report.imported_artifacts += 1;
 
+    let release_id = report.release_id.clone();
     import_calendar_set_from_container(
         store,
         root,
-        &report.release_id,
+        &release_id,
         &bundle_ref,
         artifact,
         "calendar_set_path",
