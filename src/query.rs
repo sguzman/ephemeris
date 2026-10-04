@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::calendar::CalendarView;
+use crate::calendar::{CalendarLayout, CalendarView};
 use crate::domain::{EventStatus, TemporalEvent};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +90,8 @@ pub struct SavedView {
     #[serde(default)]
     pub hidden_source_ids: BTreeSet<Uuid>,
     pub calendar_view: CalendarView,
+    #[serde(default)]
+    pub calendar_layout: CalendarLayout,
     pub display_timezone: String,
     pub week_start_monday: bool,
 }
@@ -100,6 +102,7 @@ impl SavedView {
         query: EventQuery,
         hidden_source_ids: BTreeSet<Uuid>,
         calendar_view: CalendarView,
+        calendar_layout: CalendarLayout,
         display_timezone: impl Into<String>,
         week_start_monday: bool,
     ) -> Self {
@@ -109,6 +112,7 @@ impl SavedView {
             query,
             hidden_source_ids,
             calendar_view,
+            calendar_layout,
             display_timezone: display_timezone.into(),
             week_start_monday,
         }
@@ -172,11 +176,13 @@ mod tests {
             },
             BTreeSet::new(),
             CalendarView::Month,
+            CalendarLayout::Agenda,
             "America/Mexico_City",
             false,
         );
 
         assert_eq!(view.name, "California Elections");
+        assert_eq!(view.calendar_layout, CalendarLayout::Agenda);
         assert!(!view.id.is_nil());
     }
 }
