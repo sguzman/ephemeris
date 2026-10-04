@@ -10,7 +10,7 @@ use crate::calendar::{
     shift_focus, week_days, window_for_view, year_months,
 };
 use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
-use crate::query::SavedView;
+use crate::query::{ColorBy, GroupBy, SavedView, SortDirection, SortField, SortRule};
 use crate::state::PersistedUiState;
 use crate::store::TemporalStore;
 use crate::taria::import_reconciled_event_set_file;
@@ -260,19 +260,37 @@ impl EphemerisApp {
     }
 
     fn visible_events(&self) -> Vec<TemporalEvent> {
-        self.events
+        let query = self.state.event_query();
+        let mut events = self
+            .events
             .iter()
-            .filter(|event| event_matches_query(event, &self.state))
+            .filter(|event| {
+                event
+                    .source_id
+                    .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
+                    && query.matches(event)
+            })
             .cloned()
-            .collect()
+            .collect::<Vec<_>>();
+        sort_events(&mut events, self.timezone(), &self.state.sort_rules);
+        events
     }
 
     fn visible_unplaced_events(&self) -> Vec<TemporalEvent> {
-        self.unplaced_events
+        let query = self.state.event_query();
+        let mut events = self
+            .unplaced_events
             .iter()
-            .filter(|event| event_matches_query(event, &self.state))
+            .filter(|event| {
+                event
+                    .source_id
+                    .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
+                    && query.matches(event)
+            })
             .cloned()
-            .collect()
+            .collect::<Vec<_>>();
+        sort_events(&mut events, self.timezone(), &self.state.sort_rules);
+        events
     }
 
     fn handle_shortcuts(&mut self, ui: &egui::Ui) {
@@ -575,6 +593,79 @@ impl EphemerisApp {
             && ui.button("Clear query").clicked()
         {
             self.state.clear_query();
+            self.state.selected_event_id = None;
+            self.mark_state_dirty();
+        }
+
+        ui.separator();
+        ui.heading("Presentation");
+        ui.small("Grouping, sorting, and coloring are independent from filtering.");
+
+        let mut presentation_changed = false;
+
+        egui::ComboBox::from_id_salt("presentation.group")
+            .selected_text(self.state.group_by.label())
+            .show_ui(ui, |ui| {
+                for group_by in GroupBy::ALL {
+                    presentation_changed |= ui
+                        .selectable_value(&mut self.state.group_by, group_by, group_by.label())
+                        .changed();
+                }
+            });
+
+        egui::ComboBox::from_id_salt("presentation.color")
+            .selected_text(self.state.color_by.label())
+            .show_ui(ui, |ui| {
+                for color_by in ColorBy::ALL {
+                    presentation_changed |= ui
+                        .selectable_value(&mut self.state.color_by, color_by, color_by.label())
+                        .changed();
+                }
+            });
+
+        ui.strong("Sort rules");
+        let mut remove_sort = None;
+        for (index, rule) in self.state.sort_rules.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt(("presentation.sort.field", index))
+                    .selected_text(rule.field.label())
+                    .show_ui(ui, |ui| {
+                        for field in SortField::ALL {
+                            presentation_changed |= ui
+                                .selectable_value(&mut rule.field, field, field.label())
+                                .changed();
+                        }
+                    });
+                egui::ComboBox::from_id_salt(("presentation.sort.direction", index))
+                    .selected_text(rule.direction.label())
+                    .show_ui(ui, |ui| {
+                        for direction in SortDirection::ALL {
+                            presentation_changed |= ui
+                                .selectable_value(
+                                    &mut rule.direction,
+                                    direction,
+                                    direction.label(),
+                                )
+                                .changed();
+                        }
+                    });
+                if self.state.sort_rules.len() > 1 && ui.small_button("×").clicked() {
+                    remove_sort = Some(index);
+                }
+            });
+        }
+
+        if let Some(index) = remove_sort {
+            self.state.sort_rules.remove(index);
+            presentation_changed = true;
+        }
+        if ui.button("Add sort key").clicked() {
+            self.state.sort_rules.push(SortRule::default());
+            presentation_changed = true;
+        }
+
+        if presentation_changed {
+            self.state.active_saved_view_id = None;
             self.state.selected_event_id = None;
             self.mark_state_dirty();
         }
