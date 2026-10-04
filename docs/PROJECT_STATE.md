@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the background-update checkpoint, all **51** library tests pass. Verified implementation head: `9c55239ba1309dd5d15a13126d0188dc26be1076`, with format, check, strict Clippy, and tests all green.
+At the editable-calendar-algebra checkpoint, all **52** library tests pass. Verified implementation head: `9b4d8cde9b0c5c787ffe8935466abf455128228d`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -309,8 +309,7 @@ The current milestone is a foundation, not the finished calendar.
 
 Not yet implemented:
 
-- richer release-history/diff inspection
-- composition-layer GUI editor
+- richer field-level release/event snapshot diffs beyond membership-level release history
 - saved-view-reference composition / inheritance with cycle-safe semantics
 - event-occurrence/recurrence engine
 - dedicated provenance/snapshot/history tables
@@ -369,7 +368,7 @@ Composition layers are currently wired through:
 
 The composition model is intentionally event-native and does not copy membership.
 
-**Not implemented yet:** a GUI editor for composition layers. The model/runtime/persistence foundation exists before the interaction surface.
+The GUI editor is now implemented: layers can be enabled/disabled, named, assigned Union/Intersect/Subtract, reordered, deleted, and edited with the same recursive query editor used elsewhere.
 
 ### Overlays
 
@@ -417,10 +416,16 @@ Background execution is now implemented and verified:
 - both update buttons show a running state;
 - egui polls the worker without blocking and reloads the calendar only after completion.
 
-The next slice should:
+Release-history/diff inspection is now implemented from persisted SQLite state:
 
-1. add release-history/diff inspection;
-2. then continue programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
+- adopted releases are listed without reopening Taria files;
+- current release is compared with the previous release on the same channel;
+- diffs report added/removed bundle refs, projected calendars, and resolved CalendarSet member-event presence;
+- the UI explicitly distinguishes these membership-level deltas from future field-level event snapshot diffs.
+
+Calendar algebra is also now editable in the GUI.
+
+The next slice is user-defined Table columns with per-saved-view ordering/visibility, followed by richer facets and saved-view inheritance.
 
 ## Rule going forward
 
