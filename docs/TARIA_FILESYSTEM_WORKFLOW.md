@@ -289,8 +289,14 @@ A network outage must not prevent Ephemeris from reading already-present Taria a
 
 The filesystem transport and core release-adoption semantics are now implemented.
 
+Whole-release adoption is now atomic:
+
+- release metadata is written inside the same outer SQLite transaction as event payloads;
+- payload adapters and CalendarSet import join that transaction;
+- upstream identity aliases and memberships join it too;
+- a failure in any later artifact rolls back every earlier mutation from the release.
+
 The next work is:
 
 1. make the explicit update operation asynchronous so large releases never stall the frame loop;
-2. make multi-artifact release adoption atomic as one operation;
-3. add release-to-release diff/history inspection.
+2. add release-to-release diff/history inspection.
