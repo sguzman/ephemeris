@@ -150,18 +150,19 @@ impl PersistedUiState {
     }
 
     pub fn capture_saved_view(&self, name: impl Into<String>) -> SavedView {
-        SavedView::new(
-            name,
-            self.event_query(),
-            self.hidden_source_ids.clone(),
-            self.calendar_view,
-            self.calendar_layout,
-            self.group_by,
-            self.sort_rules.clone(),
-            self.color_by,
-            self.display_timezone.clone(),
-            self.week_start_monday,
-        )
+        SavedView {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            query: self.event_query(),
+            hidden_source_ids: self.hidden_source_ids.clone(),
+            calendar_view: self.calendar_view,
+            calendar_layout: self.calendar_layout,
+            group_by: self.group_by,
+            sort_rules: self.sort_rules.clone(),
+            color_by: self.color_by,
+            display_timezone: self.display_timezone.clone(),
+            week_start_monday: self.week_start_monday,
+        }
     }
 
     pub fn apply_saved_view(&mut self, view: &SavedView) {
