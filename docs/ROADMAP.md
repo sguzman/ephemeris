@@ -153,11 +153,22 @@ Implemented presentation dimensions:
 - persistence of grouping/sorting/color in saved views
 - application across Agenda and Grid layouts
 
+Implemented query algebra:
+
+- nested AND / OR / NOT expressions
+- typed text predicates
+- text/status set membership
+- integer comparisons
+- exists/missing checks
+- recursive GUI query editor
+- saved-view persistence
+- backward-compatible legacy query loading
+
 Next:
 
+- timezone-aware date/range predicates
+- relative-date predicates
 - richer facets
-- boolean/nested query representation
-- typed query predicates
 - ordered color-rule sets
 - view composition/calendar algebra
 
