@@ -319,9 +319,16 @@ Composition layers currently persist through:
 
 The runtime visibility path applies composition before the ordinary overlay union surface.
 
-**Not implemented yet:** a GUI editor for composition layers.
+The GUI editor is implemented.
 
-That separation is intentional: the event/query semantics and persistence are established before exposing another complex editor.
+Each layer can be:
+
+- enabled/disabled;
+- renamed;
+- assigned Union / Intersect / Subtract;
+- reordered;
+- deleted;
+- edited with the recursive query editor, including Taria bundle/calendar membership predicates.
 
 Saved-view-reference composition/inheritance is also still future work and must be cycle-safe.
 
