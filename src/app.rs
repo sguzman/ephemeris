@@ -231,6 +231,113 @@ impl EphemerisApp {
         if let Some(summary) = self.state.taria_last_update_summary.as_deref() {
             ui.small(summary);
         }
+
+        self.render_taria_release_status(ui);
+    }
+
+    fn render_taria_release_status(&self, ui: &mut egui::Ui) {
+        let Some(release) = self.taria_release_status.as_ref() else {
+            ui.small("No adopted Taria release metadata is loaded yet.");
+            return;
+        };
+
+        ui.separator();
+        ui.collapsing("Adopted release posture", |ui| {
+            inspector_row(ui, "Release", &release.release_id);
+            inspector_row(ui, "Channel", &release.channel);
+            inspector_row(ui, "Status", &release.status);
+            inspector_row(
+                ui,
+                "Production complete",
+                if release.production_complete { "yes" } else { "no" },
+            );
+            if let Some(generated_at) = release.generated_at.as_deref() {
+                inspector_row(ui, "Generated", generated_at);
+            }
+            inspector_row(ui, "Adopted", &release.adopted_at);
+
+            let manifest = serde_json::from_str::<serde_json::Value>(&release.manifest_json).ok();
+            let coverage = serde_json::from_str::<serde_json::Value>(&release.coverage_json).ok();
+
+            if let Some(coverage) = coverage.as_ref().and_then(serde_json::Value::as_object) {
+                ui.separator();
+                ui.strong("Coverage");
+
+                let ready = coverage
+                    .get("ready_events")
+                    .and_then(serde_json::Value::as_u64);
+                let represented = coverage
+                    .get("resources_represented_in_this_release")
+                    .and_then(serde_json::Value::as_u64);
+                let universe = coverage
+                    .get("canonical_temporal_resource_universe")
+                    .and_then(serde_json::Value::as_u64);
+                let populated = coverage
+                    .get("populated_bundle_slots")
+                    .and_then(serde_json::Value::as_u64);
+                let pending = coverage
+                    .get("pending_bundle_slots")
+                    .and_then(serde_json::Value::as_u64);
+                let gap_only = coverage
+                    .get("gap_only_bundle_slots")
+                    .and_then(serde_json::Value::as_u64);
+
+                if let Some(ready) = ready {
+                    inspector_row(ui, "Ready events", &ready.to_string());
+                }
+                if let (Some(represented), Some(universe)) = (represented, universe) {
+                    inspector_row(ui, "Resources represented", &format!("{represented} / {universe}"));
+                }
+                if let Some(populated) = populated {
+                    inspector_row(ui, "Populated bundle slots", &populated.to_string());
+                }
+                if let Some(pending) = pending {
+                    inspector_row(ui, "Pending bundle slots", &pending.to_string());
+                }
+                if let Some(gap_only) = gap_only {
+                    inspector_row(ui, "Gap-only bundle slots", &gap_only.to_string());
+                }
+            }
+
+            if let Some(slots) = manifest
+                .as_ref()
+                .and_then(|manifest| manifest.get("canonical_bundle_slots"))
+                .and_then(serde_json::Value::as_array)
+            {
+                ui.separator();
+                ui.strong("Canonical bundles");
+                for slot in slots {
+                    let Some(slot) = slot.as_object() else {
+                        continue;
+                    };
+                    let bundle_ref = slot
+                        .get("bundle_ref")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown bundle");
+                    let state = slot
+                        .get("population_state")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown");
+                    let ready = slot
+                        .get("ready_event_count")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0);
+                    ui.small(format!(
+                        "{} · {} · {} ready",
+                        short_bundle_label(bundle_ref),
+                        state,
+                        ready
+                    ));
+                }
+            }
+
+            ui.separator();
+            ui.small(format!(
+                "{} imported bundle refs · {} projected calendars available to queries",
+                self.taria_bundle_refs.len(),
+                self.taria_calendar_choices.len()
+            ));
+        });
     }
 
     fn timezone(&self) -> Tz {
@@ -2762,6 +2869,13 @@ fn events_for_day(events: &[TemporalEvent], day: NaiveDate, timezone: Tz) -> Vec
         .iter()
         .filter(|event| event.time.occurs_on(day, timezone))
         .collect()
+}
+
+fn short_bundle_label(bundle_ref: &str) -> String {
+    bundle_ref
+        .strip_prefix("bundle:temporal/")
+        .unwrap_or(bundle_ref)
+        .replace('-', " ")
 }
 
 fn render_time_spec(ui: &mut egui::Ui, time: &TimeSpec, timezone: Tz) {
