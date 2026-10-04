@@ -70,11 +70,18 @@ Still required:
 
 ## Phase 3 - Taria ingestion and bundle-release adoption
 
-Status: **direct event payload slice working; release adoption next**
+Status: **filesystem-first bootstrap release adoption working; complete release semantics next**
 
 Implemented:
 
 - import of real Resourcearium reconciled temporal event sets
+- import of pinned CompactReconciledEventIndex recovery payloads
+- persisted local Resourcearium root + release channel
+- auto-detection of local/sibling Taria checkout
+- local release-registry/channel/manifest resolution
+- local artifact path confinement + SHA-256 verification
+- one-click Update Taria Sources UI
+- explicit skipped-shard reporting
 - Taria projection/source identity retention
 - assertion/source/provenance refs
 - source contexts and rich Taria properties
@@ -98,15 +105,14 @@ Now established upstream:
 
 Next Ephemeris implementation:
 
-- TemporalBundleRelease v1 manifest importer
-- support bootstrap `shards[]` and production `bundle_artifacts[]`
-- resolve full ReconciledProjectionEventSet and accepted CompactReconciledEventIndex payloads from release artifacts
-- CompactReconciledEventIndex adapter for recovered bootstrap shards
 - CalendarSet membership persistence
-- release/channel/coverage metadata persistence
+- canonical release/channel/coverage metadata persistence
+- production cross-bundle identity reconciliation
+- production `bundle_artifacts[]` adoption through the existing filesystem updater
 - partial/pending/gap-only UI posture
-- atomic hash/fingerprint validation
+- whole-release atomic adoption/rollback
 - release-to-release adoption/diff foundation
+- worker-boundary execution for large releases
 
 Still later:
 
@@ -116,7 +122,7 @@ Still later:
 
 ## Immediate program priority
 
-The highest-priority integration boundary is now Taria **TemporalBundleRelease v1** consumption.
+The highest-priority integration boundary is now completing Taria **TemporalBundleRelease v1** semantics on top of the implemented filesystem-first updater.
 
 Resourcearium is independently building/populating frozen bundles. Ephemeris should consume those releases rather than duplicate acquisition work.
 
@@ -124,7 +130,7 @@ The consumer contract is frozen in:
 
 - `docs/TARIA_BUNDLE_CONTRACT.md`
 
-Current low-level direct reconciled-event-set import remains valid and will be reused underneath the release importer. Bootstrap r3 also requires a CompactReconciledEventIndex adapter for its recovered Politics/Holidays shards.
+The local filesystem transport and bootstrap r3 compact-index adapter are implemented. Current low-level direct reconciled-event-set import remains valid underneath the release updater.
 
 ## Phase 4 - Calendar views
 
