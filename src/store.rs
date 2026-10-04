@@ -90,6 +90,32 @@ pub struct TariaProjectedCalendarChoice {
     pub kind: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TariaReleaseHistoryEntry {
+    pub release_id: String,
+    pub channel: String,
+    pub status: String,
+    pub production_complete: bool,
+    pub generated_at: Option<String>,
+    pub adopted_at: String,
+    pub bundle_count: u64,
+    pub calendar_set_count: u64,
+    pub projected_calendar_count: u64,
+    pub resolved_member_event_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TariaReleaseDiff {
+    pub from_release_id: String,
+    pub to_release_id: String,
+    pub added_bundle_refs: Vec<String>,
+    pub removed_bundle_refs: Vec<String>,
+    pub added_calendar_ids: Vec<String>,
+    pub removed_calendar_ids: Vec<String>,
+    pub added_member_event_ids: Vec<Uuid>,
+    pub removed_member_event_ids: Vec<Uuid>,
+}
+
 pub struct TemporalStore {
     conn: Connection,
     path: Option<PathBuf>,
@@ -875,6 +901,208 @@ impl TemporalStore {
             .context("failed to query adopted Taria release status")
     }
 
+    pub fn taria_release_history(&self) -> anyhow::Result<Vec<TariaReleaseHistoryEntry>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                release.release_id,
+                release.channel,
+                release.status,
+                release.production_complete,
+                release.generated_at,
+                release.adopted_at,
+                (
+                    SELECT COUNT(DISTINCT link.bundle_ref)
+                    FROM taria_release_calendar_sets AS link
+                    WHERE link.release_id = release.release_id
+                ),
+                (
+                    SELECT COUNT(DISTINCT link.calendar_set_id)
+                    FROM taria_release_calendar_sets AS link
+                    WHERE link.release_id = release.release_id
+                ),
+                (
+                    SELECT COUNT(DISTINCT calendar.calendar_id)
+                    FROM taria_projected_calendars AS calendar
+                    JOIN taria_release_calendar_sets AS link
+                      ON link.calendar_set_id = calendar.calendar_set_id
+                    WHERE link.release_id = release.release_id
+                ),
+                (
+                    SELECT COUNT(DISTINCT membership.event_id)
+                    FROM taria_calendar_memberships AS membership
+                    JOIN taria_release_calendar_sets AS link
+                      ON link.calendar_set_id = membership.calendar_set_id
+                    WHERE link.release_id = release.release_id
+                      AND membership.event_id IS NOT NULL
+                )
+            FROM taria_releases AS release
+            ORDER BY release.adopted_at DESC, release.release_id DESC
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut history = Vec::new();
+        while let Some(row) = rows.next()? {
+            history.push(TariaReleaseHistoryEntry {
+                release_id: row.get(0)?,
+                channel: row.get(1)?,
+                status: row.get(2)?,
+                production_complete: row.get(3)?,
+                generated_at: row.get(4)?,
+                adopted_at: row.get(5)?,
+                bundle_count: i64_to_u64(row.get(6)?, "bundle count")?,
+                calendar_set_count: i64_to_u64(row.get(7)?, "CalendarSet count")?,
+                projected_calendar_count: i64_to_u64(row.get(8)?, "projected calendar count")?,
+                resolved_member_event_count: i64_to_u64(
+                    row.get(9)?,
+                    "resolved member event count",
+                )?,
+            });
+        }
+        Ok(history)
+    }
+
+    pub fn taria_previous_release_diff(
+        &self,
+        release_id: &str,
+    ) -> anyhow::Result<Option<TariaReleaseDiff>> {
+        let current: Option<(String, String)> = self
+            .conn
+            .query_row(
+                "SELECT channel, adopted_at FROM taria_releases WHERE release_id = ?1",
+                params![release_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .context("failed to query Taria release for history diff")?;
+        let Some((channel, adopted_at)) = current else {
+            return Ok(None);
+        };
+
+        let previous: Option<String> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT release_id
+                FROM taria_releases
+                WHERE channel = ?1
+                  AND (
+                      adopted_at < ?2
+                      OR (adopted_at = ?2 AND release_id < ?3)
+                  )
+                ORDER BY adopted_at DESC, release_id DESC
+                LIMIT 1
+                "#,
+                params![channel, adopted_at, release_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("failed to query previous Taria release")?;
+
+        previous
+            .as_deref()
+            .map(|previous| self.taria_release_diff(previous, release_id))
+            .transpose()
+    }
+
+    pub fn taria_release_diff(
+        &self,
+        from_release_id: &str,
+        to_release_id: &str,
+    ) -> anyhow::Result<TariaReleaseDiff> {
+        let from_bundles = self.taria_release_string_set(
+            from_release_id,
+            r#"
+            SELECT DISTINCT bundle_ref
+            FROM taria_release_calendar_sets
+            WHERE release_id = ?1
+            "#,
+        )?;
+        let to_bundles = self.taria_release_string_set(
+            to_release_id,
+            r#"
+            SELECT DISTINCT bundle_ref
+            FROM taria_release_calendar_sets
+            WHERE release_id = ?1
+            "#,
+        )?;
+
+        let from_calendars = self.taria_release_string_set(
+            from_release_id,
+            r#"
+            SELECT DISTINCT calendar.calendar_id
+            FROM taria_projected_calendars AS calendar
+            JOIN taria_release_calendar_sets AS link
+              ON link.calendar_set_id = calendar.calendar_set_id
+            WHERE link.release_id = ?1
+            "#,
+        )?;
+        let to_calendars = self.taria_release_string_set(
+            to_release_id,
+            r#"
+            SELECT DISTINCT calendar.calendar_id
+            FROM taria_projected_calendars AS calendar
+            JOIN taria_release_calendar_sets AS link
+              ON link.calendar_set_id = calendar.calendar_set_id
+            WHERE link.release_id = ?1
+            "#,
+        )?;
+
+        let from_events = self.taria_release_string_set(
+            from_release_id,
+            r#"
+            SELECT DISTINCT membership.event_id
+            FROM taria_calendar_memberships AS membership
+            JOIN taria_release_calendar_sets AS link
+              ON link.calendar_set_id = membership.calendar_set_id
+            WHERE link.release_id = ?1
+              AND membership.event_id IS NOT NULL
+            "#,
+        )?;
+        let to_events = self.taria_release_string_set(
+            to_release_id,
+            r#"
+            SELECT DISTINCT membership.event_id
+            FROM taria_calendar_memberships AS membership
+            JOIN taria_release_calendar_sets AS link
+              ON link.calendar_set_id = membership.calendar_set_id
+            WHERE link.release_id = ?1
+              AND membership.event_id IS NOT NULL
+            "#,
+        )?;
+
+        Ok(TariaReleaseDiff {
+            from_release_id: from_release_id.to_string(),
+            to_release_id: to_release_id.to_string(),
+            added_bundle_refs: set_added(&from_bundles, &to_bundles),
+            removed_bundle_refs: set_added(&to_bundles, &from_bundles),
+            added_calendar_ids: set_added(&from_calendars, &to_calendars),
+            removed_calendar_ids: set_added(&to_calendars, &from_calendars),
+            added_member_event_ids: set_added(&from_events, &to_events)
+                .into_iter()
+                .map(|value| Uuid::parse_str(&value).context("invalid stored event UUID"))
+                .collect::<anyhow::Result<Vec<_>>>()?,
+            removed_member_event_ids: set_added(&to_events, &from_events)
+                .into_iter()
+                .map(|value| Uuid::parse_str(&value).context("invalid stored event UUID"))
+                .collect::<anyhow::Result<Vec<_>>>()?,
+        })
+    }
+
+    fn taria_release_string_set(
+        &self,
+        release_id: &str,
+        sql: &str,
+    ) -> anyhow::Result<std::collections::BTreeSet<String>> {
+        let mut stmt = self.conn.prepare(sql)?;
+        let mut rows = stmt.query(params![release_id])?;
+        let mut values = std::collections::BTreeSet::new();
+        while let Some(row) = rows.next()? {
+            values.insert(row.get(0)?);
+        }
+        Ok(values)
+    }
+
     pub fn taria_bundle_refs_for_release(
         &self,
         release_id: Option<&str>,
@@ -1318,6 +1546,17 @@ impl TemporalStore {
         }
         Ok(events)
     }
+}
+
+fn i64_to_u64(value: i64, label: &str) -> anyhow::Result<u64> {
+    u64::try_from(value).with_context(|| format!("{label} cannot be represented as u64"))
+}
+
+fn set_added(
+    old: &std::collections::BTreeSet<String>,
+    new: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    new.difference(old).cloned().collect()
 }
 
 fn merge_taria_projection_event(
