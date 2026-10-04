@@ -700,6 +700,23 @@ mod tests {
     }
 
     #[test]
+    fn legacy_query_json_without_expression_still_loads() {
+        let raw = r#"{
+            "text": "election",
+            "domain": "politics",
+            "jurisdiction": "US",
+            "status": "confirmed"
+        }"#;
+
+        let query: EventQuery = serde_json::from_str(raw).expect("legacy query");
+        assert_eq!(query.text, "election");
+        assert_eq!(query.domain.as_deref(), Some("politics"));
+        assert_eq!(query.jurisdiction.as_deref(), Some("US"));
+        assert_eq!(query.status, Some(EventStatus::Confirmed));
+        assert!(query.expression.is_none());
+    }
+
+    #[test]
     fn query_dimensions_compose() {
         let query = EventQuery {
             text: "general".to_string(),
