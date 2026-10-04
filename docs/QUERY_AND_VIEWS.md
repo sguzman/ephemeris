@@ -96,6 +96,7 @@ group_by
 sort_rules[]
 color_by
 color_rules[]
+composition_layers[]
 overlays[]
 display_timezone
 week_start_monday
@@ -261,13 +262,34 @@ Current overlay behavior is intentionally the ergonomic simultaneous-union surfa
 
 ## Calendar algebra
 
-The next composition layer should generalize beyond overlay union to explicit logical composition:
+The first ordered calendar-algebra foundation is implemented.
+
+A saved view may contain ordered `CompositionLayer` objects. Each layer has:
+
+- stable identity;
+- name;
+- enabled state;
+- operator;
+- embedded `EventQuery`.
+
+Implemented operators:
 
 - union;
 - intersection;
 - subtraction.
 
-Examples:
+Evaluation is sequential and deterministic:
+
+```text
+result = base query
+
+for each enabled layer in order:
+    union       -> result OR layer
+    intersection -> result AND layer
+    subtraction  -> result AND NOT layer
+```
+
+Examples represented by the model:
 
 ```text
 US Politics - Congress
@@ -276,9 +298,23 @@ Government ∪ Economics
 Everything - Sports
 ```
 
-This must compile to logical query composition over canonical events.
+Composition is evaluated over canonical events and never copies event membership.
 
-The first implementation should avoid saved-view reference cycles; direct embedded operands are safer than arbitrary recursive saved-view references.
+Composition layers currently persist through:
+
+- transient UI state;
+- SavedView capture/apply;
+- SQLite schema v8.
+
+The runtime visibility path applies composition before the ordinary overlay union surface.
+
+**Not implemented yet:** a GUI editor for composition layers.
+
+That separation is intentional: the event/query semantics and persistence are established before exposing another complex editor.
+
+Saved-view-reference composition/inheritance is also still future work and must be cycle-safe.
+
+Overlays remain a distinct ergonomic feature for simultaneously rendering independently styled query layers.
 
 ## Taria bundle membership versus saved views
 
