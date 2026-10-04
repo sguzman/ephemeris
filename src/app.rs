@@ -785,7 +785,9 @@ fn render_month(
     if !month_precision.is_empty() {
         ui.group(|ui| {
             ui.strong("Month-precision events");
-            ui.small(\n                "The source does not support a specific day, so these stay above the day grid.",\n            );
+            ui.small(
+                "The source does not support a specific day, so these stay above the day grid.",
+            );
             for event in month_precision {
                 if render_event_button(ui, event, timezone, selected).clicked() {
                     action = Some(CalendarAction::Select(event.id));
