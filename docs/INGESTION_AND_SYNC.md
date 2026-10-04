@@ -47,7 +47,7 @@ TemporalBundleRelease
     -> index
 ```
 
-The existing direct reconciled-event-set importer is one low-level payload adapter underneath this future release importer. Bootstrap r3 also defines a CompactReconciledEventIndex payload class for recovered shards; Ephemeris still needs that adapter.
+The existing direct reconciled-event-set importer and CompactReconciledEventIndex importer are low-level payload adapters underneath the implemented local release updater.
 
 ### 2. Non-Taria source formats
 
@@ -72,12 +72,13 @@ Each stage should provide diagnostics.
 The authoritative contract is:
 
 - [TARIA_BUNDLE_CONTRACT.md](TARIA_BUNDLE_CONTRACT.md)
+- [TARIA_FILESYSTEM_WORKFLOW.md](TARIA_FILESYSTEM_WORKFLOW.md)
 
 A Taria release adoption is not equivalent to individually refreshing 429 upstream sources.
 
 Taria owns those upstream sources.
 
-Ephemeris adopts a frozen release.
+Ephemeris adopts a frozen release directly from the local Resourcearium filesystem.
 
 ### Required release behavior
 
@@ -174,7 +175,7 @@ Bootstrap r3 is mixed:
 - recovered Politics/Holidays shards provide CompactReconciledEventIndex paths/hashes;
 - European Elections/Sports specimen shards do not provide an explicit rich reconciled payload path.
 
-Therefore the current Ephemeris importer cannot yet adopt the full bootstrap r3 manifest end-to-end. It needs the compact-index adapter plus a rich-payload resolver for the remaining populated shards.
+Therefore the current one-click updater can adopt the recovered Politics/Holidays shards from bootstrap r3, but it cannot yet adopt the full release end-to-end because Elections/Sports still lack accepted reconciled payload paths.
 
 ### Production
 
@@ -271,21 +272,37 @@ Depending on format and size, retain:
 
 For Taria releases, immutable upstream artifact refs/hashes may be sufficient without copying every raw acquisition payload into Ephemeris.
 
-## Network refresh
+## Filesystem-first refresh
 
 Ephemeris must remain local-first.
 
-Future network-assisted release discovery may:
+The implemented default path is:
 
-- check a Taria release channel;
-- discover a newer immutable manifest;
-- download/fetch its frozen artifacts;
-- validate them;
-- offer or perform adoption.
+```text
+local Taria checkout
+    -> local Resourcearium release registry
+    -> local release manifest
+    -> local payload files
+    -> Ephemeris SQLite
+```
 
-Rendering/querying must never require live Taria/GitHub access.
+Normal updates require no download/fetch step.
 
-Large imports, network work, and indexing must not block the egui frame loop.
+The application persists:
+
+- local Resourcearium root;
+- selected release channel;
+- last processed release ID;
+- last update timestamp;
+- last update summary.
+
+The toolbar/Sources-panel **Update Taria Sources** action follows the local channel pointer and processes supported artifacts.
+
+Future network-assisted release discovery may be added as a convenience only. It must never be required for ordinary operation.
+
+Rendering/querying never requires live Taria/GitHub access.
+
+The current filesystem update action is synchronous; large release adoption should move to a worker boundary so the egui frame loop remains responsive.
 
 ## Source health
 
