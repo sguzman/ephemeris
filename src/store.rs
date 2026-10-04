@@ -2401,7 +2401,10 @@ mod tests {
             .expect("status")
             .expect("release");
         assert_eq!(release.status, "bootstrap-partial");
-        assert_eq!(release.generated_at.as_deref(), Some("2026-10-04T20:00:00Z"));
+        assert_eq!(
+            release.generated_at.as_deref(),
+            Some("2026-10-04T20:00:00Z")
+        );
 
         assert_eq!(
             store
