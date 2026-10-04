@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the filesystem-updater checkpoint, all **43** library tests pass. Verified implementation head: `f844391b29315af1396c37b02857c273a90c63f8`, with format, check, strict Clippy, and tests all green.
+At the schema-v9 release-consumer checkpoint, all **47** library tests pass. Verified implementation head: `41738386168f3ae9d3d803fee0dd1d925a59cfd8`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -37,13 +37,20 @@ At the filesystem-updater checkpoint, all **43** library tests pass. Verified im
 
 SQLite via bundled `rusqlite`.
 
-Current schema version: 8.
+Current schema version: 9.
 
 The database owns:
 
 - temporal sources
 - temporal events
 - durable saved views
+- Taria source/import-record mappings
+- Taria upstream event/reconciled identity aliases
+- immutable Taria release metadata
+- immutable CalendarSets
+- release-to-CalendarSet associations
+- projected calendars
+- CalendarSet event memberships
 
 Transient UI state remains separate.
 
@@ -137,7 +144,7 @@ Current upstream state:
 - 177 direct single-Resource RICS profiles in the first exact-lineage production tranche
 - canonical 13-projection build tooling
 - frozen release packaging and validation
-- bootstrap channel currently pointing at `temporal-bundle-release:bootstrap:2026-10-04:r3`
+- bootstrap channel currently pointing at `temporal-bundle-release:bootstrap:2026-10-04:r4`
 - bootstrap posture: 1,114 ready events, 15 represented canonical Resources, 2 typed recovered ingestion profiles, 196 recovered source surfaces, 3 partial canonical domain slots, 9 pending slots
 - production channel independently advances as live acquisition-backed releases become available
 
@@ -149,12 +156,24 @@ Important consumer rule:
 
 The direct reconciled-event-set importer and CompactReconciledEventIndex importer are now low-level payload adapters beneath the local release updater.
 
-Current bootstrap update behavior:
+Current bootstrap r4 update behavior:
 
-- recovered U.S. Politics and U.S. Holidays shards expose pinned `CompactReconciledEventIndex` paths/hashes and are now directly consumable through **Update Taria Sources**;
-- local artifact paths are constrained to the configured Resourcearium tree and SHA-256 checked;
-- European Elections and U.S. Sports are reported skipped because their release shards still lack an accepted reconciled payload path;
-- production `bundle_artifacts[]` are recognized but deliberately not imported yet because overlapping domain projections require release-level global deduplication plus CalendarSet membership persistence.
+- recovered U.S. Politics and U.S. Holidays are consumed through pinned `CompactReconciledEventIndex` payloads;
+- European Elections and U.S. Sports are consumed through full `ReconciledProjectionEventSet` payloads;
+- all four populated bootstrap shards now expose accepted post-reconciliation payloads;
+- CalendarSets and their event memberships are persisted independently from canonical event identity;
+- bootstrap content-fingerprint semantics are validated exactly as Resourcearium defines them;
+- local artifact paths remain confined to the configured Resourcearium tree.
+
+Production support is also implemented:
+
+- `bundle_artifacts[]` are resolved from the same filesystem updater;
+- production file SHA-256 semantics are validated;
+- upstream event/reconciled aliases provide global deduplication across overlapping projections;
+- one canonical event can therefore carry several release/calendar memberships without cloning;
+- the production overlap regression test proves one shared event across Politics and Finance remains one local event with two memberships.
+
+The live Resourcearium production channel is still unset, so this production path is implemented and tested synthetically but not yet exercised against a live production release.
 
 ### Calendar presentation
 
@@ -284,13 +303,10 @@ The current milestone is a foundation, not the finished calendar.
 
 Not yet implemented:
 
-- complete TemporalBundleRelease adoption across every populated shard/artifact
-- CalendarSet membership persistence
-- canonical release/channel/coverage metadata persistence in SQLite
-- production cross-bundle identity reconciliation
-- production partial/complete adoption through the one-click updater
 - release coverage/pending/gap UI
+- richer release-history/diff inspection
 - whole-release atomic rollback across multiple source imports
+- background/worker execution for large release adoption
 - composition-layer GUI editor
 - saved-view-reference composition / inheritance with cycle-safe semantics
 - event-occurrence/recurrence engine
@@ -371,19 +387,20 @@ Implemented:
 
 ## Immediate next implementation boundary
 
-Finish the **release semantics** behind the now-materialized filesystem workflow:
+Expose the newly persisted **Taria bundle/CalendarSet membership** to the programmable view/query layer without making it event ownership.
 
-1. persist adopted release/channel/coverage metadata canonically in SQLite;
-2. persist CalendarSet membership separately from event identity;
-3. implement release-level global event identity reconciliation across overlapping production bundles;
-4. adopt production `bundle_artifacts[]` through the same **Update Taria Sources** button;
-5. surface partial/pending/gap-only release posture in the UI;
-6. make multi-artifact release adoption atomic as a whole;
-7. move large updates to an explicit worker boundary so the egui frame loop never stalls.
+The next slice should:
 
-The transport problem is intentionally no longer in scope: local filesystem Resourcearium is the default transport and already works.
+1. make current-release bundle membership queryable by stable bundle ref;
+2. make projected CalendarSet membership queryable by stable calendar ID;
+3. expose those predicates in saved views, overlays, color rules, and calendar algebra;
+4. keep membership as independent query context rather than copying bundle/container identity into `TemporalEvent`;
+5. expose current release coverage/pending/gap posture in the source/release UI;
+6. then move large release adoption to a worker boundary and add whole-release transaction/rollback semantics.
 
-After that, resume programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
+The transport, rich bootstrap-r4 payload adoption, CalendarSet persistence, upstream aliasing, and production cross-bundle deduplication are now implemented.
+
+After that, continue programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
 
 ## Rule going forward
 
