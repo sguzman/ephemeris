@@ -1547,16 +1547,12 @@ fn render_calendar(
     }
 
     match layout {
-        CalendarLayout::Agenda => {
-            render_agenda(
-                ui, events, timezone, selected, group_by, sort_rules, color_by,
-            )
-        }
-        CalendarLayout::Table => {
-            render_table(
-                ui, events, timezone, selected, group_by, sort_rules, color_by,
-            )
-        }
+        CalendarLayout::Agenda => render_agenda(
+            ui, events, timezone, selected, group_by, sort_rules, color_by,
+        ),
+        CalendarLayout::Table => render_table(
+            ui, events, timezone, selected, group_by, sort_rules, color_by,
+        ),
         CalendarLayout::Grid => match view {
             CalendarView::Year => render_year(ui, events, focus, timezone, selected, color_by),
             CalendarView::Quarter => {
