@@ -517,7 +517,7 @@ It should:
 
 1. load and validate a release manifest;
 2. support both current release-v1 packaging variants;
-3. resolve rich event payloads;
+3. resolve full ReconciledProjectionEventSet and accepted CompactReconciledEventIndex payloads;
 4. import canonical events once;
 5. import CalendarSet membership separately;
 6. retain release/coverage metadata;
