@@ -7,12 +7,13 @@ use rusqlite::{Connection, OptionalExtension, Row, named_params, params};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::calendar::CalendarLayout;
 use crate::domain::{
     EventStatus, SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
 };
 use crate::query::SavedView;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -176,7 +177,7 @@ impl TemporalStore {
             r#"
             SELECT
                 id, name, query_json, hidden_source_ids_json,
-                calendar_view_json, display_timezone, week_start_monday
+                calendar_view_json, calendar_layout, display_timezone, week_start_monday
             FROM saved_views
             ORDER BY name COLLATE NOCASE, id
             "#,
@@ -203,16 +204,17 @@ impl TemporalStore {
                 r#"
                 INSERT INTO saved_views (
                     id, name, query_json, hidden_source_ids_json,
-                    calendar_view_json, display_timezone, week_start_monday
+                    calendar_view_json, calendar_layout, display_timezone, week_start_monday
                 ) VALUES (
                     :id, :name, :query_json, :hidden_source_ids_json,
-                    :calendar_view_json, :display_timezone, :week_start_monday
+                    :calendar_view_json, :calendar_layout, :display_timezone, :week_start_monday
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     query_json = excluded.query_json,
                     hidden_source_ids_json = excluded.hidden_source_ids_json,
                     calendar_view_json = excluded.calendar_view_json,
+                    calendar_layout = excluded.calendar_layout,
                     display_timezone = excluded.display_timezone,
                     week_start_monday = excluded.week_start_monday
                 "#,
@@ -222,6 +224,7 @@ impl TemporalStore {
                     ":query_json": query_json,
                     ":hidden_source_ids_json": hidden_source_ids_json,
                     ":calendar_view_json": calendar_view_json,
+                    ":calendar_layout": view.calendar_layout.as_str(),
                     ":display_timezone": view.display_timezone,
                     ":week_start_monday": view.week_start_monday,
                 },
@@ -588,6 +591,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 2 {
         migrate_v2_to_v3(conn)?;
+        current = 3;
+    }
+
+    if current == 3 {
+        migrate_v3_to_v4(conn)?;
     }
 
     Ok(())
@@ -711,6 +719,7 @@ fn create_saved_views_schema(conn: &Connection) -> anyhow::Result<()> {
             query_json TEXT NOT NULL,
             hidden_source_ids_json TEXT NOT NULL DEFAULT '[]',
             calendar_view_json TEXT NOT NULL,
+            calendar_layout TEXT NOT NULL DEFAULT 'grid',
             display_timezone TEXT NOT NULL,
             week_start_monday INTEGER NOT NULL DEFAULT 0
         );
@@ -731,6 +740,20 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> anyhow::Result<()> {
         .context("failed to set schema version 3")?;
     tx.commit()
         .context("failed to commit v2 to v3 schema migration")
+}
+
+fn migrate_v3_to_v4(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v3 to v4 migration")?;
+    tx.execute_batch(
+        "ALTER TABLE saved_views ADD COLUMN calendar_layout TEXT NOT NULL DEFAULT 'grid';",
+    )
+    .context("failed to add saved-view calendar layout")?;
+    tx.pragma_update(None, "user_version", 4)
+        .context("failed to set schema version 4")?;
+    tx.commit()
+        .context("failed to commit v3 to v4 schema migration")
 }
 
 fn migrate_v1_to_v2(conn: &mut Connection) -> anyhow::Result<()> {
@@ -901,6 +924,7 @@ fn decode_saved_view(row: &Row<'_>) -> rusqlite::Result<SavedView> {
         query: serde_json::from_str(&query_raw).map_err(to_sql_decode_error)?,
         hidden_source_ids: serde_json::from_str(&hidden_raw).map_err(to_sql_decode_error)?,
         calendar_view: serde_json::from_str(&calendar_view_raw).map_err(to_sql_decode_error)?,
+        calendar_layout: CalendarLayout::parse(&row.get::<_, String>("calendar_layout")?),
         display_timezone: row.get("display_timezone")?,
         week_start_monday: row.get("week_start_monday")?,
     })
@@ -1251,7 +1275,7 @@ mod tests {
     #[test]
     fn schema_bootstraps_at_version_two() {
         let store = TemporalStore::open_in_memory().expect("store");
-        assert_eq!(store.schema_version().expect("version"), 3);
+        assert_eq!(store.schema_version().expect("version"), 4);
     }
 
     #[test]
@@ -1383,6 +1407,7 @@ mod tests {
             },
             std::collections::BTreeSet::new(),
             CalendarView::Year,
+            CalendarLayout::Agenda,
             "America/Mexico_City",
             false,
         );
@@ -1391,6 +1416,7 @@ mod tests {
         let loaded = store.list_saved_views().expect("list");
 
         assert_eq!(loaded, vec![view.clone()]);
+        assert_eq!(loaded[0].calendar_layout, CalendarLayout::Agenda);
         store.delete_saved_view(view.id).expect("delete");
         assert!(store.list_saved_views().expect("list").is_empty());
     }
