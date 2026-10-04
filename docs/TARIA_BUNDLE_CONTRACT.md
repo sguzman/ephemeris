@@ -6,6 +6,12 @@ Established: 2026-10-04
 
 This document defines the boundary between Taria / Resourcearium as the producer of temporal bundle releases and Ephemeris as a local interactive consumer.
 
+Resourcearium now carries the reciprocal producer-side handoff at:
+
+- `incubator/resourcearium/TEMPORAL_BUNDLE_EPHEMERIS_HANDOFF.md`
+
+The two documents describe the same boundary from opposite sides.
+
 The contract exists so the two projects can evolve independently without collapsing acquisition, canonical event state, bundle packaging, and desktop presentation into one system.
 
 ## 1. Ownership boundary
