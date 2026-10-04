@@ -159,7 +159,21 @@ Current presentation dimensions are also independent:
 
 These dimensions persist in saved views and do not reorganize or duplicate canonical events.
 
-The advanced boolean/query-expression system is the next active boundary.
+The advanced boolean/query-expression system is now implemented as a first working vertical slice.
+
+Advanced queries support:
+
+- arbitrarily nested AND / OR / NOT groups
+- typed text predicates
+- text set membership
+- lifecycle-status sets
+- integer comparisons for importance and personal relevance
+- exists / missing predicates
+- recursive GUI editing
+- persistence through UI state and saved views
+- backward-compatible loading of older saved query JSON
+
+Simple facets remain convenient top-level filters and are ANDed with the advanced expression tree.
 
 ### Saved views
 
@@ -223,7 +237,7 @@ The current milestone is a foundation, not the finished calendar.
 
 Not yet implemented:
 
-- arbitrary boolean query algebra
+- timezone-aware date/range/relative-date predicates
 - rule-based color precedence beyond the current single semantic color dimension
 - saved-view inheritance/composition
 - overlays/calendar algebra
@@ -241,14 +255,14 @@ Not yet implemented:
 
 ## Immediate next implementation boundary
 
-Expand the query representation without coupling it to event storage:
+Extend the verified boolean query engine into temporal predicates without flattening time semantics:
 
-1. nested boolean expression model
-2. explicit AND / OR / NOT
-3. typed field predicates
-4. preserve the simple facet controls as convenient query builders
-5. persist advanced expressions in saved views
-6. test expression evaluation independently from rendering
+1. explicit query context carrying display timezone
+2. temporal-kind predicates
+3. civil-date overlap predicates
+4. correct treatment of exact instants in the display timezone
+5. explicit inclusion/exclusion policy for month/year precision
+6. later relative-date predicates using an explicit "today" anchor
 
 After that, add richer dense-data views and expand color strategy into an ordered rule engine.
 
