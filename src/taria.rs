@@ -171,8 +171,12 @@ pub fn import_compact_reconciled_event_index_file(
     bundle_ref: Option<&str>,
 ) -> anyhow::Result<TariaImportReport> {
     let path = path.as_ref();
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read Taria compact event index {}", path.display()))?;
+    let raw = std::fs::read_to_string(path).with_context(|| {
+        format!(
+            "failed to read Taria compact event index {}",
+            path.display()
+        )
+    })?;
     import_compact_reconciled_event_index_json(
         store,
         &raw,
