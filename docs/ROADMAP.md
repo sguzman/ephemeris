@@ -70,7 +70,7 @@ Still required:
 
 ## Phase 3 - Taria ingestion and bundle-release adoption
 
-Status: **filesystem-first release adoption, membership queries, release posture UI, whole-release atomicity, and nonblocking worker execution working; release history next**
+Status: **filesystem-first release adoption, membership queries, release posture/history UI, whole-release atomicity, and nonblocking worker execution working**
 
 Implemented:
 
@@ -113,6 +113,9 @@ Implemented:
 - separate worker SQLite connection against the WAL database
 - disabled/update-in-progress UI state while adoption runs
 - nonblocking result polling and post-commit reload
+- adopted release history from SQLite
+- previous same-channel release comparison
+- bundle/projected-calendar/resolved-member-event membership diffs
 
 Now established upstream:
 
@@ -126,7 +129,7 @@ Now established upstream:
 
 Next Ephemeris implementation:
 
-- release-to-release adoption/diff foundation
+- deeper field-level event snapshot/diff history later, after the dedicated snapshot model
 
 Still later:
 
@@ -136,7 +139,7 @@ Still later:
 
 ## Immediate program priority
 
-The release-adoption execution boundary is now substantially complete: whole-release atomicity and off-frame-loop worker execution are both implemented. The next Taria-facing priority is release-history/diff inspection.
+The release-adoption execution boundary is now substantially complete: whole-release atomicity, off-frame-loop worker execution, and membership-level release history/diff inspection are implemented.
 
 Resourcearium is independently building/populating frozen bundles. Ephemeris should consume those releases rather than duplicate acquisition work.
 
@@ -268,11 +271,10 @@ Implemented calendar-algebra foundation:
 
 The composition-layer GUI editor is not implemented yet.
 
-Next after the Taria release-consumer slice:
+Next programmable-view work:
 
-- composition-layer GUI editor
+- user-defined Table columns
 - richer facets
-- user-defined table columns
 - saved-view inheritance with cycle-safe semantics
 
 Exit criterion remains:
