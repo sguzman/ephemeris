@@ -990,7 +990,11 @@ impl TemporalStore {
         let mut stmt = self.conn.prepare(
             "SELECT source_record_key
              FROM temporal_event_import_records
-             WHERE source_id = ?1",
+             WHERE source_id = ?1
+             UNION
+             SELECT source_record_key
+             FROM temporal_events
+             WHERE source_id = ?1 AND source_record_key IS NOT NULL",
         )?;
         let mut rows = stmt.query(params![source_id.to_string()])?;
         let mut keys = std::collections::BTreeSet::new();
