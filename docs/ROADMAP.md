@@ -164,10 +164,19 @@ Implemented query algebra:
 - saved-view persistence
 - backward-compatible legacy query loading
 
+Implemented temporal query predicates:
+
+- explicit query context with display timezone and today anchor
+- temporal-kind membership
+- civil-date overlap
+- timezone-aware exact-instant date evaluation
+- explicit month/year imprecise-span inclusion
+- relative date windows with deterministic day offsets
+- editor presets for Today, Next 7, Next 30, and Previous 7 days
+
 Next:
 
-- timezone-aware date/range predicates
-- relative-date predicates
+- table layout for dense corpora
 - richer facets
 - ordered color-rule sets
 - view composition/calendar algebra
