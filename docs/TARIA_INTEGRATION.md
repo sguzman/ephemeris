@@ -91,17 +91,28 @@ At the current 2026-10-04 boundary, Resourcearium has:
 The current bootstrap release is:
 
 ```text
-temporal-bundle-release:bootstrap:2026-10-04
+temporal-bundle-release:bootstrap:2026-10-04:r3
 ```
 
 It is explicitly `bootstrap-partial` and currently exposes:
 
-- 48 ready events;
-- 15 represented Resource identities;
-- 2 partially populated canonical domain slots;
-- 10 pending canonical domain slots;
+- 1,114 ready events;
+- 15 represented canonical Resource identities;
+- 2 typed recovered ingestion profiles;
+- 196 recovered source surfaces;
+- 3 partially populated canonical domain slots;
+- 9 pending canonical domain slots;
 - consumer-safe integration posture;
 - non-production-complete status.
+
+Populated data currently includes:
+
+- 1,038 recovered 2026 U.S. Politics events;
+- 11 2027 European national-election events;
+- 37 2026 U.S. pro-sports events excluding hockey;
+- 28 recovered U.S. Holidays events.
+
+The recovered U.S. Politics and Holidays shards are explicitly downstream-derived recovery state rather than fresh upstream publisher observations.
 
 The production channel remains independently advanceable as acquisition coverage improves.
 
@@ -212,6 +223,15 @@ shards[]
 
 A shard identifies a bundle, frozen normalized snapshot, CalendarSet, counts, hashes, and data posture.
 
+Bootstrap r3 also demonstrates an optional compact post-reconciliation payload:
+
+```text
+event_index_path
+kind = CompactReconciledEventIndex
+```
+
+Recovered Politics and Holidays shards expose this compact payload with a content hash. It preserves stable reconciled/event/assertion/provenance IDs and temporal/display fields while explicitly retaining the full normalized snapshot as authoritative.
+
 ### Production partial/complete
 
 The production packager uses:
@@ -233,19 +253,28 @@ The aggregate carries the materialized `bundle:temporal/everything` CalendarSet.
 
 Ephemeris treats these as packaging variants of the same release concept.
 
-## Known bootstrap payload gap
+## Current bootstrap payload posture
 
-The current bootstrap manifest exposes normalized-snapshot and CalendarSet paths, but does not expose reconciled-event-set paths.
+Bootstrap r3 contains two payload classes.
 
-That means the bootstrap release is already valid for release/channel/coverage integration, but the **current Ephemeris reconciled-event-set importer cannot ingest it end-to-end from the manifest alone**.
+Recovered shards:
 
-This is an explicit producer/consumer contract gap.
+- U.S. Politics recovery -> pinned `CompactReconciledEventIndex`;
+- U.S. Holidays recovery -> pinned `CompactReconciledEventIndex`.
 
-Preferred upstream resolution:
+Specimen shards:
 
-- add a reconciled-event-set path and integrity hash for each populated bootstrap shard, matching the production artifact contract.
+- 2027 European national elections -> no rich reconciled payload path in the release manifest;
+- 2026 U.S. pro sports excluding hockey -> no rich reconciled payload path in the release manifest.
 
-An alternative Ephemeris normalized-snapshot importer is possible, but it must not duplicate Resourcearium's reconciliation logic.
+Therefore the **current Ephemeris importer still cannot adopt bootstrap r3 end-to-end from the release manifest alone**.
+
+The correct convergence is:
+
+- Ephemeris adds a `CompactReconciledEventIndex` adapter for explicitly pinned compact reconciled indexes;
+- Resourcearium exposes a reconciled-event-set path/hash or another accepted post-reconciliation payload for the remaining populated bootstrap shards.
+
+Ephemeris should not implement a normalized-snapshot reconciliation clone merely to bridge packaging.
 
 CalendarSet must not be mistaken for event payload, and ICS must not be used as a workaround.
 
@@ -416,6 +445,7 @@ Implemented now:
 Not implemented yet:
 
 - TemporalBundleRelease v1 manifest import;
+- CompactReconciledEventIndex import adapter;
 - CalendarSet membership persistence;
 - release/channel metadata persistence;
 - release coverage UI;
