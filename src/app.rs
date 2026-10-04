@@ -1,4 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::Duration;
 
 use chrono::{Datelike, Local, NaiveDate, Utc};
 use chrono_tz::Tz;
@@ -21,7 +23,7 @@ use crate::store::{TariaProjectedCalendarChoice, TariaReleaseStatusRecord, Tempo
 use crate::taria::import_reconciled_event_set_file;
 use crate::taria_workspace::{
     detect_resourcearium_root, normalize_resourcearium_root,
-    update_taria_sources as update_taria_workspace,
+    TariaWorkspaceUpdateReport, update_taria_sources as update_taria_workspace,
 };
 
 pub struct EphemerisApp {
@@ -34,6 +36,7 @@ pub struct EphemerisApp {
     taria_release_status: Option<TariaReleaseStatusRecord>,
     taria_bundle_refs: Vec<String>,
     taria_calendar_choices: Vec<TariaProjectedCalendarChoice>,
+    taria_update_receiver: Option<Receiver<Result<TariaWorkspaceUpdateReport, String>>>,
     last_message: Option<String>,
     last_error: Option<String>,
     dirty_state: bool,
@@ -72,6 +75,7 @@ impl EphemerisApp {
             taria_release_status: None,
             taria_bundle_refs: Vec::new(),
             taria_calendar_choices: Vec::new(),
+            taria_update_receiver: None,
             last_message: None,
             last_error: None,
             dirty_state: false,
@@ -133,7 +137,11 @@ impl EphemerisApp {
         }
     }
 
-    fn update_taria_workspace(&mut self) {
+    fn start_taria_workspace_update(&mut self) {
+        if self.taria_update_receiver.is_some() {
+            return;
+        }
+
         if self.state.taria_resourcearium_root.trim().is_empty() {
             self.detect_taria_workspace();
             if self.state.taria_resourcearium_root.trim().is_empty() {
@@ -141,10 +149,53 @@ impl EphemerisApp {
             }
         }
 
+        let Some(database_path) = self.store.path().map(std::path::Path::to_path_buf) else {
+            self.last_message = None;
+            self.last_error = Some(
+                "Background Taria updates require a file-backed Ephemeris database.".to_string(),
+            );
+            return;
+        };
+
         let configured = std::path::PathBuf::from(&self.state.taria_resourcearium_root);
-        match normalize_resourcearium_root(&configured)
-            .and_then(|root| update_taria_workspace(&self.store, &root, &self.state.taria_channel))
-        {
+        let channel = self.state.taria_channel.clone();
+        let (sender, receiver) = mpsc::channel();
+        self.taria_update_receiver = Some(receiver);
+        self.last_message = Some(format!(
+            "Updating Taria sources from local {channel} release..."
+        ));
+        self.last_error = None;
+
+        std::thread::spawn(move || {
+            let result = (|| -> anyhow::Result<TariaWorkspaceUpdateReport> {
+                let worker_store = TemporalStore::open(database_path)?;
+                let root = normalize_resourcearium_root(&configured)?;
+                update_taria_workspace(&worker_store, &root, &channel)
+            })()
+            .map_err(|error| format!("{error:#}"));
+
+            let _ = sender.send(result);
+        });
+    }
+
+    fn poll_taria_workspace_update(&mut self) {
+        let result = match self.taria_update_receiver.as_ref() {
+            Some(receiver) => match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => Some(Err(
+                    "Taria update worker exited without returning a result.".to_string(),
+                )),
+            },
+            None => None,
+        };
+
+        let Some(result) = result else {
+            return;
+        };
+        self.taria_update_receiver = None;
+
+        match result {
             Ok(report) => {
                 self.state.taria_resourcearium_root =
                     report.resourcearium_root.display().to_string();
@@ -168,7 +219,7 @@ impl EphemerisApp {
             }
             Err(error) => {
                 self.last_message = None;
-                self.last_error = Some(format!("Failed to update local Taria sources: {error:#}"));
+                self.last_error = Some(format!("Failed to update local Taria sources: {error}"));
             }
         }
     }
@@ -177,47 +228,62 @@ impl EphemerisApp {
         ui.heading("Taria");
         ui.small("Filesystem-first. Ephemeris reads Resourcearium artifacts directly from disk; no download or network step.");
 
-        let root_changed = ui
-            .add(
-                egui::TextEdit::singleline(&mut self.state.taria_resourcearium_root)
-                    .hint_text("/path/to/taria or /path/to/resourcearium"),
-            )
-            .changed();
-        if root_changed {
-            self.mark_state_dirty();
-        }
-
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Detect local Taria").clicked() {
-                self.detect_taria_workspace();
+        let updating = self.taria_update_receiver.is_some();
+        ui.add_enabled_ui(!updating, |ui| {
+            let root_changed = ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.state.taria_resourcearium_root)
+                        .hint_text("/path/to/taria or /path/to/resourcearium"),
+                )
+                .changed();
+            if root_changed {
+                self.mark_state_dirty();
             }
 
-            egui::ComboBox::from_id_salt("taria.channel")
-                .selected_text(&self.state.taria_channel)
-                .show_ui(ui, |ui| {
-                    for channel in ["bootstrap", "production"] {
-                        if ui
-                            .selectable_value(
-                                &mut self.state.taria_channel,
-                                channel.to_string(),
-                                channel,
-                            )
-                            .changed()
-                        {
-                            self.mark_state_dirty();
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Detect local Taria").clicked() {
+                    self.detect_taria_workspace();
+                }
+
+                egui::ComboBox::from_id_salt("taria.channel")
+                    .selected_text(&self.state.taria_channel)
+                    .show_ui(ui, |ui| {
+                        for channel in ["bootstrap", "production"] {
+                            if ui
+                                .selectable_value(
+                                    &mut self.state.taria_channel,
+                                    channel.to_string(),
+                                    channel,
+                                )
+                                .changed()
+                            {
+                                self.mark_state_dirty();
+                            }
                         }
-                    }
-                });
+                    });
+            });
         });
 
+        let button_text = if updating {
+            "Updating Taria Sources..."
+        } else {
+            "Update Taria Sources"
+        };
         if ui
-            .add_sized(
-                [ui.available_width(), 30.0],
-                egui::Button::new(RichText::new("Update Taria Sources").strong()),
+            .add_enabled(
+                !updating,
+                egui::Button::new(RichText::new(button_text).strong())
+                    .min_size(egui::vec2(ui.available_width(), 30.0)),
             )
             .clicked()
         {
-            self.update_taria_workspace();
+            self.start_taria_workspace_update();
+        }
+        if updating {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.small("Adopting release in background");
+            });
         }
 
         if let Some(release) = self.state.taria_last_release_id.as_deref() {
@@ -701,8 +767,19 @@ impl EphemerisApp {
                 self.mark_state_dirty();
             }
 
-            if ui.button("Update Taria Sources").clicked() {
-                self.update_taria_workspace();
+            let updating_taria = self.taria_update_receiver.is_some();
+            if ui
+                .add_enabled(
+                    !updating_taria,
+                    egui::Button::new(if updating_taria {
+                        "Updating Taria..."
+                    } else {
+                        "Update Taria Sources"
+                    }),
+                )
+                .clicked()
+            {
+                self.start_taria_workspace_update();
             }
 
             ui.separator();
@@ -1362,6 +1439,11 @@ impl EphemerisApp {
 
 impl eframe::App for EphemerisApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_taria_workspace_update();
+        if self.taria_update_receiver.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(100));
+        }
+
         self.handle_shortcuts(ui);
 
         let dropped_paths = ui.input(|input| {
