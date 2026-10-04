@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::calendar::{CalendarLayout, CalendarView};
 use crate::domain::EventStatus;
-use crate::query::{EventQuery, SavedView};
+use crate::query::{ColorBy, EventQuery, GroupBy, SavedView, SortRule};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedUiState {
@@ -31,6 +31,12 @@ pub struct PersistedUiState {
     pub jurisdiction_filter: Option<String>,
     #[serde(default)]
     pub status_filter: Option<EventStatus>,
+    #[serde(default)]
+    pub group_by: GroupBy,
+    #[serde(default)]
+    pub sort_rules: Vec<SortRule>,
+    #[serde(default)]
+    pub color_by: ColorBy,
     #[serde(default, rename = "saved_views", skip_serializing_if = "Vec::is_empty")]
     pub legacy_saved_views: Vec<SavedView>,
     #[serde(default)]
@@ -41,7 +47,7 @@ pub struct PersistedUiState {
 impl Default for PersistedUiState {
     fn default() -> Self {
         Self {
-            version: 3,
+            version: 4,
             calendar_view: CalendarView::Month,
             calendar_layout: CalendarLayout::Grid,
             focus_date: Local::now().date_naive().to_string(),
@@ -54,6 +60,9 @@ impl Default for PersistedUiState {
             domain_filter: None,
             jurisdiction_filter: None,
             status_filter: None,
+            group_by: GroupBy::Date,
+            sort_rules: vec![SortRule::default()],
+            color_by: ColorBy::Status,
             legacy_saved_views: Vec::new(),
             active_saved_view_id: None,
             selected_event_id: None,
@@ -83,8 +92,11 @@ impl PersistedUiState {
             .with_context(|| format!("failed to read {}", path.display()))?;
         let mut state: Self = serde_json::from_str(&raw)
             .with_context(|| format!("failed to decode {}", path.display()))?;
-        if state.version < 3 {
-            state.version = 3;
+        if state.version < 4 {
+            state.version = 4;
+        }
+        if state.sort_rules.is_empty() {
+            state.sort_rules.push(SortRule::default());
         }
         Ok(state)
     }
@@ -144,6 +156,9 @@ impl PersistedUiState {
             self.hidden_source_ids.clone(),
             self.calendar_view,
             self.calendar_layout,
+            self.group_by,
+            self.sort_rules.clone(),
+            self.color_by,
             self.display_timezone.clone(),
             self.week_start_monday,
         )
@@ -154,6 +169,12 @@ impl PersistedUiState {
         self.hidden_source_ids.clone_from(&view.hidden_source_ids);
         self.calendar_view = view.calendar_view;
         self.calendar_layout = view.calendar_layout;
+        self.group_by = view.group_by;
+        self.sort_rules.clone_from(&view.sort_rules);
+        if self.sort_rules.is_empty() {
+            self.sort_rules.push(SortRule::default());
+        }
+        self.color_by = view.color_by;
         self.display_timezone.clone_from(&view.display_timezone);
         self.week_start_monday = view.week_start_monday;
         self.active_saved_view_id = Some(view.id);
@@ -188,6 +209,8 @@ mod tests {
             calendar_layout: CalendarLayout::Agenda,
             display_timezone: "UTC".to_string(),
             domain_filter: Some("elections".to_string()),
+            group_by: GroupBy::Jurisdiction,
+            color_by: ColorBy::EventType,
             ..PersistedUiState::default()
         };
 
@@ -198,6 +221,8 @@ mod tests {
         assert_eq!(loaded.calendar_layout, CalendarLayout::Agenda);
         assert_eq!(loaded.display_timezone, "UTC");
         assert_eq!(loaded.domain_filter.as_deref(), Some("elections"));
+        assert_eq!(loaded.group_by, GroupBy::Jurisdiction);
+        assert_eq!(loaded.color_by, ColorBy::EventType);
         assert!(loaded.legacy_saved_views.is_empty());
     }
 
@@ -207,6 +232,8 @@ mod tests {
             domain_filter: Some("elections".to_string()),
             calendar_view: CalendarView::Year,
             calendar_layout: CalendarLayout::Agenda,
+            group_by: GroupBy::Domain,
+            color_by: ColorBy::Jurisdiction,
             ..PersistedUiState::default()
         };
         let view = state.capture_saved_view("Elections");
@@ -218,6 +245,8 @@ mod tests {
         assert_eq!(state.domain_filter.as_deref(), Some("elections"));
         assert_eq!(state.calendar_view, CalendarView::Year);
         assert_eq!(state.calendar_layout, CalendarLayout::Agenda);
+        assert_eq!(state.group_by, GroupBy::Domain);
+        assert_eq!(state.color_by, ColorBy::Jurisdiction);
         assert_eq!(state.active_saved_view_id, Some(view.id));
     }
 }
