@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow};
-use chrono::{DateTime, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
-use rusqlite::{Connection, Row, named_params, params};
+use rusqlite::{Connection, OptionalExtension, Row, named_params, params};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -11,7 +11,7 @@ use crate::domain::{
     EventStatus, SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
 };
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 pub struct TemporalStore {
     conn: Connection,
@@ -69,29 +69,47 @@ impl TemporalStore {
         u64::try_from(count).context("event count cannot be represented as u64")
     }
 
+    pub fn unplaced_event_count(&self) -> anyhow::Result<u64> {
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM temporal_events WHERE time_kind = 'unknown'",
+                [],
+                |row| row.get(0),
+            )
+            .context("failed to count unplaced temporal events")?;
+        u64::try_from(count).context("unplaced event count cannot be represented as u64")
+    }
+
     pub fn upsert_source(&self, source: &TemporalSource) -> anyhow::Result<()> {
+        let properties_json = serde_json::to_string(&source.properties)
+            .context("failed to encode source properties")?;
+
         self.conn
             .execute(
                 r#"
-            INSERT INTO temporal_sources (
-                id, name, publisher, authority, kind, locator,
-                enabled, read_only, created_at, updated_at
-            ) VALUES (
-                :id, :name, :publisher, :authority, :kind, :locator,
-                :enabled, :read_only, :created_at, :updated_at
-            )
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                publisher = excluded.publisher,
-                authority = excluded.authority,
-                kind = excluded.kind,
-                locator = excluded.locator,
-                enabled = excluded.enabled,
-                read_only = excluded.read_only,
-                updated_at = excluded.updated_at
-            "#,
+                INSERT INTO temporal_sources (
+                    id, external_ref, name, publisher, authority, kind, locator,
+                    enabled, read_only, properties_json, created_at, updated_at
+                ) VALUES (
+                    :id, :external_ref, :name, :publisher, :authority, :kind, :locator,
+                    :enabled, :read_only, :properties_json, :created_at, :updated_at
+                )
+                ON CONFLICT(id) DO UPDATE SET
+                    external_ref = excluded.external_ref,
+                    name = excluded.name,
+                    publisher = excluded.publisher,
+                    authority = excluded.authority,
+                    kind = excluded.kind,
+                    locator = excluded.locator,
+                    enabled = excluded.enabled,
+                    read_only = excluded.read_only,
+                    properties_json = excluded.properties_json,
+                    updated_at = excluded.updated_at
+                "#,
                 named_params! {
                     ":id": source.id.to_string(),
+                    ":external_ref": source.external_ref,
                     ":name": source.name,
                     ":publisher": source.publisher,
                     ":authority": source.authority.as_str(),
@@ -99,6 +117,7 @@ impl TemporalStore {
                     ":locator": source.locator,
                     ":enabled": source.enabled,
                     ":read_only": source.read_only,
+                    ":properties_json": properties_json,
                     ":created_at": source.created_at.to_rfc3339(),
                     ":updated_at": source.updated_at.to_rfc3339(),
                 },
@@ -107,11 +126,29 @@ impl TemporalStore {
         Ok(())
     }
 
+    pub fn source_by_external_ref(
+        &self,
+        external_ref: &str,
+    ) -> anyhow::Result<Option<TemporalSource>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, external_ref, name, publisher, authority, kind, locator,
+                   enabled, read_only, properties_json, created_at, updated_at
+            FROM temporal_sources
+            WHERE external_ref = ?1
+            "#,
+        )?;
+
+        stmt.query_row(params![external_ref], decode_source)
+            .optional()
+            .context("failed to query temporal source by external ref")
+    }
+
     pub fn list_sources(&self) -> anyhow::Result<Vec<TemporalSource>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT id, name, publisher, authority, kind, locator,
-                   enabled, read_only, created_at, updated_at
+            SELECT id, external_ref, name, publisher, authority, kind, locator,
+                   enabled, read_only, properties_json, created_at, updated_at
             FROM temporal_sources
             ORDER BY name COLLATE NOCASE
             "#,
@@ -126,66 +163,85 @@ impl TemporalStore {
     }
 
     pub fn upsert_event(&self, event: &TemporalEvent) -> anyhow::Result<()> {
-        let encoded = EncodedTime::from_time_spec(&event.time);
-        let tags_json =
-            serde_json::to_string(&event.tags).context("failed to encode event tags")?;
+        let encoded = EncodedTime::from_time_spec(&event.time)?;
+        let assertion_refs_json = encode_string_vec(&event.assertion_refs, "assertion refs")?;
+        let source_refs_json = encode_string_vec(&event.source_refs, "source refs")?;
+        let provenance_refs_json = encode_string_vec(&event.provenance_refs, "provenance refs")?;
+        let tags_json = encode_string_vec(&event.tags, "event tags")?;
         let properties_json = serde_json::to_string(&event.properties)
             .context("failed to encode event properties")?;
 
         self.conn
             .execute(
                 r#"
-            INSERT INTO temporal_events (
-                id, source_id, source_record_key,
-                normalized_title, raw_title, description,
-                event_type, domain, jurisdiction, institution,
-                status, confidence, importance, personal_relevance,
-                time_kind, start_utc, end_utc, source_timezone,
-                start_date, end_date_exclusive,
-                start_local, end_local,
-                tags_json, properties_json,
-                created_at, updated_at
-            ) VALUES (
-                :id, :source_id, :source_record_key,
-                :normalized_title, :raw_title, :description,
-                :event_type, :domain, :jurisdiction, :institution,
-                :status, :confidence, :importance, :personal_relevance,
-                :time_kind, :start_utc, :end_utc, :source_timezone,
-                :start_date, :end_date_exclusive,
-                :start_local, :end_local,
-                :tags_json, :properties_json,
-                :created_at, :updated_at
-            )
-            ON CONFLICT(id) DO UPDATE SET
-                source_id = excluded.source_id,
-                source_record_key = excluded.source_record_key,
-                normalized_title = excluded.normalized_title,
-                raw_title = excluded.raw_title,
-                description = excluded.description,
-                event_type = excluded.event_type,
-                domain = excluded.domain,
-                jurisdiction = excluded.jurisdiction,
-                institution = excluded.institution,
-                status = excluded.status,
-                confidence = excluded.confidence,
-                importance = excluded.importance,
-                personal_relevance = excluded.personal_relevance,
-                time_kind = excluded.time_kind,
-                start_utc = excluded.start_utc,
-                end_utc = excluded.end_utc,
-                source_timezone = excluded.source_timezone,
-                start_date = excluded.start_date,
-                end_date_exclusive = excluded.end_date_exclusive,
-                start_local = excluded.start_local,
-                end_local = excluded.end_local,
-                tags_json = excluded.tags_json,
-                properties_json = excluded.properties_json,
-                updated_at = excluded.updated_at
-            "#,
+                INSERT INTO temporal_events (
+                    id, source_id, source_record_key,
+                    upstream_event_ref, upstream_reconciled_key,
+                    assertion_refs_json, source_refs_json, provenance_refs_json, renderability,
+                    normalized_title, raw_title, description,
+                    event_type, domain, jurisdiction, institution,
+                    status, confidence, importance, personal_relevance,
+                    time_kind, start_utc, end_utc, source_timezone,
+                    start_date, end_date_exclusive,
+                    start_local, end_local, time_original_value,
+                    tags_json, properties_json,
+                    created_at, updated_at
+                ) VALUES (
+                    :id, :source_id, :source_record_key,
+                    :upstream_event_ref, :upstream_reconciled_key,
+                    :assertion_refs_json, :source_refs_json, :provenance_refs_json, :renderability,
+                    :normalized_title, :raw_title, :description,
+                    :event_type, :domain, :jurisdiction, :institution,
+                    :status, :confidence, :importance, :personal_relevance,
+                    :time_kind, :start_utc, :end_utc, :source_timezone,
+                    :start_date, :end_date_exclusive,
+                    :start_local, :end_local, :time_original_value,
+                    :tags_json, :properties_json,
+                    :created_at, :updated_at
+                )
+                ON CONFLICT(id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    source_record_key = excluded.source_record_key,
+                    upstream_event_ref = excluded.upstream_event_ref,
+                    upstream_reconciled_key = excluded.upstream_reconciled_key,
+                    assertion_refs_json = excluded.assertion_refs_json,
+                    source_refs_json = excluded.source_refs_json,
+                    provenance_refs_json = excluded.provenance_refs_json,
+                    renderability = excluded.renderability,
+                    normalized_title = excluded.normalized_title,
+                    raw_title = excluded.raw_title,
+                    description = excluded.description,
+                    event_type = excluded.event_type,
+                    domain = excluded.domain,
+                    jurisdiction = excluded.jurisdiction,
+                    institution = excluded.institution,
+                    status = excluded.status,
+                    confidence = excluded.confidence,
+                    importance = excluded.importance,
+                    personal_relevance = excluded.personal_relevance,
+                    time_kind = excluded.time_kind,
+                    start_utc = excluded.start_utc,
+                    end_utc = excluded.end_utc,
+                    source_timezone = excluded.source_timezone,
+                    start_date = excluded.start_date,
+                    end_date_exclusive = excluded.end_date_exclusive,
+                    start_local = excluded.start_local,
+                    end_local = excluded.end_local,
+                    time_original_value = excluded.time_original_value,
+                    tags_json = excluded.tags_json,
+                    properties_json = excluded.properties_json,
+                    updated_at = excluded.updated_at
+                "#,
                 named_params! {
                     ":id": event.id.to_string(),
                     ":source_id": event.source_id.map(|value| value.to_string()),
                     ":source_record_key": event.source_record_key,
+                    ":upstream_event_ref": event.upstream_event_ref,
+                    ":upstream_reconciled_key": event.upstream_reconciled_key,
+                    ":assertion_refs_json": assertion_refs_json,
+                    ":source_refs_json": source_refs_json,
+                    ":provenance_refs_json": provenance_refs_json,
+                    ":renderability": event.renderability,
                     ":normalized_title": event.normalized_title,
                     ":raw_title": event.raw_title,
                     ":description": event.description,
@@ -205,6 +261,7 @@ impl TemporalStore {
                     ":end_date_exclusive": encoded.end_date_exclusive,
                     ":start_local": encoded.start_local,
                     ":end_local": encoded.end_local,
+                    ":time_original_value": encoded.original_value,
                     ":tags_json": tags_json,
                     ":properties_json": properties_json,
                     ":created_at": event.created_at.to_rfc3339(),
@@ -217,12 +274,26 @@ impl TemporalStore {
     }
 
     pub fn event_by_id(&self, id: Uuid) -> anyhow::Result<Option<TemporalEvent>> {
-        let mut stmt = self.conn.prepare(&event_select_sql("WHERE id = ?1"))?;
-        let mut rows = stmt.query(params![id.to_string()])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(decode_event(row)?)),
-            None => Ok(None),
-        }
+        let sql = event_select_sql("WHERE id = ?1");
+        let mut stmt = self.conn.prepare(&sql)?;
+        stmt.query_row(params![id.to_string()], decode_event)
+            .optional()
+            .context("failed to query temporal event by id")
+    }
+
+    pub fn event_by_source_record(
+        &self,
+        source_id: Uuid,
+        source_record_key: &str,
+    ) -> anyhow::Result<Option<TemporalEvent>> {
+        let sql = event_select_sql("WHERE source_id = ?1 AND source_record_key = ?2");
+        let mut stmt = self.conn.prepare(&sql)?;
+        stmt.query_row(
+            params![source_id.to_string(), source_record_key],
+            decode_event,
+        )
+        .optional()
+        .context("failed to query temporal event by source record")
     }
 
     pub fn events_in_window(
@@ -230,6 +301,7 @@ impl TemporalStore {
         start: NaiveDate,
         end_exclusive: NaiveDate,
         timezone: Tz,
+        include_imprecise: bool,
     ) -> anyhow::Result<Vec<TemporalEvent>> {
         if end_exclusive <= start {
             return Ok(Vec::new());
@@ -247,7 +319,8 @@ impl TemporalStore {
         let where_clause = r#"
             WHERE
                 (
-                    time_kind = 'all_day'
+                    time_kind IN ('date_only', 'all_day', 'month', 'year')
+                    AND (time_kind NOT IN ('month', 'year') OR ?7 = 1)
                     AND start_date < ?1
                     AND (
                         (end_date_exclusive IS NULL AND start_date >= ?2)
@@ -292,21 +365,27 @@ impl TemporalStore {
             end_utc.to_rfc3339(),
             format_naive(start_local),
             format_naive(end_local),
+            include_imprecise,
         ])?;
 
         let mut events = Vec::new();
         while let Some(row) = rows.next()? {
             events.push(decode_event(row)?);
         }
+        Ok(events)
+    }
 
-        events.sort_by(|left, right| {
-            let left_date = left.display_date(timezone);
-            let right_date = right.display_date(timezone);
-            left_date
-                .cmp(&right_date)
-                .then_with(|| left.normalized_title.cmp(&right.normalized_title))
-        });
-
+    pub fn unplaced_events(&self) -> anyhow::Result<Vec<TemporalEvent>> {
+        let sql = event_select_sql(
+            "WHERE time_kind = 'unknown' OR renderability IS NOT NULL AND renderability != 'ready'
+             ORDER BY normalized_title COLLATE NOCASE",
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query([])?;
+        let mut events = Vec::new();
+        while let Some(row) = rows.next()? {
+            events.push(decode_event(row)?);
+        }
         Ok(events)
     }
 }
@@ -330,101 +409,209 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         ));
     }
 
-    if current < 1 {
-        let tx = conn
-            .transaction()
-            .context("failed to start schema migration")?;
-        tx.execute_batch(
-            r#"
-            CREATE TABLE temporal_sources (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                publisher TEXT,
-                authority TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                locator TEXT,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                read_only INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE temporal_events (
-                id TEXT PRIMARY KEY,
-                source_id TEXT REFERENCES temporal_sources(id) ON DELETE SET NULL,
-                source_record_key TEXT,
-                normalized_title TEXT NOT NULL,
-                raw_title TEXT,
-                description TEXT,
-                event_type TEXT,
-                domain TEXT,
-                jurisdiction TEXT,
-                institution TEXT,
-                status TEXT NOT NULL,
-                confidence REAL,
-                importance INTEGER,
-                personal_relevance INTEGER,
-
-                time_kind TEXT NOT NULL
-                    CHECK (time_kind IN ('all_day', 'instant', 'floating')),
-                start_utc TEXT,
-                end_utc TEXT,
-                source_timezone TEXT,
-                start_date TEXT,
-                end_date_exclusive TEXT,
-                start_local TEXT,
-                end_local TEXT,
-
-                tags_json TEXT NOT NULL DEFAULT '[]',
-                properties_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-
-                CHECK (
-                    (time_kind = 'all_day' AND start_date IS NOT NULL)
-                    OR (time_kind = 'instant' AND start_utc IS NOT NULL)
-                    OR (time_kind = 'floating' AND start_local IS NOT NULL)
-                )
-            );
-
-            CREATE UNIQUE INDEX temporal_events_source_record_key
-                ON temporal_events(source_id, source_record_key)
-                WHERE source_id IS NOT NULL AND source_record_key IS NOT NULL;
-
-            CREATE INDEX temporal_events_start_date
-                ON temporal_events(start_date)
-                WHERE time_kind = 'all_day';
-
-            CREATE INDEX temporal_events_start_utc
-                ON temporal_events(start_utc)
-                WHERE time_kind = 'instant';
-
-            CREATE INDEX temporal_events_start_local
-                ON temporal_events(start_local)
-                WHERE time_kind = 'floating';
-
-            CREATE INDEX temporal_events_source_id
-                ON temporal_events(source_id);
-
-            CREATE INDEX temporal_events_status
-                ON temporal_events(status);
-
-            CREATE INDEX temporal_events_domain
-                ON temporal_events(domain);
-
-            PRAGMA user_version = 1;
-            "#,
-        )
-        .context("failed to create initial temporal schema")?;
+    if current == 0 {
+        let tx = conn.transaction().context("failed to start schema migration")?;
+        create_schema_v2(&tx)?;
+        tx.pragma_update(None, "user_version", SCHEMA_VERSION)
+            .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
+        return Ok(());
+    }
+
+    if current == 1 {
+        migrate_v1_to_v2(conn)?;
     }
 
     Ok(())
 }
 
-fn event_select_sql(suffix: &str) -> String {
-    format!(
+fn create_schema_v2(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
         r#"
+        CREATE TABLE temporal_sources (
+            id TEXT PRIMARY KEY,
+            external_ref TEXT UNIQUE,
+            name TEXT NOT NULL,
+            publisher TEXT,
+            authority TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            locator TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            read_only INTEGER NOT NULL DEFAULT 1,
+            properties_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE temporal_events (
+            id TEXT PRIMARY KEY,
+            source_id TEXT REFERENCES temporal_sources(id) ON DELETE SET NULL,
+            source_record_key TEXT,
+
+            upstream_event_ref TEXT,
+            upstream_reconciled_key TEXT,
+            assertion_refs_json TEXT NOT NULL DEFAULT '[]',
+            source_refs_json TEXT NOT NULL DEFAULT '[]',
+            provenance_refs_json TEXT NOT NULL DEFAULT '[]',
+            renderability TEXT,
+
+            normalized_title TEXT NOT NULL,
+            raw_title TEXT,
+            description TEXT,
+            event_type TEXT,
+            domain TEXT,
+            jurisdiction TEXT,
+            institution TEXT,
+            status TEXT NOT NULL,
+            confidence REAL,
+            importance INTEGER,
+            personal_relevance INTEGER,
+
+            time_kind TEXT NOT NULL
+                CHECK (
+                    time_kind IN (
+                        'date_only', 'all_day', 'instant', 'floating',
+                        'month', 'year', 'unknown'
+                    )
+                ),
+            start_utc TEXT,
+            end_utc TEXT,
+            source_timezone TEXT,
+            start_date TEXT,
+            end_date_exclusive TEXT,
+            start_local TEXT,
+            end_local TEXT,
+            time_original_value TEXT,
+
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            properties_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+
+            CHECK (
+                (time_kind = 'date_only' AND start_date IS NOT NULL)
+                OR (time_kind = 'all_day' AND start_date IS NOT NULL)
+                OR (time_kind = 'instant' AND start_utc IS NOT NULL)
+                OR (time_kind = 'floating' AND start_local IS NOT NULL)
+                OR (time_kind = 'month' AND start_date IS NOT NULL AND end_date_exclusive IS NOT NULL)
+                OR (time_kind = 'year' AND start_date IS NOT NULL AND end_date_exclusive IS NOT NULL)
+                OR time_kind = 'unknown'
+            )
+        );
+
+        CREATE UNIQUE INDEX temporal_events_source_record_key
+            ON temporal_events(source_id, source_record_key)
+            WHERE source_id IS NOT NULL AND source_record_key IS NOT NULL;
+
+        CREATE INDEX temporal_events_start_date
+            ON temporal_events(start_date)
+            WHERE time_kind IN ('date_only', 'all_day', 'month', 'year');
+
+        CREATE INDEX temporal_events_start_utc
+            ON temporal_events(start_utc)
+            WHERE time_kind = 'instant';
+
+        CREATE INDEX temporal_events_start_local
+            ON temporal_events(start_local)
+            WHERE time_kind = 'floating';
+
+        CREATE INDEX temporal_events_source_id
+            ON temporal_events(source_id);
+
+        CREATE INDEX temporal_events_upstream_event_ref
+            ON temporal_events(upstream_event_ref);
+
+        CREATE INDEX temporal_events_status
+            ON temporal_events(status);
+
+        CREATE INDEX temporal_events_domain
+            ON temporal_events(domain);
+
+        CREATE INDEX temporal_events_renderability
+            ON temporal_events(renderability);
+        "#,
+    )
+    .context("failed to create temporal schema")
+}
+
+fn migrate_v1_to_v2(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn.transaction().context("failed to start v1 to v2 migration")?;
+
+    tx.execute_batch(
+        r#"
+        ALTER TABLE temporal_sources ADD COLUMN external_ref TEXT;
+        ALTER TABLE temporal_sources ADD COLUMN properties_json TEXT NOT NULL DEFAULT '{}';
+        CREATE UNIQUE INDEX temporal_sources_external_ref
+            ON temporal_sources(external_ref)
+            WHERE external_ref IS NOT NULL;
+
+        CREATE TABLE temporal_events_v2 (
+            id TEXT PRIMARY KEY,
+            source_id TEXT REFERENCES temporal_sources(id) ON DELETE SET NULL,
+            source_record_key TEXT,
+
+            upstream_event_ref TEXT,
+            upstream_reconciled_key TEXT,
+            assertion_refs_json TEXT NOT NULL DEFAULT '[]',
+            source_refs_json TEXT NOT NULL DEFAULT '[]',
+            provenance_refs_json TEXT NOT NULL DEFAULT '[]',
+            renderability TEXT,
+
+            normalized_title TEXT NOT NULL,
+            raw_title TEXT,
+            description TEXT,
+            event_type TEXT,
+            domain TEXT,
+            jurisdiction TEXT,
+            institution TEXT,
+            status TEXT NOT NULL,
+            confidence REAL,
+            importance INTEGER,
+            personal_relevance INTEGER,
+
+            time_kind TEXT NOT NULL
+                CHECK (
+                    time_kind IN (
+                        'date_only', 'all_day', 'instant', 'floating',
+                        'month', 'year', 'unknown'
+                    )
+                ),
+            start_utc TEXT,
+            end_utc TEXT,
+            source_timezone TEXT,
+            start_date TEXT,
+            end_date_exclusive TEXT,
+            start_local TEXT,
+            end_local TEXT,
+            time_original_value TEXT,
+
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            properties_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+
+            CHECK (
+                (time_kind = 'date_only' AND start_date IS NOT NULL)
+                OR (time_kind = 'all_day' AND start_date IS NOT NULL)
+                OR (time_kind = 'instant' AND start_utc IS NOT NULL)
+                OR (time_kind = 'floating' AND start_local IS NOT NULL)
+                OR (time_kind = 'month' AND start_date IS NOT NULL AND end_date_exclusive IS NOT NULL)
+                OR (time_kind = 'year' AND start_date IS NOT NULL AND end_date_exclusive IS NOT NULL)
+                OR time_kind = 'unknown'
+            )
+        );
+
+        INSERT INTO temporal_events_v2 (
+            id, source_id, source_record_key,
+            normalized_title, raw_title, description,
+            event_type, domain, jurisdiction, institution,
+            status, confidence, importance, personal_relevance,
+            time_kind, start_utc, end_utc, source_timezone,
+            start_date, end_date_exclusive,
+            start_local, end_local,
+            tags_json, properties_json,
+            created_at, updated_at
+        )
         SELECT
             id, source_id, source_record_key,
             normalized_title, raw_title, description,
@@ -435,15 +622,86 @@ fn event_select_sql(suffix: &str) -> String {
             start_local, end_local,
             tags_json, properties_json,
             created_at, updated_at
+        FROM temporal_events;
+
+        DROP TABLE temporal_events;
+        ALTER TABLE temporal_events_v2 RENAME TO temporal_events;
+
+        CREATE UNIQUE INDEX temporal_events_source_record_key
+            ON temporal_events(source_id, source_record_key)
+            WHERE source_id IS NOT NULL AND source_record_key IS NOT NULL;
+
+        CREATE INDEX temporal_events_start_date
+            ON temporal_events(start_date)
+            WHERE time_kind IN ('date_only', 'all_day', 'month', 'year');
+
+        CREATE INDEX temporal_events_start_utc
+            ON temporal_events(start_utc)
+            WHERE time_kind = 'instant';
+
+        CREATE INDEX temporal_events_start_local
+            ON temporal_events(start_local)
+            WHERE time_kind = 'floating';
+
+        CREATE INDEX temporal_events_source_id
+            ON temporal_events(source_id);
+
+        CREATE INDEX temporal_events_upstream_event_ref
+            ON temporal_events(upstream_event_ref);
+
+        CREATE INDEX temporal_events_status
+            ON temporal_events(status);
+
+        CREATE INDEX temporal_events_domain
+            ON temporal_events(domain);
+
+        CREATE INDEX temporal_events_renderability
+            ON temporal_events(renderability);
+        "#,
+    )
+    .context("failed to migrate schema from v1 to v2")?;
+
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)
+        .context("failed to set schema version")?;
+    tx.commit()
+        .context("failed to commit v1 to v2 schema migration")
+}
+
+fn event_select_sql(suffix: &str) -> String {
+    format!(
+        r#"
+        SELECT
+            id, source_id, source_record_key,
+            upstream_event_ref, upstream_reconciled_key,
+            assertion_refs_json, source_refs_json, provenance_refs_json, renderability,
+            normalized_title, raw_title, description,
+            event_type, domain, jurisdiction, institution,
+            status, confidence, importance, personal_relevance,
+            time_kind, start_utc, end_utc, source_timezone,
+            start_date, end_date_exclusive,
+            start_local, end_local, time_original_value,
+            tags_json, properties_json,
+            created_at, updated_at
         FROM temporal_events
         {suffix}
         "#
     )
 }
 
-fn decode_source(row: &Row<'_>) -> anyhow::Result<TemporalSource> {
+fn decode_source(row: &Row<'_>) -> rusqlite::Result<TemporalSource> {
+    let id_raw: String = row.get("id")?;
+    let created_raw: String = row.get("created_at")?;
+    let updated_raw: String = row.get("updated_at")?;
+    let properties_raw: String = row.get("properties_json")?;
+
+    let id = Uuid::parse_str(&id_raw).map_err(to_sql_decode_error)?;
+    let created_at = parse_datetime(&created_raw).map_err(to_sql_decode_error)?;
+    let updated_at = parse_datetime(&updated_raw).map_err(to_sql_decode_error)?;
+    let properties = serde_json::from_str(&properties_raw).map_err(to_sql_decode_error)?;
+
     Ok(TemporalSource {
-        id: parse_uuid(row.get::<_, String>("id")?)?,
+        id,
+        external_ref: row.get("external_ref")?,
         name: row.get("name")?,
         publisher: row.get("publisher")?,
         authority: SourceAuthority::parse(&row.get::<_, String>("authority")?),
@@ -451,54 +709,37 @@ fn decode_source(row: &Row<'_>) -> anyhow::Result<TemporalSource> {
         locator: row.get("locator")?,
         enabled: row.get("enabled")?,
         read_only: row.get("read_only")?,
-        created_at: parse_datetime(&row.get::<_, String>("created_at")?)?,
-        updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)?,
+        properties,
+        created_at,
+        updated_at,
     })
 }
 
-fn decode_event(row: &Row<'_>) -> anyhow::Result<TemporalEvent> {
+fn decode_event(row: &Row<'_>) -> rusqlite::Result<TemporalEvent> {
     let time_kind: String = row.get("time_kind")?;
-    let time = match time_kind.as_str() {
-        "all_day" => TimeSpec::AllDay {
-            start: parse_date(&required_text(row, "start_date")?)?,
-            end_exclusive: optional_text(row, "end_date_exclusive")?
-                .map(|raw| parse_date(&raw))
-                .transpose()?,
-        },
-        "instant" => TimeSpec::Instant {
-            start_utc: parse_datetime(&required_text(row, "start_utc")?)?,
-            end_utc: optional_text(row, "end_utc")?
-                .map(|raw| parse_datetime(&raw))
-                .transpose()?,
-            source_timezone: row.get("source_timezone")?,
-        },
-        "floating" => TimeSpec::Floating {
-            start: parse_naive_datetime(&required_text(row, "start_local")?)?,
-            end: optional_text(row, "end_local")?
-                .map(|raw| parse_naive_datetime(&raw))
-                .transpose()?,
-        },
-        other => return Err(anyhow!("unknown time kind {other}")),
-    };
+    let time = decode_time(row, &time_kind).map_err(to_sql_decode_error)?;
 
     let status_raw: String = row.get("status")?;
     let status = EventStatus::parse(&status_raw)
-        .ok_or_else(|| anyhow!("unknown event status {status_raw}"))?;
+        .ok_or_else(|| to_sql_decode_error(anyhow!("unknown event status {status_raw}")))?;
 
-    let tags_raw: String = row.get("tags_json")?;
-    let tags: Vec<String> =
-        serde_json::from_str(&tags_raw).context("failed to decode event tags")?;
-
-    let properties_raw: String = row.get("properties_json")?;
-    let properties: Value =
-        serde_json::from_str(&properties_raw).context("failed to decode event properties")?;
+    let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
+    let source_id = row
+        .get::<_, Option<String>>("source_id")?
+        .map(|raw| Uuid::parse_str(&raw))
+        .transpose()
+        .map_err(to_sql_decode_error)?;
 
     Ok(TemporalEvent {
-        id: parse_uuid(row.get::<_, String>("id")?)?,
-        source_id: optional_text(row, "source_id")?
-            .map(parse_uuid)
-            .transpose()?,
+        id,
+        source_id,
         source_record_key: row.get("source_record_key")?,
+        upstream_event_ref: row.get("upstream_event_ref")?,
+        upstream_reconciled_key: row.get("upstream_reconciled_key")?,
+        assertion_refs: decode_string_vec(row, "assertion_refs_json")?,
+        source_refs: decode_string_vec(row, "source_refs_json")?,
+        provenance_refs: decode_string_vec(row, "provenance_refs_json")?,
+        renderability: row.get("renderability")?,
         normalized_title: row.get("normalized_title")?,
         raw_title: row.get("raw_title")?,
         description: row.get("description")?,
@@ -511,11 +752,56 @@ fn decode_event(row: &Row<'_>) -> anyhow::Result<TemporalEvent> {
         importance: row.get("importance")?,
         personal_relevance: row.get("personal_relevance")?,
         time,
-        tags,
-        properties,
-        created_at: parse_datetime(&row.get::<_, String>("created_at")?)?,
-        updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)?,
+        tags: decode_string_vec(row, "tags_json")?,
+        properties: decode_json_value(row, "properties_json")?,
+        created_at: parse_datetime(&row.get::<_, String>("created_at")?)
+            .map_err(to_sql_decode_error)?,
+        updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)
+            .map_err(to_sql_decode_error)?,
     })
+}
+
+fn decode_time(row: &Row<'_>, time_kind: &str) -> anyhow::Result<TimeSpec> {
+    match time_kind {
+        "date_only" => Ok(TimeSpec::DateOnly {
+            date: parse_date(&required_text(row, "start_date")?)?,
+        }),
+        "all_day" => Ok(TimeSpec::AllDay {
+            start: parse_date(&required_text(row, "start_date")?)?,
+            end_exclusive: optional_text(row, "end_date_exclusive")?
+                .map(|raw| parse_date(&raw))
+                .transpose()?,
+        }),
+        "instant" => Ok(TimeSpec::Instant {
+            start_utc: parse_datetime(&required_text(row, "start_utc")?)?,
+            end_utc: optional_text(row, "end_utc")?
+                .map(|raw| parse_datetime(&raw))
+                .transpose()?,
+            source_timezone: row.get("source_timezone")?,
+        }),
+        "floating" => Ok(TimeSpec::Floating {
+            start: parse_naive_datetime(&required_text(row, "start_local")?)?,
+            end: optional_text(row, "end_local")?
+                .map(|raw| parse_naive_datetime(&raw))
+                .transpose()?,
+            source_timezone: row.get("source_timezone")?,
+        }),
+        "month" => {
+            let start = parse_date(&required_text(row, "start_date")?)?;
+            Ok(TimeSpec::Month {
+                year: start.year(),
+                month: start.month(),
+            })
+        }
+        "year" => {
+            let start = parse_date(&required_text(row, "start_date")?)?;
+            Ok(TimeSpec::Year { year: start.year() })
+        }
+        "unknown" => Ok(TimeSpec::Unknown {
+            original_value: row.get("time_original_value")?,
+        }),
+        other => Err(anyhow!("unknown time kind {other}")),
+    }
 }
 
 fn required_text(row: &Row<'_>, column: &str) -> anyhow::Result<String> {
@@ -524,10 +810,6 @@ fn required_text(row: &Row<'_>, column: &str) -> anyhow::Result<String> {
 
 fn optional_text(row: &Row<'_>, column: &str) -> anyhow::Result<Option<String>> {
     Ok(row.get(column)?)
-}
-
-fn parse_uuid(raw: impl AsRef<str>) -> anyhow::Result<Uuid> {
-    Uuid::parse_str(raw.as_ref()).with_context(|| format!("invalid uuid {}", raw.as_ref()))
 }
 
 fn parse_datetime(raw: &str) -> anyhow::Result<DateTime<Utc>> {
@@ -571,6 +853,24 @@ fn default_data_dir() -> anyhow::Result<PathBuf> {
         .join(".ephemeris"))
 }
 
+fn encode_string_vec(values: &[String], label: &str) -> anyhow::Result<String> {
+    serde_json::to_string(values).with_context(|| format!("failed to encode {label}"))
+}
+
+fn decode_string_vec(row: &Row<'_>, column: &str) -> rusqlite::Result<Vec<String>> {
+    let raw: String = row.get(column)?;
+    serde_json::from_str(&raw).map_err(to_sql_decode_error)
+}
+
+fn decode_json_value(row: &Row<'_>, column: &str) -> rusqlite::Result<Value> {
+    let raw: String = row.get(column)?;
+    serde_json::from_str(&raw).map_err(to_sql_decode_error)
+}
+
+fn to_sql_decode_error(error: impl std::error::Error + Send + Sync + 'static) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+}
+
 struct EncodedTime {
     kind: &'static str,
     start_utc: Option<String>,
@@ -580,29 +880,43 @@ struct EncodedTime {
     end_date_exclusive: Option<String>,
     start_local: Option<String>,
     end_local: Option<String>,
+    original_value: Option<String>,
 }
 
 impl EncodedTime {
-    fn from_time_spec(time: &TimeSpec) -> Self {
+    fn from_time_spec(time: &TimeSpec) -> anyhow::Result<Self> {
         match time {
+            TimeSpec::DateOnly { date } => Ok(Self {
+                kind: "date_only",
+                start_utc: None,
+                end_utc: None,
+                source_timezone: None,
+                start_date: Some(date.format("%Y-%m-%d").to_string()),
+                end_date_exclusive: None,
+                start_local: None,
+                end_local: None,
+                original_value: None,
+            }),
             TimeSpec::AllDay {
                 start,
                 end_exclusive,
-            } => Self {
+            } => Ok(Self {
                 kind: "all_day",
                 start_utc: None,
                 end_utc: None,
                 source_timezone: None,
                 start_date: Some(start.format("%Y-%m-%d").to_string()),
-                end_date_exclusive: end_exclusive.map(|value| value.format("%Y-%m-%d").to_string()),
+                end_date_exclusive: end_exclusive
+                    .map(|value| value.format("%Y-%m-%d").to_string()),
                 start_local: None,
                 end_local: None,
-            },
+                original_value: None,
+            }),
             TimeSpec::Instant {
                 start_utc,
                 end_utc,
                 source_timezone,
-            } => Self {
+            } => Ok(Self {
                 kind: "instant",
                 start_utc: Some(start_utc.to_rfc3339()),
                 end_utc: end_utc.map(|value| value.to_rfc3339()),
@@ -611,18 +925,90 @@ impl EncodedTime {
                 end_date_exclusive: None,
                 start_local: None,
                 end_local: None,
-            },
-            TimeSpec::Floating { start, end } => Self {
+                original_value: None,
+            }),
+            TimeSpec::Floating {
+                start,
+                end,
+                source_timezone,
+            } => Ok(Self {
                 kind: "floating",
+                start_utc: None,
+                end_utc: None,
+                source_timezone: source_timezone.clone(),
+                start_date: None,
+                end_date_exclusive: None,
+                start_local: Some(format_naive(*start)),
+                end_local: end.map(format_naive),
+                original_value: None,
+            }),
+            TimeSpec::Month { year, month } => {
+                let start = NaiveDate::from_ymd_opt(*year, *month, 1)
+                    .ok_or_else(|| anyhow!("invalid month precision value {year}-{month:02}"))?;
+                let end = next_month(start)?;
+                Ok(Self {
+                    kind: "month",
+                    start_utc: None,
+                    end_utc: None,
+                    source_timezone: None,
+                    start_date: Some(start.format("%Y-%m-%d").to_string()),
+                    end_date_exclusive: Some(end.format("%Y-%m-%d").to_string()),
+                    start_local: None,
+                    end_local: None,
+                    original_value: Some(format!("{year}-{month:02}")),
+                })
+            }
+            TimeSpec::Year { year } => {
+                let start = NaiveDate::from_ymd_opt(*year, 1, 1)
+                    .ok_or_else(|| anyhow!("invalid year precision value {year}"))?;
+                let end = NaiveDate::from_ymd_opt(
+                    year.checked_add(1)
+                        .ok_or_else(|| anyhow!("year precision overflow for {year}"))?,
+                    1,
+                    1,
+                )
+                .ok_or_else(|| anyhow!("invalid end year for {year}"))?;
+                Ok(Self {
+                    kind: "year",
+                    start_utc: None,
+                    end_utc: None,
+                    source_timezone: None,
+                    start_date: Some(start.format("%Y-%m-%d").to_string()),
+                    end_date_exclusive: Some(end.format("%Y-%m-%d").to_string()),
+                    start_local: None,
+                    end_local: None,
+                    original_value: Some(year.to_string()),
+                })
+            }
+            TimeSpec::Unknown { original_value } => Ok(Self {
+                kind: "unknown",
                 start_utc: None,
                 end_utc: None,
                 source_timezone: None,
                 start_date: None,
                 end_date_exclusive: None,
-                start_local: Some(format_naive(*start)),
-                end_local: end.map(format_naive),
-            },
+                start_local: None,
+                end_local: None,
+                original_value: original_value.clone(),
+            }),
         }
+    }
+}
+
+fn next_month(start: NaiveDate) -> anyhow::Result<NaiveDate> {
+    if start.month() == 12 {
+        NaiveDate::from_ymd_opt(
+            start
+                .year()
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("month precision year overflow"))?,
+            1,
+            1,
+        )
+        .ok_or_else(|| anyhow!("invalid next month"))
+    } else {
+        NaiveDate::from_ymd_opt(start.year(), start.month() + 1, 1)
+            .ok_or_else(|| anyhow!("invalid next month"))
     }
 }
 
@@ -631,32 +1017,28 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::domain::{SourceAuthority, SourceKind};
 
     #[test]
-    fn schema_bootstraps_at_version_one() {
+    fn schema_bootstraps_at_version_two() {
         let store = TemporalStore::open_in_memory().expect("store");
-        assert_eq!(store.schema_version().expect("version"), 1);
+        assert_eq!(store.schema_version().expect("version"), 2);
     }
 
     #[test]
-    fn window_query_preserves_three_time_kinds() {
+    fn window_query_preserves_precise_time_kinds() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let source =
-            TemporalSource::new("Test source", SourceKind::Taria, SourceAuthority::Official);
+        let source = TemporalSource::new(
+            "Test source",
+            SourceKind::Taria,
+            SourceAuthority::Official,
+        );
         store.upsert_source(&source).expect("source");
 
         let day = NaiveDate::from_ymd_opt(2026, 10, 4).expect("date");
 
-        let mut all_day = TemporalEvent::new(
-            "All day",
-            TimeSpec::AllDay {
-                start: day,
-                end_exclusive: None,
-            },
-        );
-        all_day.source_id = Some(source.id);
-        store.upsert_event(&all_day).expect("all-day event");
+        let mut date_only = TemporalEvent::new("Date only", TimeSpec::DateOnly { date: day });
+        date_only.source_id = Some(source.id);
+        store.upsert_event(&date_only).expect("date-only event");
 
         let instant_start = DateTime::parse_from_rfc3339("2026-10-05T01:00:00Z")
             .expect("timestamp")
@@ -672,14 +1054,17 @@ mod tests {
         instant.source_id = Some(source.id);
         store.upsert_event(&instant).expect("instant event");
 
-        let floating_start =
-            NaiveDateTime::parse_from_str("2026-10-04T15:00:00", "%Y-%m-%dT%H:%M:%S")
-                .expect("floating");
+        let floating_start = NaiveDateTime::parse_from_str(
+            "2026-10-04T15:00:00",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        .expect("floating");
         let mut floating = TemporalEvent::new(
             "Floating",
             TimeSpec::Floating {
                 start: floating_start,
                 end: None,
+                source_timezone: None,
             },
         );
         floating.source_id = Some(source.id);
@@ -687,40 +1072,99 @@ mod tests {
 
         let next_day = day.succ_opt().expect("next day");
         let events = store
-            .events_in_window(day, next_day, chrono_tz::America::Mexico_City)
+            .events_in_window(
+                day,
+                next_day,
+                chrono_tz::America::Mexico_City,
+                false,
+            )
             .expect("window query");
 
         assert_eq!(events.len(), 3);
     }
 
     #[test]
+    fn imprecise_month_and_year_are_not_forced_into_day_query() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let month = TemporalEvent::new(
+            "Month event",
+            TimeSpec::Month {
+                year: 2027,
+                month: 11,
+            },
+        );
+        let year = TemporalEvent::new("Year event", TimeSpec::Year { year: 2027 });
+        store.upsert_event(&month).expect("month");
+        store.upsert_event(&year).expect("year");
+
+        let day = NaiveDate::from_ymd_opt(2027, 11, 15).expect("day");
+        let precise = store
+            .events_in_window(day, day.succ_opt().expect("next"), chrono_tz::UTC, false)
+            .expect("precise query");
+        assert!(precise.is_empty());
+
+        let month_start = NaiveDate::from_ymd_opt(2027, 11, 1).expect("start");
+        let month_end = NaiveDate::from_ymd_opt(2027, 12, 1).expect("end");
+        let broad = store
+            .events_in_window(month_start, month_end, chrono_tz::UTC, true)
+            .expect("broad query");
+        assert_eq!(broad.len(), 2);
+    }
+
+    #[test]
     fn source_record_identity_is_unique_per_source() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let source = TemporalSource::new("Test source", SourceKind::Ics, SourceAuthority::Official);
+        let source = TemporalSource::new(
+            "Test source",
+            SourceKind::Ics,
+            SourceAuthority::Official,
+        );
         store.upsert_source(&source).expect("source");
 
         let day = NaiveDate::from_ymd_opt(2026, 10, 4).expect("date");
-        let mut first = TemporalEvent::new(
-            "One",
-            TimeSpec::AllDay {
-                start: day,
-                end_exclusive: None,
-            },
-        );
+        let mut first = TemporalEvent::new("One", TimeSpec::DateOnly { date: day });
         first.source_id = Some(source.id);
         first.source_record_key = Some("uid-1".to_string());
         store.upsert_event(&first).expect("first");
 
-        let mut second = TemporalEvent::new(
-            "Two",
-            TimeSpec::AllDay {
-                start: day,
-                end_exclusive: None,
-            },
-        );
+        let mut second = TemporalEvent::new("Two", TimeSpec::DateOnly { date: day });
         second.source_id = Some(source.id);
         second.source_record_key = Some("uid-1".to_string());
 
         assert!(store.upsert_event(&second).is_err());
+    }
+
+    #[test]
+    fn source_external_ref_roundtrips() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let mut source = TemporalSource::new(
+            "Taria projection",
+            SourceKind::Taria,
+            SourceAuthority::Derived,
+        );
+        source.external_ref = Some("projection:fixture".to_string());
+        store.upsert_source(&source).expect("source");
+
+        let loaded = store
+            .source_by_external_ref("projection:fixture")
+            .expect("query")
+            .expect("found");
+        assert_eq!(loaded.id, source.id);
+        assert_eq!(loaded.external_ref.as_deref(), Some("projection:fixture"));
+    }
+
+    #[test]
+    fn unknown_time_is_retained_as_unplaced() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let event = TemporalEvent::new(
+            "Blocked",
+            TimeSpec::Unknown {
+                original_value: None,
+            },
+        );
+        store.upsert_event(&event).expect("event");
+
+        assert_eq!(store.unplaced_event_count().expect("count"), 1);
+        assert_eq!(store.unplaced_events().expect("events").len(), 1);
     }
 }
