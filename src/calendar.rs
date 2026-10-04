@@ -207,17 +207,17 @@ pub fn calendar_title(view: CalendarView, focus: NaiveDate, monday_start: bool) 
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     #[test]
     fn calendar_layout_roundtrips_table_name() {
-        assert_eq!(CalendarLayout::parse(CalendarLayout::Table.as_str()), CalendarLayout::Table);
+        assert_eq!(
+            CalendarLayout::parse(CalendarLayout::Table.as_str()),
+            CalendarLayout::Table
+        );
     }
-
-
-    #![allow(clippy::unwrap_used)]
-
-    use super::*;
 
     #[test]
     fn shift_focus_week_moves_by_seven_days() {
