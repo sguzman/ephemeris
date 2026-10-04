@@ -761,6 +761,105 @@ mod tests {
     }
 
     #[test]
+    fn preserves_multi_day_date_range_without_all_day_coercion() {
+        let value = json!({
+            "kind": "date",
+            "precision": "date",
+            "start": "2026-07-11",
+            "end": "2026-07-13",
+            "end_semantics": "exclusive",
+            "source_end_inclusive": "2026-07-12"
+        });
+        let parsed = parse_temporal_value(Some(&value)).expect("parse");
+
+        match parsed {
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive,
+            } => {
+                assert_eq!(
+                    start,
+                    NaiveDate::from_ymd_opt(2026, 7, 11).expect("start")
+                );
+                assert_eq!(
+                    end_exclusive,
+                    Some(NaiveDate::from_ymd_opt(2026, 7, 13).expect("end"))
+                );
+            }
+            other => panic!("expected date-only range, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn imports_top_level_blocked_events_without_dropping_them() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let fixture = r#"
+        {
+          "schema_version": 1,
+          "projection_ref": "projection:blocked-fixture",
+          "events": [],
+          "blocked_events": [
+            {
+              "reconciled_event_key": "reconciled-event:fixture-blocked",
+              "event_ref": "event:fixture:blocked",
+              "renderability": "blocked-temporal-conflict",
+              "blockers": ["temporal-conflict"]
+            }
+          ]
+        }
+        "#;
+
+        let report =
+            import_reconciled_event_set_json(&store, fixture, None).expect("blocked import");
+
+        assert_eq!(report.total_events, 1);
+        assert_eq!(report.created, 1);
+        assert_eq!(report.blocked_or_undated, 1);
+        assert_eq!(report.unplaced, 1);
+
+        let unplaced = store.unplaced_events().expect("unplaced");
+        assert_eq!(unplaced.len(), 1);
+        assert_eq!(
+            unplaced[0].upstream_event_ref.as_deref(),
+            Some("event:fixture:blocked")
+        );
+        assert_eq!(
+            unplaced[0].renderability.as_deref(),
+            Some("blocked-temporal-conflict")
+        );
+    }
+
+    #[test]
+    fn missing_records_are_retained_instead_of_assumed_deleted() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let first = import_reconciled_event_set_json(&store, FIXTURE, None).expect("first");
+        assert_eq!(first.created, 4);
+
+        let root: Value = serde_json::from_str(FIXTURE).expect("fixture json");
+        let mut object = root.as_object().expect("object").clone();
+        object.insert(
+            "events".to_string(),
+            Value::Array(
+                object
+                    .get("events")
+                    .and_then(Value::as_array)
+                    .expect("events")
+                    .iter()
+                    .take(1)
+                    .cloned()
+                    .collect(),
+            ),
+        );
+        let reduced = Value::Object(object).to_string();
+
+        let second =
+            import_reconciled_event_set_json(&store, &reduced, None).expect("second import");
+        assert_eq!(second.created, 0);
+        assert_eq!(second.retained_missing, 3);
+        assert_eq!(store.event_count().expect("count"), 4);
+    }
+
+    #[test]
     fn parses_offset_datetime_as_instant() {
         let value = json!({
             "kind": "date-time",
