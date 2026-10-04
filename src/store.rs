@@ -482,10 +482,7 @@ impl TemporalStore {
         reconciled_ref: Option<&str>,
         event_ref: Option<&str>,
     ) -> anyhow::Result<Option<TemporalEvent>> {
-        for (kind, value) in [
-            ("reconciled", reconciled_ref),
-            ("event", event_ref),
-        ] {
+        for (kind, value) in [("reconciled", reconciled_ref), ("event", event_ref)] {
             let Some(value) = value else {
                 continue;
             };
