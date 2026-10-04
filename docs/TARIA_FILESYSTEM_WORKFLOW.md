@@ -82,7 +82,8 @@ Detection checks:
 2. the current working directory;
 3. a sibling `../taria` checkout;
 4. a child `./taria` checkout;
-5. the parent directory when it is itself the Taria repo.
+5. the parent directory when it is itself the Taria repo;
+6. `$HOME/Code/Text/taria`.
 
 If a valid Resourcearium release registry is found, Ephemeris stores the normalized canonical path automatically.
 
@@ -107,9 +108,11 @@ configured local Resourcearium root
     -> selected channel
     -> current immutable release manifest
     -> resolve referenced local artifacts
-    -> verify declared hashes
-    -> import supported post-reconciliation payloads
-    -> reconcile into Ephemeris SQLite
+    -> verify declared integrity metadata
+    -> import post-reconciliation payloads
+    -> reconcile canonical event identity globally
+    -> persist CalendarSets/memberships/releases
+    -> Ephemeris SQLite
     -> reload the current view
 ```
 
@@ -117,7 +120,10 @@ There is no network step.
 
 ## Current local release support
 
-The filesystem updater currently supports the `bootstrap-partial` `shards[]` packaging path.
+The filesystem updater supports both release-v1 packaging paths:
+
+- `bootstrap-partial -> shards[]`
+- `production-partial / production-complete -> bundle_artifacts[]`
 
 Accepted shard payloads:
 
@@ -132,59 +138,77 @@ Ephemeris:
 
 1. resolves the path relative to Resourcearium root;
 2. rejects paths that escape the Resourcearium tree;
-3. verifies SHA-256;
+3. verifies the Resourcearium-declared `content_fingerprint.value`;
 4. verifies object kind `CompactReconciledEventIndex`;
 5. imports its post-reconciliation events;
 6. retains stable reconciled/event/assertion/provenance identity;
 7. reconciles repeat imports against the existing source.
 
-This currently makes the recovered U.S. Politics and U.S. Holidays bootstrap-r3 shards directly consumable from disk.
+This consumes the recovered U.S. Politics and U.S. Holidays bootstrap-r4 shards directly from disk.
 
 ### ReconciledProjectionEventSet
 
-The updater also recognizes a bootstrap shard that exposes a reconciled-event-set path and declared hash.
+The updater also recognizes a bootstrap shard that exposes a reconciled-event-set path and declared content fingerprint.
 
 The existing direct Taria reconciled-event-set adapter is reused.
 
+Bootstrap r4 uses this path for:
+
+- 2027 European national elections;
+- 2026 U.S. pro sports excluding hockey.
+
+Therefore **all four populated r4 bootstrap shards are now directly consumable**.
+
 ## Unsupported populated shards
 
-A populated release shard that does not expose an accepted post-reconciliation payload is **not silently ignored**.
+A populated release shard/artifact that does not expose an accepted post-reconciliation payload is **not silently ignored**.
 
-It is reported as skipped.
+It is reported as skipped or rejected according to the release contract.
 
 Ephemeris does not:
 
 - reconstruct Resourcearium reconciliation from normalized snapshots;
 - invent event payload from CalendarSet membership;
 - fall back to ICS;
-- pretend a skipped shard was successfully adopted.
+- pretend a missing payload was successfully adopted.
 
-For bootstrap r3, the Elections and Sports specimen shards are currently reported this way until Resourcearium exposes their rich reconciled payloads.
+Bootstrap r4 currently exposes accepted rich payloads for every populated shard, so the current bootstrap channel has no such payload gap.
 
 ## Production releases
 
-Production `bundle_artifacts[]` are recognized by the local release resolver.
+Production `bundle_artifacts[]` are now supported by the local release resolver.
 
-They are deliberately not imported by this first filesystem-update slice yet.
+Production integrity differs from bootstrap:
 
-Reason:
+- reconciled event set -> raw file SHA-256;
+- CalendarSet -> raw file SHA-256.
 
-canonical domain bundles overlap. Importing each production projection independently through the current source-scoped adapter could duplicate a canonical event across several bundles.
+Overlapping domain bundles are safe because Ephemeris now retains many upstream identity aliases per canonical event and many source/import-record mappings per canonical event.
 
-Production adoption therefore waits for the release-level cross-bundle identity/membership layer.
+Conceptually:
 
-The button reports this limitation instead of creating duplicate data.
+```text
+Politics projection ----\
+Economics projection ----> one local TemporalEvent
+Finance projection ------/          |
+                                    +-> several CalendarSet memberships
+```
+
+A regression test covers a shared event appearing in Politics and Finance: it remains one canonical local event with two memberships.
+
+The live Resourcearium `production` channel is currently unset, so production adoption is implemented/tested but not yet exercised against a real production release.
 
 ## Integrity
 
-Every payload consumed through the release updater must have a declared hash.
+Every payload consumed through the release updater must have declared integrity metadata. Bootstrap and production intentionally use different integrity conventions.
 
 Current behavior:
 
 - missing payload file -> update fails;
 - path escape -> update fails;
-- missing declared hash -> update fails;
-- hash mismatch -> update fails;
+- missing declared integrity metadata -> update fails;
+- bootstrap content-fingerprint mismatch -> update fails;
+- production file-SHA mismatch -> update fails;
 - unsupported payload kind -> update fails or is reported unsupported according to release position;
 - supported populated shard without payload -> shard is explicitly reported skipped.
 
@@ -261,13 +285,12 @@ A network outage must not prevent Ephemeris from reading already-present Taria a
 
 ## Next integration steps
 
-The filesystem transport problem is now solved at the baseline level.
+The filesystem transport and core release-adoption semantics are now implemented.
 
-The next release-adoption work is semantic rather than transport-related:
+The next work is:
 
-1. persist release metadata canonically in SQLite;
-2. persist CalendarSet membership independently from event identity;
-3. implement cross-bundle event deduplication for production `bundle_artifacts[]`;
-4. adopt production partial/complete releases through the same button;
-5. expose release coverage/pending/gap posture in the UI;
-6. eventually make the explicit update operation asynchronous so large releases never stall the frame loop.
+1. expose current-release bundle and projected-calendar membership to programmable queries/views;
+2. expose release coverage/pending/gap posture in the UI;
+3. make multi-artifact release adoption atomic as one operation;
+4. make the explicit update operation asynchronous so large releases never stall the frame loop;
+5. add release-to-release diff/history inspection.
