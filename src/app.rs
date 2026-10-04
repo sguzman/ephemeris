@@ -625,6 +625,7 @@ impl EphemerisApp {
 
         ui.strong("Sort rules");
         let mut remove_sort = None;
+        let can_remove_sort = self.state.sort_rules.len() > 1;
         for (index, rule) in self.state.sort_rules.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 egui::ComboBox::from_id_salt(("presentation.sort.field", index))
@@ -649,7 +650,7 @@ impl EphemerisApp {
                                 .changed();
                         }
                     });
-                if self.state.sort_rules.len() > 1 && ui.small_button("×").clicked() {
+                if can_remove_sort && ui.small_button("×").clicked() {
                     remove_sort = Some(index);
                 }
             });
@@ -936,6 +937,9 @@ impl eframe::App for EphemerisApp {
                                 timezone,
                                 monday_start: self.state.week_start_monday,
                                 selected: self.state.selected_event_id,
+                                group_by: self.state.group_by,
+                                sort_rules: &self.state.sort_rules,
+                                color_by: self.state.color_by,
                             },
                         );
                     });
@@ -962,67 +966,6 @@ enum CalendarAction {
     OpenMonth(NaiveDate),
 }
 
-fn event_matches_query(event: &TemporalEvent, state: &PersistedUiState) -> bool {
-    if event
-        .source_id
-        .is_some_and(|source_id| state.hidden_source_ids.contains(&source_id))
-    {
-        return false;
-    }
-
-    if let Some(domain) = state.domain_filter.as_deref()
-        && event.domain.as_deref() != Some(domain)
-    {
-        return false;
-    }
-
-    if let Some(jurisdiction) = state.jurisdiction_filter.as_deref()
-        && event.jurisdiction.as_deref() != Some(jurisdiction)
-    {
-        return false;
-    }
-
-    if let Some(status) = state.status_filter
-        && event.status != status
-    {
-        return false;
-    }
-
-    let query = state.search_query.trim().to_ascii_lowercase();
-    if query.is_empty() {
-        return true;
-    }
-
-    let matches_text = [
-        Some(event.normalized_title.as_str()),
-        event.raw_title.as_deref(),
-        event.description.as_deref(),
-        event.event_type.as_deref(),
-        event.domain.as_deref(),
-        event.jurisdiction.as_deref(),
-        event.institution.as_deref(),
-        event.upstream_event_ref.as_deref(),
-        event.upstream_reconciled_key.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|value| value.to_ascii_lowercase().contains(&query));
-
-    matches_text
-        || event
-            .tags
-            .iter()
-            .chain(event.source_refs.iter())
-            .chain(event.assertion_refs.iter())
-            .chain(event.provenance_refs.iter())
-            .any(|value| value.to_ascii_lowercase().contains(&query))
-        || event
-            .properties
-            .to_string()
-            .to_ascii_lowercase()
-            .contains(&query)
-}
-
 struct CalendarRenderContext<'a> {
     events: &'a [TemporalEvent],
     view: CalendarView,
@@ -1031,6 +974,9 @@ struct CalendarRenderContext<'a> {
     timezone: Tz,
     monday_start: bool,
     selected: Option<Uuid>,
+    group_by: GroupBy,
+    sort_rules: &'a [SortRule],
+    color_by: ColorBy,
 }
 
 fn render_calendar(
@@ -1045,6 +991,9 @@ fn render_calendar(
         timezone,
         monday_start,
         selected,
+        group_by,
+        sort_rules,
+        color_by,
     } = context;
 
     if events.is_empty() {
@@ -1056,7 +1005,15 @@ fn render_calendar(
     }
 
     if layout == CalendarLayout::Agenda {
-        return render_agenda(ui, events, timezone, selected);
+        return render_agenda(
+            ui,
+            events,
+            timezone,
+            selected,
+            group_by,
+            sort_rules,
+            color_by,
+        );
     }
 
     match view {
