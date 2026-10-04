@@ -216,12 +216,10 @@ mod tests {
             calendar_layout: CalendarLayout::Agenda,
             display_timezone: "UTC".to_string(),
             domain_filter: Some("elections".to_string()),
-            query_expression: Some(QueryExpr::Predicate(
-                crate::query::QueryPredicate::Exists {
-                    field: crate::query::PresenceField::Institution,
-                    exists: true,
-                },
-            )),
+            query_expression: Some(QueryExpr::Predicate(crate::query::QueryPredicate::Exists {
+                field: crate::query::PresenceField::Institution,
+                exists: true,
+            })),
             group_by: GroupBy::Jurisdiction,
             color_by: ColorBy::EventType,
             ..PersistedUiState::default()
@@ -246,12 +244,10 @@ mod tests {
             domain_filter: Some("elections".to_string()),
             calendar_view: CalendarView::Year,
             calendar_layout: CalendarLayout::Agenda,
-            query_expression: Some(QueryExpr::Predicate(
-                crate::query::QueryPredicate::Exists {
-                    field: crate::query::PresenceField::Domain,
-                    exists: true,
-                },
-            )),
+            query_expression: Some(QueryExpr::Predicate(crate::query::QueryPredicate::Exists {
+                field: crate::query::PresenceField::Domain,
+                exists: true,
+            })),
             group_by: GroupBy::Domain,
             color_by: ColorBy::Jurisdiction,
             ..PersistedUiState::default()
