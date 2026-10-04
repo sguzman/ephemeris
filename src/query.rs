@@ -1,10 +1,36 @@
 use std::collections::BTreeSet;
 
+use chrono::{Datelike, NaiveDate, NaiveTime, Utc};
+use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::calendar::{CalendarLayout, CalendarView};
-use crate::domain::{EventStatus, TemporalEvent};
+use crate::domain::{EventStatus, TemporalEvent, TimeSpec};
+
+#[derive(Debug, Clone, Copy)]
+pub struct QueryContext {
+    pub display_timezone: Tz,
+    pub today: NaiveDate,
+}
+
+impl QueryContext {
+    pub fn new(display_timezone: Tz, today: NaiveDate) -> Self {
+        Self {
+            display_timezone,
+            today,
+        }
+    }
+
+    pub fn for_timezone(display_timezone: Tz) -> Self {
+        Self {
+            display_timezone,
+            today: Utc::now()
+                .with_timezone(&display_timezone)
+                .date_naive(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventQuery {
@@ -29,7 +55,7 @@ impl EventQuery {
             && self.expression.is_none()
     }
 
-    pub fn matches(&self, event: &TemporalEvent) -> bool {
+    pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
         if let Some(domain) = self.domain.as_deref()
             && event.domain.as_deref() != Some(domain)
         {
@@ -82,7 +108,7 @@ impl EventQuery {
 
         self.expression
             .as_ref()
-            .is_none_or(|expression| expression.matches(event))
+            .is_none_or(|expression| expression.matches(event, context))
     }
 }
 
@@ -96,16 +122,16 @@ pub enum QueryExpr {
 }
 
 impl QueryExpr {
-    pub fn matches(&self, event: &TemporalEvent) -> bool {
+    pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
         match self {
             Self::All(expressions) => expressions
                 .iter()
-                .all(|expression| expression.matches(event)),
+                .all(|expression| expression.matches(event, context)),
             Self::Any(expressions) => expressions
                 .iter()
-                .any(|expression| expression.matches(event)),
-            Self::Not(expression) => !expression.matches(event),
-            Self::Predicate(predicate) => predicate.matches(event),
+                .any(|expression| expression.matches(event, context)),
+            Self::Not(expression) => !expression.matches(event, context),
+            Self::Predicate(predicate) => predicate.matches(event, context),
         }
     }
 }
@@ -138,10 +164,19 @@ pub enum QueryPredicate {
         field: PresenceField,
         exists: bool,
     },
+    TemporalKindAnyOf {
+        values: Vec<TemporalKind>,
+    },
+    DateOverlaps {
+        start: Option<NaiveDate>,
+        end_exclusive: Option<NaiveDate>,
+        #[serde(default)]
+        include_imprecise: bool,
+    },
 }
 
 impl QueryPredicate {
-    pub fn matches(&self, event: &TemporalEvent) -> bool {
+    pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
         match self {
             Self::Text {
                 field,
@@ -178,6 +213,69 @@ impl QueryPredicate {
             } => integer_value(event, *field)
                 .is_some_and(|candidate| integer_matches(candidate, *value, *operator)),
             Self::Exists { field, exists } => field_exists(event, *field) == *exists,
+            Self::TemporalKindAnyOf { values } => values.contains(&TemporalKind::of(&event.time)),
+            Self::DateOverlaps {
+                start,
+                end_exclusive,
+                include_imprecise,
+            } => event_date_span(
+                &event.time,
+                context.display_timezone,
+                *include_imprecise,
+            )
+            .is_some_and(|(event_start, event_end_exclusive)| {
+                start.is_none_or(|query_start| event_end_exclusive > query_start)
+                    && end_exclusive
+                        .is_none_or(|query_end_exclusive| event_start < query_end_exclusive)
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemporalKind {
+    DateOnly,
+    AllDay,
+    Instant,
+    Floating,
+    Month,
+    Year,
+    Unknown,
+}
+
+impl TemporalKind {
+    pub const ALL: [Self; 7] = [
+        Self::DateOnly,
+        Self::AllDay,
+        Self::Instant,
+        Self::Floating,
+        Self::Month,
+        Self::Year,
+        Self::Unknown,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::DateOnly => "Date only",
+            Self::AllDay => "All day",
+            Self::Instant => "Exact instant",
+            Self::Floating => "Floating / local time",
+            Self::Month => "Month precision",
+            Self::Year => "Year precision",
+            Self::Unknown => "Unresolved",
+        }
+    }
+
+    pub const fn of(time: &TimeSpec) -> Self {
+        match time {
+            TimeSpec::DateOnly { .. } => Self::DateOnly,
+            TimeSpec::AllDay { .. } => Self::AllDay,
+            TimeSpec::Instant { .. } => Self::Instant,
+            TimeSpec::Floating { .. } => Self::Floating,
+            TimeSpec::Month { .. } => Self::Month,
+            TimeSpec::Year { .. } => Self::Year,
+            TimeSpec::Unknown { .. } => Self::Unknown,
         }
     }
 }
@@ -465,6 +563,81 @@ fn integer_matches(candidate: i32, expected: i32, operator: IntegerOperator) -> 
     }
 }
 
+fn event_date_span(
+    time: &TimeSpec,
+    timezone: Tz,
+    include_imprecise: bool,
+) -> Option<(NaiveDate, NaiveDate)> {
+    match time {
+        TimeSpec::DateOnly {
+            start,
+            end_exclusive,
+        }
+        | TimeSpec::AllDay {
+            start,
+            end_exclusive,
+        } => Some((
+            *start,
+            end_exclusive.unwrap_or_else(|| start.succ_opt().unwrap_or(*start)),
+        )),
+        TimeSpec::Instant {
+            start_utc,
+            end_utc,
+            ..
+        } => {
+            let start = start_utc.with_timezone(&timezone);
+            let end_exclusive = end_utc
+                .map(|end| {
+                    let end = end.with_timezone(&timezone);
+                    if end.time() == NaiveTime::default() {
+                        end.date_naive()
+                    } else {
+                        end.date_naive()
+                            .succ_opt()
+                            .unwrap_or_else(|| end.date_naive())
+                    }
+                })
+                .unwrap_or_else(|| {
+                    start
+                        .date_naive()
+                        .succ_opt()
+                        .unwrap_or_else(|| start.date_naive())
+                });
+            Some((start.date_naive(), end_exclusive))
+        }
+        TimeSpec::Floating { start, end, .. } => {
+            let end_exclusive = end
+                .map(|end| {
+                    if end.time() == NaiveTime::default() {
+                        end.date()
+                    } else {
+                        end.date().succ_opt().unwrap_or_else(|| end.date())
+                    }
+                })
+                .unwrap_or_else(|| start.date().succ_opt().unwrap_or_else(|| start.date()));
+            Some((start.date(), end_exclusive))
+        }
+        TimeSpec::Month { year, month } if include_imprecise => {
+            let start = NaiveDate::from_ymd_opt(*year, *month, 1)?;
+            Some((start, next_month(start)?))
+        }
+        TimeSpec::Year { year } if include_imprecise => {
+            let start = NaiveDate::from_ymd_opt(*year, 1, 1)?;
+            let end = NaiveDate::from_ymd_opt(year.checked_add(1)?, 1, 1)?;
+            Some((start, end))
+        }
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => None,
+    }
+}
+
+fn next_month(start: NaiveDate) -> Option<NaiveDate> {
+    if start.month() == 12 {
+        NaiveDate::from_ymd_opt(start.year().checked_add(1)?, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(start.year(), start.month() + 1, 1)
+    }
+}
+
 fn field_exists(event: &TemporalEvent, field: PresenceField) -> bool {
     match field {
         PresenceField::Source => event.source_id.is_some() || !event.source_refs.is_empty(),
@@ -681,6 +854,13 @@ mod tests {
     use super::*;
     use crate::domain::{TemporalEvent, TimeSpec};
 
+    fn test_context() -> QueryContext {
+        QueryContext::new(
+            chrono_tz::America::Mexico_City,
+            NaiveDate::from_ymd_opt(2026, 10, 4).expect("today"),
+        )
+    }
+
     fn event() -> TemporalEvent {
         let mut event = TemporalEvent::new(
             "California General Election",
@@ -726,7 +906,7 @@ mod tests {
             expression: None,
         };
 
-        assert!(query.matches(&event()));
+        assert!(query.matches(&event(), &test_context()));
     }
 
     #[test]
@@ -736,7 +916,7 @@ mod tests {
             ..EventQuery::default()
         };
 
-        assert!(!query.matches(&event()));
+        assert!(!query.matches(&event(), &test_context()));
     }
 
     #[test]
@@ -771,7 +951,7 @@ mod tests {
             ..EventQuery::default()
         };
 
-        assert!(query.matches(&event()));
+        assert!(query.matches(&event(), &test_context()));
     }
 
     #[test]
@@ -786,7 +966,7 @@ mod tests {
             ..EventQuery::default()
         };
 
-        assert!(!query.matches(&event()));
+        assert!(!query.matches(&event(), &test_context()));
     }
 
     #[test]
@@ -812,7 +992,84 @@ mod tests {
             ..EventQuery::default()
         };
 
-        assert!(query.matches(&event()));
+        assert!(query.matches(&event(), &test_context()));
+    }
+
+    #[test]
+    fn temporal_kind_predicate_preserves_precision_classes() {
+        let query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::TemporalKindAnyOf {
+                values: vec![TemporalKind::DateOnly],
+            })),
+            ..EventQuery::default()
+        };
+
+        assert!(query.matches(&event(), &test_context()));
+
+        let mut month_event = event();
+        month_event.time = TimeSpec::Month {
+            year: 2026,
+            month: 11,
+        };
+        assert!(!query.matches(&month_event, &test_context()));
+    }
+
+    #[test]
+    fn date_overlap_is_timezone_aware_for_exact_instants() {
+        let instant = chrono::DateTime::parse_from_rfc3339("2026-10-05T01:00:00Z")
+            .expect("instant")
+            .with_timezone(&Utc);
+        let mut event = event();
+        event.time = TimeSpec::Instant {
+            start_utc: instant,
+            end_utc: None,
+            source_timezone: Some("UTC".to_string()),
+        };
+
+        let query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::DateOverlaps {
+                start: Some(NaiveDate::from_ymd_opt(2026, 10, 4).expect("start")),
+                end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 5).expect("end")),
+                include_imprecise: false,
+            })),
+            ..EventQuery::default()
+        };
+
+        assert!(query.matches(&event, &test_context()));
+        let tokyo = QueryContext::new(
+            chrono_tz::Asia::Tokyo,
+            NaiveDate::from_ymd_opt(2026, 10, 4).expect("today"),
+        );
+        assert!(!query.matches(&event, &tokyo));
+    }
+
+    #[test]
+    fn date_overlap_does_not_invent_day_for_imprecise_events() {
+        let mut month_event = event();
+        month_event.time = TimeSpec::Month {
+            year: 2026,
+            month: 11,
+        };
+
+        let strict = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::DateOverlaps {
+                start: Some(NaiveDate::from_ymd_opt(2026, 11, 1).expect("start")),
+                end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 12, 1).expect("end")),
+                include_imprecise: false,
+            })),
+            ..EventQuery::default()
+        };
+        assert!(!strict.matches(&month_event, &test_context()));
+
+        let inclusive = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::DateOverlaps {
+                start: Some(NaiveDate::from_ymd_opt(2026, 11, 1).expect("start")),
+                end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 12, 1).expect("end")),
+                include_imprecise: true,
+            })),
+            ..EventQuery::default()
+        };
+        assert!(inclusive.matches(&month_event, &test_context()));
     }
 
     #[test]
