@@ -689,8 +689,7 @@ impl EphemerisApp {
                     presentation_changed |= ui.checkbox(&mut overlay.enabled, "").changed();
                     presentation_changed |= ui
                         .add(
-                            egui::TextEdit::singleline(&mut overlay.name)
-                                .hint_text("Overlay name"),
+                            egui::TextEdit::singleline(&mut overlay.name).hint_text("Overlay name"),
                         )
                         .changed();
 
@@ -724,7 +723,11 @@ impl EphemerisApp {
                     {
                         swap_overlay = Some((index, index + 1));
                     }
-                    if ui.small_button("×").on_hover_text("Delete overlay").clicked() {
+                    if ui
+                        .small_button("×")
+                        .on_hover_text("Delete overlay")
+                        .clicked()
+                    {
                         remove_overlay = Some(index);
                     }
                 });
@@ -1185,11 +1188,8 @@ fn render_color_rules_editor(
                 }
             });
 
-            changed |= render_query_expr_editor(
-                ui,
-                &mut rule.when,
-                &format!("{id_prefix}-{}", rule.id),
-            );
+            changed |=
+                render_query_expr_editor(ui, &mut rule.when, &format!("{id_prefix}-{}", rule.id));
         });
     }
 
