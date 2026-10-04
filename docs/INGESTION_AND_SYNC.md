@@ -82,7 +82,7 @@ Ephemeris adopts a frozen release directly from the local Resourcearium filesyst
 
 ### Required release behavior
 
-Ephemeris should:
+Ephemeris now does most of this baseline contract. It must continue to:
 
 - validate release schema/version;
 - validate release ID and status;
@@ -95,7 +95,9 @@ Ephemeris should:
 - persist CalendarSet membership separately from event identity;
 - preserve local annotations;
 - record release metadata;
-- commit atomically.
+- ultimately commit the entire multi-artifact release atomically.
+
+Current payload/source and CalendarSet writes are transactional individually; whole-release rollback is still future work.
 
 ### Accepted release states
 
@@ -153,7 +155,7 @@ The current direct importer accepts ReconciledProjectionEventSet JSON.
 
 That payload contains the rich resolved event state Ephemeris needs.
 
-Bootstrap r3 also pins CompactReconciledEventIndex objects for recovered Politics and Holidays shards. These are explicitly post-reconciliation compact materializations and are an accepted future payload adapter class when the manifest provides path + content hash.
+Bootstrap r4 pins CompactReconciledEventIndex objects for recovered Politics/Holidays and full ReconciledProjectionEventSets for Elections/Sports. Both payload classes are implemented adapters.
 
 CalendarSet alone is not a complete event payload; it references reconciled events and carries membership/navigation metadata.
 
@@ -170,12 +172,12 @@ Taria currently validates:
 
 `shards[]`
 
-Bootstrap r3 is mixed:
+Bootstrap r4 is fully payload-resolvable:
 
-- recovered Politics/Holidays shards provide CompactReconciledEventIndex paths/hashes;
-- European Elections/Sports specimen shards do not provide an explicit rich reconciled payload path.
+- recovered Politics/Holidays shards provide CompactReconciledEventIndex paths/content fingerprints;
+- European Elections/Sports shards provide ReconciledProjectionEventSet paths/content fingerprints.
 
-Therefore the current one-click updater can adopt the recovered Politics/Holidays shards from bootstrap r3, but it cannot yet adopt the full release end-to-end because Elections/Sports still lack accepted reconciled payload paths.
+The one-click updater can therefore consume all populated bootstrap-r4 shards from the local filesystem.
 
 ### Production
 
@@ -189,7 +191,7 @@ Production artifacts expose:
 - rendered JSON directory;
 - rendered ICS directory.
 
-This directly matches the rich payload adapter Ephemeris already has.
+This directly matches the rich payload adapter Ephemeris already has. Production bundle adoption is implemented with global upstream identity aliases so overlapping projections converge on one canonical event while their CalendarSet memberships remain separate.
 
 ## Source definitions
 
@@ -245,20 +247,15 @@ Adapters/source classes may require different policy.
 
 A newer Taria release is a new frozen upstream state.
 
-Ephemeris should eventually retain:
+Ephemeris now retains immutable release identity, channel, manifest hash/path, generated-at time, import/adoption time, production-complete flag, raw manifest, and coverage JSON.
 
-- release ID
-- channel
-- manifest hash
-- generated-at time
-- import time
-- production-complete flag
-- normalized snapshot ref/fingerprint
-- artifact/shard refs
-- coverage summary
-- prior adopted release
+CalendarSets are stored as immutable objects with separate release associations.
 
-This will support release diffing and reproducibility.
+Still future:
+
+- richer normalized snapshot/artifact lineage tables;
+- explicit prior/next release links;
+- release-to-release diff materialization and inspection.
 
 ## Raw source retention
 
