@@ -1030,24 +1030,21 @@ fn render_agenda(
     events: &[TemporalEvent],
     timezone: Tz,
     selected: Option<Uuid>,
+    group_by: GroupBy,
+    sort_rules: &[SortRule],
+    color_by: ColorBy,
 ) -> Option<CalendarAction> {
     let mut ordered = events.iter().collect::<Vec<_>>();
-    ordered.sort_by(|left, right| {
-        agenda_sort_date(left, timezone)
-            .cmp(&agenda_sort_date(right, timezone))
-            .then_with(|| {
-                left.display_time_label(timezone)
-                    .cmp(&right.display_time_label(timezone))
-            })
-            .then_with(|| left.normalized_title.cmp(&right.normalized_title))
-    });
+    ordered.sort_by(|left, right| compare_events(left, right, timezone, sort_rules));
 
     let mut action = None;
     let mut previous_group: Option<String> = None;
 
     for event in ordered {
-        let group = agenda_group_label(event, timezone);
-        if previous_group.as_deref() != Some(group.as_str()) {
+        let group = agenda_group_label(event, timezone, group_by);
+        if group_by != GroupBy::None
+            && previous_group.as_deref() != Some(group.as_str())
+        {
             if previous_group.is_some() {
                 ui.add_space(8.0);
             }
@@ -1066,7 +1063,7 @@ fn render_agenda(
                 .selectable_label(
                     selected == Some(event.id),
                     RichText::new(&event.normalized_title)
-                        .color(status_color(event.status))
+                        .color(event_color(event, color_by))
                         .strong(),
                 )
                 .clicked()
@@ -1089,6 +1086,96 @@ fn render_agenda(
     action
 }
 
+fn sort_events(events: &mut [TemporalEvent], timezone: Tz, sort_rules: &[SortRule]) {
+    events.sort_by(|left, right| compare_events(left, right, timezone, sort_rules));
+}
+
+fn compare_events(
+    left: &TemporalEvent,
+    right: &TemporalEvent,
+    timezone: Tz,
+    sort_rules: &[SortRule],
+) -> std::cmp::Ordering {
+    let effective_rules = if sort_rules.is_empty() {
+        std::slice::from_ref(&DEFAULT_SORT_RULE)
+    } else {
+        sort_rules
+    };
+
+    for rule in effective_rules {
+        let ordering = compare_event_field(left, right, timezone, rule.field);
+        let ordering = match rule.direction {
+            SortDirection::Ascending => ordering,
+            SortDirection::Descending => ordering.reverse(),
+        };
+        if ordering != std::cmp::Ordering::Equal {
+            return ordering;
+        }
+    }
+
+    left.normalized_title
+        .cmp(&right.normalized_title)
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+const DEFAULT_SORT_RULE: SortRule = SortRule {
+    field: SortField::Time,
+    direction: SortDirection::Ascending,
+};
+
+fn compare_event_field(
+    left: &TemporalEvent,
+    right: &TemporalEvent,
+    timezone: Tz,
+    field: SortField,
+) -> std::cmp::Ordering {
+    match field {
+        SortField::Time => agenda_sort_date(left, timezone)
+            .cmp(&agenda_sort_date(right, timezone))
+            .then_with(|| {
+                left.display_time_label(timezone)
+                    .cmp(&right.display_time_label(timezone))
+            }),
+        SortField::Title => left.normalized_title.cmp(&right.normalized_title),
+        SortField::Importance => compare_optional(left.importance, right.importance),
+        SortField::PersonalRelevance => {
+            compare_optional(left.personal_relevance, right.personal_relevance)
+        }
+        SortField::Source => compare_optional(
+            event_source_key(left).as_deref(),
+            event_source_key(right).as_deref(),
+        ),
+        SortField::Domain => compare_optional(left.domain.as_deref(), right.domain.as_deref()),
+        SortField::Jurisdiction => {
+            compare_optional(left.jurisdiction.as_deref(), right.jurisdiction.as_deref())
+        }
+        SortField::Institution => {
+            compare_optional(left.institution.as_deref(), right.institution.as_deref())
+        }
+        SortField::EventType => {
+            compare_optional(left.event_type.as_deref(), right.event_type.as_deref())
+        }
+        SortField::Status => left.status.as_str().cmp(right.status.as_str()),
+    }
+}
+
+fn compare_optional<T: Ord>(left: Option<T>, right: Option<T>) -> std::cmp::Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
+}
+
+fn event_source_key(event: &TemporalEvent) -> Option<String> {
+    event
+        .source_refs
+        .first()
+        .cloned()
+        .or_else(|| event.source_id.map(|id| id.to_string()))
+}
+
 fn agenda_sort_date(event: &TemporalEvent, timezone: Tz) -> Option<NaiveDate> {
     match event.time {
         TimeSpec::Month { year, month } => NaiveDate::from_ymd_opt(year, month, 1),
@@ -1098,7 +1185,42 @@ fn agenda_sort_date(event: &TemporalEvent, timezone: Tz) -> Option<NaiveDate> {
     }
 }
 
-fn agenda_group_label(event: &TemporalEvent, timezone: Tz) -> String {
+fn agenda_group_label(event: &TemporalEvent, timezone: Tz, group_by: GroupBy) -> String {
+    match group_by {
+        GroupBy::None => String::new(),
+        GroupBy::Date => date_group_label(event, timezone),
+        GroupBy::Week => agenda_sort_date(event, timezone)
+            .map(|date| {
+                let week = date.iso_week();
+                format!("{} · week {:02}", week.year(), week.week())
+            })
+            .unwrap_or_else(|| "Unplaced / unresolved".to_string()),
+        GroupBy::Month => agenda_sort_date(event, timezone)
+            .map(|date| date.format("%B %Y").to_string())
+            .unwrap_or_else(|| "Unplaced / unresolved".to_string()),
+        GroupBy::Source => event_source_key(event)
+            .unwrap_or_else(|| "No source".to_string()),
+        GroupBy::Domain => event
+            .domain
+            .clone()
+            .unwrap_or_else(|| "No domain".to_string()),
+        GroupBy::Jurisdiction => event
+            .jurisdiction
+            .clone()
+            .unwrap_or_else(|| "No jurisdiction".to_string()),
+        GroupBy::Institution => event
+            .institution
+            .clone()
+            .unwrap_or_else(|| "No institution".to_string()),
+        GroupBy::EventType => event
+            .event_type
+            .clone()
+            .unwrap_or_else(|| "No event type".to_string()),
+        GroupBy::Status => event.status.as_str().to_string(),
+    }
+}
+
+fn date_group_label(event: &TemporalEvent, timezone: Tz) -> String {
     match event.time {
         TimeSpec::Month { year, month } => NaiveDate::from_ymd_opt(year, month, 1)
             .map(|date| format!("{} · month precision", date.format("%B %Y")))
@@ -1110,6 +1232,46 @@ fn agenda_group_label(event: &TemporalEvent, timezone: Tz) -> String {
             .map(|date| date.format("%A, %B %e, %Y").to_string())
             .unwrap_or_else(|| "Unplaced / unresolved".to_string()),
     }
+}
+
+fn event_color(event: &TemporalEvent, color_by: ColorBy) -> Color32 {
+    match color_by {
+        ColorBy::None => Color32::WHITE,
+        ColorBy::Status => status_color(event.status),
+        ColorBy::Source => category_color(event_source_key(event).as_deref()),
+        ColorBy::Domain => category_color(event.domain.as_deref()),
+        ColorBy::Jurisdiction => category_color(event.jurisdiction.as_deref()),
+        ColorBy::Institution => category_color(event.institution.as_deref()),
+        ColorBy::EventType => category_color(event.event_type.as_deref()),
+    }
+}
+
+fn category_color(value: Option<&str>) -> Color32 {
+    let Some(value) = value else {
+        return Color32::GRAY;
+    };
+
+    const PALETTE: [Color32; 12] = [
+        Color32::from_rgb(116, 185, 255),
+        Color32::from_rgb(162, 155, 254),
+        Color32::from_rgb(85, 239, 196),
+        Color32::from_rgb(255, 234, 167),
+        Color32::from_rgb(250, 177, 160),
+        Color32::from_rgb(129, 236, 236),
+        Color32::from_rgb(223, 230, 233),
+        Color32::from_rgb(253, 121, 168),
+        Color32::from_rgb(255, 118, 117),
+        Color32::from_rgb(178, 190, 195),
+        Color32::from_rgb(129, 236, 236),
+        Color32::from_rgb(214, 162, 232),
+    ];
+
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    PALETTE[(hash as usize) % PALETTE.len()]
 }
 
 fn render_year(
