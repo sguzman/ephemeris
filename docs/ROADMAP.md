@@ -100,7 +100,8 @@ Next Ephemeris implementation:
 
 - TemporalBundleRelease v1 manifest importer
 - support bootstrap `shards[]` and production `bundle_artifacts[]`
-- resolve reconciled event payloads from release artifacts
+- resolve full ReconciledProjectionEventSet and accepted CompactReconciledEventIndex payloads from release artifacts
+- CompactReconciledEventIndex adapter for recovered bootstrap shards
 - CalendarSet membership persistence
 - release/channel/coverage metadata persistence
 - partial/pending/gap-only UI posture
@@ -123,7 +124,7 @@ The consumer contract is frozen in:
 
 - `docs/TARIA_BUNDLE_CONTRACT.md`
 
-Current low-level direct reconciled-event-set import remains valid and will be reused underneath the release importer.
+Current low-level direct reconciled-event-set import remains valid and will be reused underneath the release importer. Bootstrap r3 also requires a CompactReconciledEventIndex adapter for its recovered Politics/Holidays shards.
 
 ## Phase 4 - Calendar views
 
