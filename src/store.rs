@@ -595,7 +595,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
             .transaction()
             .context("failed to start schema migration")?;
         create_schema_v2(&tx)?;
-        create_saved_views_schema(&tx)?;
+        create_saved_views_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -733,7 +733,27 @@ fn create_schema_v2(conn: &Connection) -> anyhow::Result<()> {
     .context("failed to create temporal schema")
 }
 
-fn create_saved_views_schema(conn: &Connection) -> anyhow::Result<()> {
+fn create_saved_views_schema_v3(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE saved_views (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            query_json TEXT NOT NULL,
+            hidden_source_ids_json TEXT NOT NULL DEFAULT '[]',
+            calendar_view_json TEXT NOT NULL,
+            display_timezone TEXT NOT NULL,
+            week_start_monday INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX saved_views_name
+            ON saved_views(name COLLATE NOCASE);
+        "#,
+    )
+    .context("failed to create v3 saved-view schema")
+}
+
+fn create_saved_views_schema_current(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
         CREATE TABLE saved_views (
@@ -761,7 +781,7 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> anyhow::Result<()> {
     let tx = conn
         .transaction()
         .context("failed to start v2 to v3 migration")?;
-    create_saved_views_schema(&tx)?;
+    create_saved_views_schema_v3(&tx)?;
     tx.pragma_update(None, "user_version", 3)
         .context("failed to set schema version 3")?;
     tx.commit()
@@ -1322,6 +1342,37 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
+    #[test]
+    fn schema_v2_migrates_cleanly_to_current_saved_view_shape() {
+        let mut conn = Connection::open_in_memory().expect("connection");
+        configure_connection(&conn).expect("configure");
+        create_schema_v2(&conn).expect("v2 temporal schema");
+        conn.pragma_update(None, "user_version", 2)
+            .expect("set v2");
+
+        migrate(&mut conn).expect("migrate");
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("version");
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let columns = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(saved_views)")
+                .expect("table info");
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .expect("columns")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("column names")
+        };
+
+        assert!(columns.contains(&"calendar_layout".to_string()));
+        assert!(columns.contains(&"group_by_json".to_string()));
+        assert!(columns.contains(&"sort_rules_json".to_string()));
+        assert!(columns.contains(&"color_by_json".to_string()));
+    }
 
     #[test]
     fn schema_bootstraps_at_current_version() {
