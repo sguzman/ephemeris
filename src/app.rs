@@ -19,7 +19,10 @@ use crate::query::{
     matches_composed_or_overlay_with_membership,
 };
 use crate::state::PersistedUiState;
-use crate::store::{TariaProjectedCalendarChoice, TariaReleaseStatusRecord, TemporalStore};
+use crate::store::{
+    TariaProjectedCalendarChoice, TariaReleaseDiff, TariaReleaseHistoryEntry,
+    TariaReleaseStatusRecord, TemporalStore,
+};
 use crate::taria::import_reconciled_event_set_file;
 use crate::taria_workspace::{
     TariaWorkspaceUpdateReport, detect_resourcearium_root, normalize_resourcearium_root,
@@ -34,6 +37,8 @@ pub struct EphemerisApp {
     sources: Vec<TemporalSource>,
     taria_memberships: HashMap<Uuid, EventMembership>,
     taria_release_status: Option<TariaReleaseStatusRecord>,
+    taria_release_history: Vec<TariaReleaseHistoryEntry>,
+    taria_previous_release_diff: Option<TariaReleaseDiff>,
     taria_bundle_refs: Vec<String>,
     taria_calendar_choices: Vec<TariaProjectedCalendarChoice>,
     taria_update_receiver: Option<Receiver<Result<TariaWorkspaceUpdateReport, String>>>,
@@ -73,6 +78,8 @@ impl EphemerisApp {
             sources: Vec::new(),
             taria_memberships: HashMap::new(),
             taria_release_status: None,
+            taria_release_history: Vec::new(),
+            taria_previous_release_diff: None,
             taria_bundle_refs: Vec::new(),
             taria_calendar_choices: Vec::new(),
             taria_update_receiver: None,
@@ -410,6 +417,79 @@ impl EphemerisApp {
                 self.taria_calendar_choices.len()
             ));
         });
+
+        ui.collapsing(
+            format!("Release history ({})", self.taria_release_history.len()),
+            |ui| {
+                if self.taria_release_history.is_empty() {
+                    ui.small("No adopted release history yet.");
+                    return;
+                }
+
+                for release in &self.taria_release_history {
+                    let current = self
+                        .state
+                        .taria_last_release_id
+                        .as_deref()
+                        .is_some_and(|release_id| release_id == release.release_id);
+                    let prefix = if current { "Current · " } else { "" };
+                    ui.small(format!(
+                        "{prefix}{} · {} · {} · {} bundles · {} calendars · {} member events",
+                        release.release_id,
+                        release.channel,
+                        release.status,
+                        release.bundle_count,
+                        release.projected_calendar_count,
+                        release.resolved_member_event_count
+                    ));
+                    ui.small(format!("Adopted {}", release.adopted_at));
+                }
+
+                if let Some(diff) = self.taria_previous_release_diff.as_ref() {
+                    ui.separator();
+                    ui.strong(format!(
+                        "Changes from {}",
+                        diff.from_release_id
+                    ));
+                    ui.small(format!(
+                        "Calendar-member events +{} / -{} · bundles +{} / -{} · projected calendars +{} / -{}",
+                        diff.added_member_event_ids.len(),
+                        diff.removed_member_event_ids.len(),
+                        diff.added_bundle_refs.len(),
+                        diff.removed_bundle_refs.len(),
+                        diff.added_calendar_ids.len(),
+                        diff.removed_calendar_ids.len()
+                    ));
+
+                    if !diff.added_bundle_refs.is_empty() {
+                        ui.small(format!(
+                            "Added bundles: {}",
+                            diff.added_bundle_refs
+                                .iter()
+                                .map(|value| short_bundle_label(value))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
+                    if !diff.removed_bundle_refs.is_empty() {
+                        ui.small(format!(
+                            "Removed bundles: {}",
+                            diff.removed_bundle_refs
+                                .iter()
+                                .map(|value| short_bundle_label(value))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
+                } else if self.taria_release_history.len() > 1 {
+                    ui.small("No previous release on the current channel.");
+                }
+
+                ui.small(
+                    "Event deltas currently mean resolved CalendarSet membership presence. Field-level historical event diffs require snapshot history.",
+                );
+            },
+        );
     }
 
     fn timezone(&self) -> Tz {
@@ -449,6 +529,14 @@ impl EphemerisApp {
         self.taria_release_status = self
             .store
             .taria_release_status(self.state.taria_last_release_id.as_deref())?;
+        self.taria_release_history = self.store.taria_release_history()?;
+        self.taria_previous_release_diff = self
+            .state
+            .taria_last_release_id
+            .as_deref()
+            .map(|release_id| self.store.taria_previous_release_diff(release_id))
+            .transpose()?
+            .flatten();
         self.taria_bundle_refs = self
             .store
             .taria_bundle_refs_for_release(self.state.taria_last_release_id.as_deref())?;
