@@ -1502,25 +1502,26 @@ mod tests {
         };
 
         let store = TemporalStore::open_in_memory().expect("store");
-        let view = SavedView::new(
-            "US Elections",
-            EventQuery {
+        let view = SavedView {
+            id: Uuid::new_v4(),
+            name: "US Elections".to_string(),
+            query: EventQuery {
                 domain: Some("elections".to_string()),
                 jurisdiction: Some("US".to_string()),
                 ..EventQuery::default()
             },
-            std::collections::BTreeSet::new(),
-            CalendarView::Year,
-            CalendarLayout::Agenda,
-            GroupBy::Jurisdiction,
-            vec![SortRule {
+            hidden_source_ids: std::collections::BTreeSet::new(),
+            calendar_view: CalendarView::Year,
+            calendar_layout: CalendarLayout::Agenda,
+            group_by: GroupBy::Jurisdiction,
+            sort_rules: vec![SortRule {
                 field: SortField::Importance,
                 direction: SortDirection::Descending,
             }],
-            ColorBy::EventType,
-            "America/Mexico_City",
-            false,
-        );
+            color_by: ColorBy::EventType,
+            display_timezone: "America/Mexico_City".to_string(),
+            week_start_monday: false,
+        };
 
         store.upsert_saved_view(&view).expect("save");
         let loaded = store.list_saved_views().expect("list");
