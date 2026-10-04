@@ -34,6 +34,27 @@ Rendered ICS / JSCalendar / jCal / CSV artifacts are downstream projections, not
 
 The primary handoff is now a **TemporalBundleRelease manifest plus its referenced frozen artifacts**.
 
+### Default transport: local filesystem
+
+Ephemeris normally consumes that release directly from the local Taria checkout.
+
+The configured path may point to the Taria repository root or directly to `incubator/resourcearium`.
+
+Normal flow:
+
+```text
+local Resourcearium root
+    -> registry/temporal-bundle-releases.yml
+    -> selected channel
+    -> local immutable release manifest
+    -> local referenced artifacts
+    -> Ephemeris SQLite
+```
+
+No download, GitHub API, or HTTP step is required.
+
+The implemented UI exposes **Update Taria Sources** in the toolbar and Sources panel.
+
 Canonical upstream files include:
 
 - `registry/temporal-bundle-release-schema.yml`
@@ -436,20 +457,38 @@ These do not require Resourcearium to rebuild a bundle.
 Implemented now:
 
 - direct ReconciledProjectionEventSet import;
+- direct CompactReconciledEventIndex import;
 - stable upstream identity retention;
 - Taria source/provenance refs;
 - blocked/unplaced preservation;
-- transactional re-import;
-- created/updated/unchanged/retained-missing accounting.
+- transactional per-source re-import;
+- created/updated/unchanged/retained-missing accounting;
+- persisted local Resourcearium root;
+- persisted bootstrap/production channel selection;
+- auto-detection of common local Taria checkout locations;
+- local channel registry and immutable manifest resolution;
+- Resourcearium-root path confinement;
+- SHA-256 verification for consumed release payloads;
+- one-click **Update Taria Sources**;
+- persisted last release/update summary;
+- explicit skipped-shard reporting.
+
+Current bootstrap r3 behavior:
+
+- recovered Politics -> imported from CompactReconciledEventIndex;
+- recovered Holidays -> imported from CompactReconciledEventIndex;
+- Elections -> skipped until its shard exposes an accepted reconciled payload;
+- Sports -> skipped until its shard exposes an accepted reconciled payload.
 
 Not implemented yet:
 
-- TemporalBundleRelease v1 manifest import;
-- CompactReconciledEventIndex import adapter;
 - CalendarSet membership persistence;
-- release/channel metadata persistence;
+- canonical release/channel/coverage metadata in SQLite;
+- release-level global identity reconciliation across overlapping production bundles;
+- production `bundle_artifacts[]` adoption;
 - release coverage UI;
-- release integrity/hash validation as one adoption transaction.
+- whole-release transaction/rollback across multiple payloads;
+- asynchronous large-release adoption.
 
 Those are now the next Taria-facing integration boundary.
 
