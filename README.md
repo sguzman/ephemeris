@@ -43,9 +43,11 @@ Implemented:
 - text, domain, jurisdiction, and lifecycle-status filtering
 - nested AND / OR / NOT advanced queries with typed predicates and a recursive editor
 - timezone-aware temporal filters, including exact date overlap, precision classes, and relative day windows
-- independent true grouping, stable multi-key sorting, and semantic coloring
+- independent true grouping and stable multi-key sorting
+- ordered query-driven color rules with first-match precedence and semantic fallback coloring
+- embedded overlays with independent query/styling rules
 - durable named saved views stored in SQLite
-- saved views that retain query, source visibility, date range, layout, grouping, sort rules, color strategy, timezone, and week-start behavior
+- saved views that retain query, source visibility, date range, layout, grouping, sort rules, color rules, overlays, timezone, and week-start behavior
 - event inspector with Taria identity/provenance details
 - separate unplaced/conflicted event surface
 - native persisted transient UI state
@@ -57,7 +59,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation milestone at 2026-10-04 passes the full CI gate.
+The verified implementation milestone at 2026-10-04 passes the full CI gate: format, compile, strict Clippy, and **38 library tests**.
 
 ## Product boundary
 
@@ -117,29 +119,36 @@ An event exists once canonically. "US Politics", "California Elections", "Econom
 
 ## Taria
 
-Taria supplies rich temporal resources. Ephemeris is the interactive desktop surface over those resources.
+Taria / Resourcearium is the upstream temporal-data producer. Ephemeris is the local interactive consumer.
 
-The first native integration consumes Resourcearium reconciled projection event sets directly and preserves upstream identity/provenance instead of degrading them into generic appointments.
+The current low-level integration consumes Resourcearium `ReconciledProjectionEventSet` JSON directly and preserves upstream identity/provenance instead of degrading events into generic appointments.
 
-Ephemeris retains information such as:
+Taria now also has a consumer-facing **TemporalBundleRelease** layer. The agreed direction is:
 
-- projection and reconciled-set identity
-- event and reconciled-event identity
-- assertion references
-- upstream source references
-- provenance references
-- display fields and source contexts
-- domain/categories
-- geography and jurisdiction
-- institution
-- lifecycle/status
-- renderability and blockers
-- exact or imprecise temporal semantics
-- extensible Taria properties
+```text
+Taria acquisition/normalization/reconciliation
+    -> frozen TemporalBundleRelease
+    -> Ephemeris validates/adopts release
+    -> canonical local events + CalendarSet membership
+    -> saved views / overlays / queries
+```
 
-Taria data is not flattened to the lowest-common-denominator ICS event model.
+Important contract rules:
 
-See [docs/TARIA_INTEGRATION.md](docs/TARIA_INTEGRATION.md).
+- Taria owns upstream acquisition and coverage accounting.
+- Ephemeris does not fetch all 429 upstream Resources itself.
+- Reconciled event sets carry event payload.
+- CalendarSets carry membership/navigation metadata.
+- overlapping domain bundles must not clone event identity.
+- partial/pending/gap-only coverage must remain visible and must not be interpreted as an empty world.
+- ICS/JSCalendar/jCal/CSV are downstream projections, not the canonical interchange.
+
+The current bootstrap Taria release is integration-safe but does not yet expose reconciled-event-set paths in its shard manifest, so the existing Ephemeris event importer cannot consume that release end-to-end from the manifest alone. Production bundle artifacts already expose the richer reconciled payload path/hash shape.
+
+See:
+
+- [docs/TARIA_INTEGRATION.md](docs/TARIA_INTEGRATION.md)
+- [docs/TARIA_BUNDLE_CONTRACT.md](docs/TARIA_BUNDLE_CONTRACT.md)
 
 ## Technology
 
@@ -194,8 +203,9 @@ Start here:
 - [docs/DATA_MODEL.md](docs/DATA_MODEL.md) - canonical temporal domain model
 - [docs/TIME_SEMANTICS.md](docs/TIME_SEMANTICS.md) - timezone, recurrence, all-day, interval, and lifecycle rules
 - [docs/QUERY_AND_VIEWS.md](docs/QUERY_AND_VIEWS.md) - filtering, saved views, overlays, grouping, sorting, and color
-- [docs/TARIA_INTEGRATION.md](docs/TARIA_INTEGRATION.md) - Taria ingestion contract and source preservation
-- [docs/INGESTION_AND_SYNC.md](docs/INGESTION_AND_SYNC.md) - imports, refresh, identity, snapshots, synchronization, and export
+- [docs/TARIA_INTEGRATION.md](docs/TARIA_INTEGRATION.md) - Taria integration semantics and release boundary
+- [docs/TARIA_BUNDLE_CONTRACT.md](docs/TARIA_BUNDLE_CONTRACT.md) - exact Taria/Resourcearium -> Ephemeris bundle consumer contract
+- [docs/INGESTION_AND_SYNC.md](docs/INGESTION_AND_SYNC.md) - imports, release adoption, refresh, identity, synchronization, and export
 - [docs/UX.md](docs/UX.md) - calendar surfaces, dense-data behavior, inspection, keyboard interaction
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md) - scale and latency expectations
 - [docs/QUALITY.md](docs/QUALITY.md) - correctness, testing, migrations, and observability
