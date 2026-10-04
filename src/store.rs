@@ -2782,6 +2782,153 @@ mod tests {
     }
 
     #[test]
+    fn release_history_diff_tracks_membership_changes() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let source = TemporalSource::new("Taria", SourceKind::Taria, SourceAuthority::Derived);
+        let day = NaiveDate::from_ymd_opt(2026, 10, 4).expect("date");
+
+        let mut old_event = TemporalEvent::new(
+            "Old member",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        old_event.source_record_key = Some("record:old".to_string());
+        old_event.upstream_event_ref = Some("event:old".to_string());
+        old_event.upstream_reconciled_key = Some("reconciled-event:old".to_string());
+
+        let mut new_event = TemporalEvent::new(
+            "New member",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        new_event.source_record_key = Some("record:new".to_string());
+        new_event.upstream_event_ref = Some("event:new".to_string());
+        new_event.upstream_reconciled_key = Some("reconciled-event:new".to_string());
+
+        store
+            .import_taria_batch(
+                &source,
+                &mut [old_event.clone(), new_event.clone()],
+            )
+            .expect("events");
+
+        for release_id in ["release:old", "release:new"] {
+            store
+                .upsert_taria_release(&TariaReleaseRecord {
+                    release_id: release_id.to_string(),
+                    channel: "bootstrap".to_string(),
+                    status: "bootstrap-partial".to_string(),
+                    production_complete: false,
+                    manifest_path: format!("{release_id}.json"),
+                    manifest_sha256: format!("{release_id}:hash"),
+                    generated_at: None,
+                    coverage_json: "{}".to_string(),
+                    manifest_json: "{}".to_string(),
+                })
+                .expect("release");
+        }
+
+        store
+            .conn
+            .execute(
+                "UPDATE taria_releases SET adopted_at = ?1 WHERE release_id = ?2",
+                params!["2026-10-04T20:00:00Z", "release:old"],
+            )
+            .expect("old timestamp");
+        store
+            .conn
+            .execute(
+                "UPDATE taria_releases SET adopted_at = ?1 WHERE release_id = ?2",
+                params!["2026-10-04T21:00:00Z", "release:new"],
+            )
+            .expect("new timestamp");
+
+        store
+            .replace_taria_calendar_set(
+                &TariaCalendarSetRecord {
+                    calendar_set_id: "calendar-set:old".to_string(),
+                    release_id: "release:old".to_string(),
+                    bundle_ref: "bundle:temporal/politics-government".to_string(),
+                    projection_ref: "projection:old".to_string(),
+                    input_reconciled_event_set_ref: "reconciled-set:old".to_string(),
+                    source_path: "old-calendar.json".to_string(),
+                    content_sha256: "old-calendar-hash".to_string(),
+                    raw_json: "{}".to_string(),
+                },
+                &[TariaProjectedCalendarRecord {
+                    calendar_id: "projected-calendar:old".to_string(),
+                    name: "Old calendar".to_string(),
+                    kind: "single".to_string(),
+                    metadata_json: "{}".to_string(),
+                }],
+                &[TariaCalendarMembershipRecord {
+                    reconciled_event_ref: "reconciled-event:old".to_string(),
+                    calendar_ref: "projected-calendar:old".to_string(),
+                }],
+            )
+            .expect("old CalendarSet");
+
+        store
+            .replace_taria_calendar_set(
+                &TariaCalendarSetRecord {
+                    calendar_set_id: "calendar-set:new".to_string(),
+                    release_id: "release:new".to_string(),
+                    bundle_ref: "bundle:temporal/finance-markets".to_string(),
+                    projection_ref: "projection:new".to_string(),
+                    input_reconciled_event_set_ref: "reconciled-set:new".to_string(),
+                    source_path: "new-calendar.json".to_string(),
+                    content_sha256: "new-calendar-hash".to_string(),
+                    raw_json: "{}".to_string(),
+                },
+                &[TariaProjectedCalendarRecord {
+                    calendar_id: "projected-calendar:new".to_string(),
+                    name: "New calendar".to_string(),
+                    kind: "single".to_string(),
+                    metadata_json: "{}".to_string(),
+                }],
+                &[TariaCalendarMembershipRecord {
+                    reconciled_event_ref: "reconciled-event:new".to_string(),
+                    calendar_ref: "projected-calendar:new".to_string(),
+                }],
+            )
+            .expect("new CalendarSet");
+
+        let history = store.taria_release_history().expect("history");
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].release_id, "release:new");
+        assert_eq!(history[0].resolved_member_event_count, 1);
+
+        let diff = store
+            .taria_previous_release_diff("release:new")
+            .expect("previous diff")
+            .expect("previous release");
+        assert_eq!(diff.from_release_id, "release:old");
+        assert_eq!(diff.to_release_id, "release:new");
+        assert_eq!(
+            diff.added_bundle_refs,
+            vec!["bundle:temporal/finance-markets".to_string()]
+        );
+        assert_eq!(
+            diff.removed_bundle_refs,
+            vec!["bundle:temporal/politics-government".to_string()]
+        );
+        assert_eq!(
+            diff.added_calendar_ids,
+            vec!["projected-calendar:new".to_string()]
+        );
+        assert_eq!(
+            diff.removed_calendar_ids,
+            vec!["projected-calendar:old".to_string()]
+        );
+        assert_eq!(diff.added_member_event_ids, vec![new_event.id]);
+        assert_eq!(diff.removed_member_event_ids, vec![old_event.id]);
+    }
+
+    #[test]
     fn schema_bootstraps_at_current_version() {
         let store = TemporalStore::open_in_memory().expect("store");
         assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
