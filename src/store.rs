@@ -725,7 +725,11 @@ impl TemporalStore {
     pub fn taria_calendar_membership_count(&self) -> anyhow::Result<u64> {
         let count: i64 = self
             .conn
-            .query_row("SELECT COUNT(*) FROM taria_calendar_memberships", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM taria_calendar_memberships",
+                [],
+                |row| row.get(0),
+            )
             .context("failed to count Taria CalendarSet memberships")?;
         u64::try_from(count).context("Taria membership count cannot be represented as u64")
     }
@@ -916,17 +920,16 @@ impl TemporalStore {
                 };
 
                 if let Some((existing, mapped_to_this_source)) = existing {
-                    let mut candidate = if mapped_to_this_source
-                        && existing.source_id == Some(source.id)
-                    {
-                        let mut candidate = event.clone();
-                        candidate.id = existing.id;
-                        candidate.created_at = existing.created_at;
-                        candidate.updated_at = existing.updated_at;
-                        candidate
-                    } else {
-                        merge_taria_projection_event(&existing, event)
-                    };
+                    let mut candidate =
+                        if mapped_to_this_source && existing.source_id == Some(source.id) {
+                            let mut candidate = event.clone();
+                            candidate.id = existing.id;
+                            candidate.created_at = existing.created_at;
+                            candidate.updated_at = existing.updated_at;
+                            candidate
+                        } else {
+                            merge_taria_projection_event(&existing, event)
+                        };
 
                     if candidate == existing {
                         *event = candidate;
@@ -1019,11 +1022,14 @@ fn merge_taria_projection_event(
     let mut merged = incoming.clone();
     merged.id = existing.id;
     merged.source_id = existing.source_id;
-    merged.source_record_key.clone_from(&existing.source_record_key);
+    merged
+        .source_record_key
+        .clone_from(&existing.source_record_key);
     merged.created_at = existing.created_at;
     merged.updated_at = existing.updated_at;
 
-    merged.assertion_refs = merge_unique_strings(&existing.assertion_refs, &incoming.assertion_refs);
+    merged.assertion_refs =
+        merge_unique_strings(&existing.assertion_refs, &incoming.assertion_refs);
     merged.source_refs = merge_unique_strings(&existing.source_refs, &incoming.source_refs);
     merged.provenance_refs =
         merge_unique_strings(&existing.provenance_refs, &incoming.provenance_refs);
@@ -1054,7 +1060,11 @@ fn merge_taria_projection_event(
         merged.personal_relevance = existing.personal_relevance;
     }
 
-    if !existing.properties.as_object().is_none_or(serde_json::Map::is_empty) {
+    if !existing
+        .properties
+        .as_object()
+        .is_none_or(serde_json::Map::is_empty)
+    {
         merged.properties.clone_from(&existing.properties);
     }
 
