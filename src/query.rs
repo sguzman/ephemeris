@@ -883,6 +883,73 @@ const fn default_true() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompositionOperator {
+    #[default]
+    Union,
+    Intersect,
+    Subtract,
+}
+
+impl CompositionOperator {
+    pub const ALL: [Self; 3] = [Self::Union, Self::Intersect, Self::Subtract];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Union => "Union",
+            Self::Intersect => "Intersect",
+            Self::Subtract => "Subtract",
+        }
+    }
+
+    pub const fn symbol(self) -> &'static str {
+        match self {
+            Self::Union => "∪",
+            Self::Intersect => "∩",
+            Self::Subtract => "−",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompositionLayer {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub operator: CompositionOperator,
+    #[serde(default)]
+    pub query: EventQuery,
+}
+
+impl CompositionLayer {
+    pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
+        self.enabled && self.query.matches(event, context)
+    }
+}
+
+pub fn matches_composed_query(
+    base: &EventQuery,
+    layers: &[CompositionLayer],
+    event: &TemporalEvent,
+    context: &QueryContext,
+) -> bool {
+    let mut included = base.matches(event, context);
+
+    for layer in layers.iter().filter(|layer| layer.enabled) {
+        let layer_matches = layer.query.matches(event, context);
+        included = match layer.operator {
+            CompositionOperator::Union => included || layer_matches,
+            CompositionOperator::Intersect => included && layer_matches,
+            CompositionOperator::Subtract => included && !layer_matches,
+        };
+    }
+
+    included
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Overlay {
     pub id: Uuid,
@@ -903,13 +970,14 @@ impl Overlay {
     }
 }
 
-pub fn matches_base_or_overlay(
+pub fn matches_composed_or_overlay(
     base: &EventQuery,
+    composition_layers: &[CompositionLayer],
     overlays: &[Overlay],
     event: &TemporalEvent,
     context: &QueryContext,
 ) -> bool {
-    base.matches(event, context)
+    matches_composed_query(base, composition_layers, event, context)
         || overlays
             .iter()
             .any(|overlay| overlay.matches(event, context))
@@ -934,6 +1002,8 @@ pub struct SavedView {
     pub color_by: ColorBy,
     #[serde(default)]
     pub color_rules: Vec<ColorRule>,
+    #[serde(default)]
+    pub composition_layers: Vec<CompositionLayer>,
     #[serde(default)]
     pub overlays: Vec<Overlay>,
     pub display_timezone: String,
@@ -1208,6 +1278,92 @@ mod tests {
     }
 
     #[test]
+    fn composition_layers_apply_union_intersection_and_subtraction_in_order() {
+        let base = EventQuery {
+            domain: Some("economics".to_string()),
+            ..EventQuery::default()
+        };
+        let layers = vec![
+            CompositionLayer {
+                id: Uuid::new_v4(),
+                name: "Add California".to_string(),
+                enabled: true,
+                operator: CompositionOperator::Union,
+                query: EventQuery {
+                    jurisdiction: Some("US-CA".to_string()),
+                    ..EventQuery::default()
+                },
+            },
+            CompositionLayer {
+                id: Uuid::new_v4(),
+                name: "Require confirmed".to_string(),
+                enabled: true,
+                operator: CompositionOperator::Intersect,
+                query: EventQuery {
+                    status: Some(EventStatus::Confirmed),
+                    ..EventQuery::default()
+                },
+            },
+            CompositionLayer {
+                id: Uuid::new_v4(),
+                name: "Exclude federal".to_string(),
+                enabled: true,
+                operator: CompositionOperator::Subtract,
+                query: EventQuery {
+                    expression: Some(QueryExpr::Predicate(QueryPredicate::Text {
+                        field: TextField::Tags,
+                        operator: TextOperator::Equals,
+                        value: "federal".to_string(),
+                        case_sensitive: false,
+                    })),
+                    ..EventQuery::default()
+                },
+            },
+        ];
+
+        assert!(matches_composed_query(
+            &base,
+            &layers,
+            &event(),
+            &test_context()
+        ));
+
+        let mut federal = event();
+        federal.tags.push("federal".to_string());
+        assert!(!matches_composed_query(
+            &base,
+            &layers,
+            &federal,
+            &test_context()
+        ));
+    }
+
+    #[test]
+    fn disabled_composition_layer_has_no_effect() {
+        let base = EventQuery {
+            jurisdiction: Some("US-CA".to_string()),
+            ..EventQuery::default()
+        };
+        let layers = vec![CompositionLayer {
+            id: Uuid::new_v4(),
+            name: "Disabled exclusion".to_string(),
+            enabled: false,
+            operator: CompositionOperator::Subtract,
+            query: EventQuery {
+                jurisdiction: Some("US-CA".to_string()),
+                ..EventQuery::default()
+            },
+        }];
+
+        assert!(matches_composed_query(
+            &base,
+            &layers,
+            &event(),
+            &test_context()
+        ));
+    }
+
+    #[test]
     fn overlay_can_include_event_excluded_by_base_query() {
         let base = EventQuery {
             domain: Some("economics".to_string()),
@@ -1225,8 +1381,9 @@ mod tests {
             color_rules: Vec::new(),
         }];
 
-        assert!(matches_base_or_overlay(
+        assert!(matches_composed_or_overlay(
             &base,
+            &[],
             &overlays,
             &event(),
             &test_context()
@@ -1263,6 +1420,16 @@ mod tests {
                 }),
                 color: RgbColor::new(255, 80, 80),
             }],
+            composition_layers: vec![CompositionLayer {
+                id: Uuid::new_v4(),
+                name: "Exclude cancelled".to_string(),
+                enabled: true,
+                operator: CompositionOperator::Subtract,
+                query: EventQuery {
+                    status: Some(EventStatus::Cancelled),
+                    ..EventQuery::default()
+                },
+            }],
             overlays: vec![Overlay {
                 id: Uuid::new_v4(),
                 name: "Federal".to_string(),
@@ -1284,6 +1451,7 @@ mod tests {
         assert_eq!(view.color_by, ColorBy::EventType);
         assert_eq!(view.color_rules.len(), 1);
         assert!(view.color_rules[0].matches(&event(), &test_context()));
+        assert_eq!(view.composition_layers.len(), 1);
         assert_eq!(view.overlays.len(), 1);
         assert_eq!(view.sort_rules.len(), 1);
         assert!(!view.id.is_nil());
