@@ -837,13 +837,15 @@ impl eframe::App for EphemerisApp {
                     .show(ui, |ui| {
                         action = render_calendar(
                             ui,
-                            &events,
-                            self.state.calendar_view,
-                            self.state.calendar_layout,
-                            focus,
-                            timezone,
-                            self.state.week_start_monday,
-                            self.state.selected_event_id,
+                            CalendarRenderContext {
+                                events: &events,
+                                view: self.state.calendar_view,
+                                layout: self.state.calendar_layout,
+                                focus,
+                                timezone,
+                                monday_start: self.state.week_start_monday,
+                                selected: self.state.selected_event_id,
+                            },
                         );
                     });
             });
@@ -930,16 +932,30 @@ fn event_matches_query(event: &TemporalEvent, state: &PersistedUiState) -> bool 
             .contains(&query)
 }
 
-fn render_calendar(
-    ui: &mut egui::Ui,
-    events: &[TemporalEvent],
+struct CalendarRenderContext<'a> {
+    events: &'a [TemporalEvent],
     view: CalendarView,
     layout: CalendarLayout,
     focus: NaiveDate,
     timezone: Tz,
     monday_start: bool,
     selected: Option<Uuid>,
+}
+
+fn render_calendar(
+    ui: &mut egui::Ui,
+    context: CalendarRenderContext<'_>,
 ) -> Option<CalendarAction> {
+    let CalendarRenderContext {
+        events,
+        view,
+        layout,
+        focus,
+        timezone,
+        monday_start,
+        selected,
+    } = context;
+
     if events.is_empty() {
         ui.vertical_centered(|ui| {
             ui.add_space(40.0);
