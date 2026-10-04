@@ -70,7 +70,7 @@ Still required:
 
 ## Phase 3 - Taria ingestion and bundle-release adoption
 
-Status: **filesystem-first bootstrap/production release adoption working; query exposure next**
+Status: **filesystem-first release adoption and membership-aware queries working; release posture UI next**
 
 Implemented:
 
@@ -98,6 +98,10 @@ Implemented:
 - GUI drag/drop import
 - CLI import
 - provenance-rich event inspector
+- current-release bundle membership query predicate
+- projected CalendarSet membership query predicate
+- membership-aware base queries, overlays, color rules, and calendar algebra
+- membership context remains separate from canonical event ownership
 
 Now established upstream:
 
@@ -111,9 +115,8 @@ Now established upstream:
 
 Next Ephemeris implementation:
 
-- bundle/CalendarSet membership predicates in programmable queries
-- saved-view/overlay/color-rule/calendar-algebra use of membership predicates
-- partial/pending/gap-only UI posture
+- partial/pending/gap-only release posture UI
+- ergonomic bundle/projected-calendar reference selection in query editors
 - whole-release atomic adoption/rollback
 - release-to-release adoption/diff foundation
 - worker-boundary execution for large releases
@@ -126,7 +129,7 @@ Still later:
 
 ## Immediate program priority
 
-The highest-priority integration boundary is now exposing persisted Taria **bundle/CalendarSet membership** to Ephemeris programmable views without turning membership into event ownership.
+The highest-priority integration boundary is now exposing Taria **release coverage and membership posture** ergonomically in the UI while preserving membership as query context rather than event ownership.
 
 Resourcearium is independently building/populating frozen bundles. Ephemeris should consume those releases rather than duplicate acquisition work.
 
@@ -134,7 +137,7 @@ The consumer contract is frozen in:
 
 - `docs/TARIA_BUNDLE_CONTRACT.md`
 
-The local filesystem transport, bootstrap r4 mixed-payload adoption, CalendarSet persistence, identity aliasing, and production overlap-safe adoption are implemented.
+The local filesystem transport, bootstrap r4 mixed-payload adoption, CalendarSet persistence, identity aliasing, production overlap-safe adoption, and membership-aware programmable query predicates are implemented.
 
 ## Phase 4 - Calendar views
 
