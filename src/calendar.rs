@@ -1,6 +1,39 @@
 use chrono::{Datelike, Days, Duration, NaiveDate};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CalendarLayout {
+    #[default]
+    Grid,
+    Agenda,
+}
+
+impl CalendarLayout {
+    pub const ALL: [Self; 2] = [Self::Grid, Self::Agenda];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Grid => "Grid",
+            Self::Agenda => "Agenda",
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Grid => "grid",
+            Self::Agenda => "agenda",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Self {
+        match raw {
+            "agenda" => Self::Agenda,
+            _ => Self::Grid,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CalendarView {
