@@ -22,8 +22,8 @@ use crate::state::PersistedUiState;
 use crate::store::{TariaProjectedCalendarChoice, TariaReleaseStatusRecord, TemporalStore};
 use crate::taria::import_reconciled_event_set_file;
 use crate::taria_workspace::{
-    detect_resourcearium_root, normalize_resourcearium_root,
-    TariaWorkspaceUpdateReport, update_taria_sources as update_taria_workspace,
+    TariaWorkspaceUpdateReport, detect_resourcearium_root, normalize_resourcearium_root,
+    update_taria_sources as update_taria_workspace,
 };
 
 pub struct EphemerisApp {
