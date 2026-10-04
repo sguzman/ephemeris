@@ -2326,6 +2326,82 @@ mod tests {
     }
 
     #[test]
+    fn taria_release_id_rejects_changed_manifest_content() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let release = TariaReleaseRecord {
+            release_id: "temporal-bundle-release:test".to_string(),
+            channel: "bootstrap".to_string(),
+            status: "bootstrap-partial".to_string(),
+            production_complete: false,
+            manifest_path: "/tmp/release.json".to_string(),
+            manifest_sha256: "hash-one".to_string(),
+            generated_at: Some("2026-10-04T00:00:00Z".to_string()),
+            coverage_json: "{}".to_string(),
+            manifest_json: "{}".to_string(),
+        };
+        store.upsert_taria_release(&release).expect("first release");
+
+        let mut changed = release.clone();
+        changed.manifest_sha256 = "hash-two".to_string();
+        changed.manifest_json = r#"{"changed":true}"#.to_string();
+
+        let error = store
+            .upsert_taria_release(&changed)
+            .expect_err("immutable release must reject changed content");
+        assert!(error.to_string().contains("changed content"));
+        assert_eq!(store.taria_release_count().expect("count"), 1);
+    }
+
+    #[test]
+    fn calendar_set_id_rejects_changed_content_but_can_join_multiple_releases() {
+        let store = TemporalStore::open_in_memory().expect("store");
+
+        for release_id in ["release:one", "release:two"] {
+            store
+                .upsert_taria_release(&TariaReleaseRecord {
+                    release_id: release_id.to_string(),
+                    channel: "bootstrap".to_string(),
+                    status: "bootstrap-partial".to_string(),
+                    production_complete: false,
+                    manifest_path: format!("/{release_id}.json"),
+                    manifest_sha256: format!("{release_id}:hash"),
+                    generated_at: None,
+                    coverage_json: "{}".to_string(),
+                    manifest_json: format!(r#"{{"release_id":"{release_id}"}}"#),
+                })
+                .expect("release");
+        }
+
+        let base = TariaCalendarSetRecord {
+            calendar_set_id: "calendar-set:immutable".to_string(),
+            release_id: "release:one".to_string(),
+            bundle_ref: "bundle:temporal/politics-government".to_string(),
+            projection_ref: "projection:politics".to_string(),
+            input_reconciled_event_set_ref: "reconciled-set:one".to_string(),
+            source_path: "/tmp/calendar-set.json".to_string(),
+            content_sha256: "calendar-hash".to_string(),
+            raw_json: r#"{"calendar_set_id":"calendar-set:immutable"}"#.to_string(),
+        };
+
+        store
+            .replace_taria_calendar_set(&base, &[], &[])
+            .expect("first association");
+
+        let mut reused = base.clone();
+        reused.release_id = "release:two".to_string();
+        store
+            .replace_taria_calendar_set(&reused, &[], &[])
+            .expect("second release may reuse immutable CalendarSet");
+
+        let mut changed = reused;
+        changed.content_sha256 = "different-hash".to_string();
+        let error = store
+            .replace_taria_calendar_set(&changed, &[], &[])
+            .expect_err("changed CalendarSet must be rejected");
+        assert!(error.to_string().contains("changed content"));
+    }
+
+    #[test]
     fn direct_source_import_reconciliation_survives_taria_import_mapping_schema() {
         let store = TemporalStore::open_in_memory().expect("store");
         let source = TemporalSource::new("ICS fixture", SourceKind::Ics, SourceAuthority::Official);
