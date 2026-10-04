@@ -6,7 +6,10 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-use crate::store::TemporalStore;
+use crate::store::{
+    TariaCalendarMembershipRecord, TariaCalendarSetRecord, TariaProjectedCalendarRecord,
+    TariaReleaseRecord, TemporalStore,
+};
 use crate::taria::{
     TariaImportReport, import_compact_reconciled_event_index_file, import_reconciled_event_set_file,
 };
@@ -29,13 +32,16 @@ pub struct TariaWorkspaceUpdateReport {
     pub retained_missing: usize,
     pub imprecise: usize,
     pub blocked_or_undated: usize,
+    pub calendar_sets_imported: usize,
+    pub calendar_memberships: usize,
+    pub resolved_calendar_memberships: usize,
     pub skipped: Vec<String>,
 }
 
 impl TariaWorkspaceUpdateReport {
     pub fn summary(&self) -> String {
         let mut summary = format!(
-            "{} via {}: {} artifacts imported, {} skipped; {} events ({} created, {} updated, {} unchanged)",
+            "{} via {}: {} payloads imported, {} skipped; {} events ({} created, {} updated, {} unchanged); {} CalendarSets / {} memberships",
             self.release_id,
             self.channel,
             self.imported_artifacts,
@@ -43,10 +49,18 @@ impl TariaWorkspaceUpdateReport {
             self.imported_events,
             self.created,
             self.updated,
-            self.unchanged
+            self.unchanged,
+            self.calendar_sets_imported,
+            self.calendar_memberships
         );
         if self.retained_missing > 0 {
             summary.push_str(&format!(", {} retained missing", self.retained_missing));
+        }
+        if self.calendar_memberships > self.resolved_calendar_memberships {
+            summary.push_str(&format!(
+                ", {} memberships awaiting event payload",
+                self.calendar_memberships - self.resolved_calendar_memberships
+            ));
         }
         summary
     }
@@ -171,6 +185,27 @@ pub fn update_taria_sources(
         ));
     }
     let release_status = required_string(object, "status")?;
+    let manifest_sha256 = format!("{:x}", Sha256::digest(manifest_raw.as_bytes()));
+    let coverage_json = object
+        .get("coverage")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Map::new()))
+        .to_string();
+
+    store.upsert_taria_release(&TariaReleaseRecord {
+        release_id: release_id.clone(),
+        channel: channel.to_string(),
+        status: release_status.clone(),
+        production_complete: object
+            .get("production_complete")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        manifest_path: manifest_path.display().to_string(),
+        manifest_sha256,
+        generated_at: optional_string(object, "generated_at"),
+        coverage_json,
+        manifest_json: manifest_raw.clone(),
+    })?;
 
     let mut report = TariaWorkspaceUpdateReport {
         resourcearium_root: root.clone(),
@@ -187,6 +222,9 @@ pub fn update_taria_sources(
         retained_missing: 0,
         imprecise: 0,
         blocked_or_undated: 0,
+        calendar_sets_imported: 0,
+        calendar_memberships: 0,
+        resolved_calendar_memberships: 0,
         skipped: Vec::new(),
     };
 
@@ -200,26 +238,27 @@ pub fn update_taria_sources(
     }
 
     if let Some(artifacts) = object.get("bundle_artifacts").and_then(Value::as_array) {
-        if artifacts.is_empty() {
-            return Ok(report);
+        for artifact in artifacts {
+            let artifact = artifact.as_object().ok_or_else(|| {
+                anyhow!("Taria release bundle_artifacts[] contains a non-object value")
+            })?;
+            import_production_artifact(store, &root, artifact, &mut report)?;
         }
-
-        // Production bundles overlap by design. Until Ephemeris has release-level
-        // global identity reconciliation plus CalendarSet membership persistence,
-        // importing each projection independently would duplicate canonical events.
-        report.skipped_artifacts += artifacts.len();
-        report.skipped.push(format!(
-            "{} production bundle_artifacts present; release-level cross-bundle deduplication is not materialized yet",
-            artifacts.len()
-        ));
     }
 
-    if report.imported_artifacts == 0 && report.skipped_artifacts == 0 {
+    if report.imported_artifacts == 0
+        && report.skipped_artifacts == 0
+        && report.calendar_sets_imported == 0
+    {
         return Err(anyhow!(
-            "Taria release {} contains neither shards[] nor bundle_artifacts[]",
+            "Taria release {} contains neither consumable shards[] nor bundle_artifacts[]",
             report.release_id
         ));
     }
+
+    report.resolved_calendar_memberships += store.resolve_taria_calendar_memberships()?;
+    report.resolved_calendar_memberships =
+        report.resolved_calendar_memberships.min(report.calendar_memberships);
 
     Ok(report)
 }
@@ -233,7 +272,7 @@ fn import_bootstrap_shard(
     let shard_id = required_string(shard, "shard_id")?;
     let bundle_ref = required_string(shard, "bundle_ref")?;
 
-    if let Some(relative) = optional_string(shard, "event_index_path") {
+    let imported_payload = if let Some(relative) = optional_string(shard, "event_index_path") {
         let path = resolve_relative_artifact(root, &relative)?;
         validate_declared_hash(
             &path,
@@ -242,10 +281,8 @@ fn import_bootstrap_shard(
         let imported = import_compact_reconciled_event_index_file(store, &path, Some(&bundle_ref))?;
         merge_import_report(report, &imported);
         report.imported_artifacts += 1;
-        return Ok(());
-    }
-
-    if let Some(relative) = optional_string(shard, "reconciled_event_set_path") {
+        true
+    } else if let Some(relative) = optional_string(shard, "reconciled_event_set_path") {
         let path = resolve_relative_artifact(root, &relative)?;
         validate_declared_hash(
             &path,
@@ -256,13 +293,173 @@ fn import_bootstrap_shard(
         let imported = import_reconciled_event_set_file(store, &path)?;
         merge_import_report(report, &imported);
         report.imported_artifacts += 1;
-        return Ok(());
+        true
+    } else {
+        false
+    };
+
+    import_calendar_set_from_container(
+        store,
+        root,
+        &report.release_id,
+        &bundle_ref,
+        shard,
+        "calendar_set_path",
+        &["calendar_set_content_sha256", "calendar_set_sha256"],
+        report,
+    )?;
+
+    if !imported_payload {
+        report.skipped_artifacts += 1;
+        report.skipped.push(format!(
+            "{shard_id}: populated shard has no accepted reconciled event payload path"
+        ));
     }
 
-    report.skipped_artifacts += 1;
-    report.skipped.push(format!(
-        "{shard_id}: populated shard has no accepted reconciled event payload path"
-    ));
+    Ok(())
+}
+
+fn import_production_artifact(
+    store: &TemporalStore,
+    root: &Path,
+    artifact: &Map<String, Value>,
+    report: &mut TariaWorkspaceUpdateReport,
+) -> anyhow::Result<()> {
+    let artifact_id = required_string(artifact, "artifact_id")?;
+    let bundle_ref = required_string(artifact, "bundle_ref")?;
+    let relative = required_string(artifact, "reconciled_event_set_path")?;
+    let path = resolve_relative_artifact(root, &relative)?;
+    validate_declared_hash(
+        &path,
+        optional_string(artifact, "reconciled_event_set_sha256").as_deref(),
+    )?;
+
+    let imported = import_reconciled_event_set_file(store, &path)
+        .with_context(|| format!("failed to import production artifact {artifact_id}"))?;
+    merge_import_report(report, &imported);
+    report.imported_artifacts += 1;
+
+    import_calendar_set_from_container(
+        store,
+        root,
+        &report.release_id,
+        &bundle_ref,
+        artifact,
+        "calendar_set_path",
+        &["calendar_set_sha256", "calendar_set_content_sha256"],
+        report,
+    )?;
+
+    Ok(())
+}
+
+fn import_calendar_set_from_container(
+    store: &TemporalStore,
+    root: &Path,
+    release_id: &str,
+    bundle_ref: &str,
+    container: &Map<String, Value>,
+    path_field: &str,
+    hash_fields: &[&str],
+    report: &mut TariaWorkspaceUpdateReport,
+) -> anyhow::Result<()> {
+    let Some(relative) = optional_string(container, path_field) else {
+        return Ok(());
+    };
+    let expected_hash = hash_fields
+        .iter()
+        .find_map(|field| optional_string(container, field))
+        .ok_or_else(|| anyhow!("CalendarSet {relative} has no declared content hash"))?;
+    let path = resolve_relative_artifact(root, &relative)?;
+    validate_declared_hash(&path, Some(&expected_hash))?;
+
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read CalendarSet {}", path.display()))?;
+    let value: Value =
+        serde_json::from_str(&raw).context("failed to decode Taria CalendarSet JSON")?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| anyhow!("Taria CalendarSet must be a JSON object"))?;
+
+    let schema_version = object
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    if schema_version != 1 {
+        return Err(anyhow!(
+            "unsupported Taria CalendarSet schema version {schema_version}"
+        ));
+    }
+
+    let calendar_set_id = required_string(object, "calendar_set_id")?;
+    let projection_ref = required_string(object, "projection_ref")?;
+    let input_reconciled_event_set_ref =
+        required_string(object, "input_reconciled_event_set_ref")?;
+
+    let calendars = object
+        .get("calendars")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("Taria CalendarSet is missing calendars[]"))?
+        .iter()
+        .map(|calendar| {
+            let calendar = calendar
+                .as_object()
+                .ok_or_else(|| anyhow!("CalendarSet calendars[] contains a non-object value"))?;
+            let mut metadata = calendar.clone();
+            metadata.remove("event_refs");
+            Ok(TariaProjectedCalendarRecord {
+                calendar_id: required_string(calendar, "calendar_id")?,
+                name: required_string(calendar, "name")?,
+                kind: required_string(calendar, "kind")?,
+                metadata_json: Value::Object(metadata).to_string(),
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let mut memberships = Vec::new();
+    for membership in object
+        .get("event_membership")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("Taria CalendarSet is missing event_membership[]"))?
+    {
+        let membership = membership.as_object().ok_or_else(|| {
+            anyhow!("CalendarSet event_membership[] contains a non-object value")
+        })?;
+        let reconciled_event_ref = required_string(membership, "reconciled_event_ref")?;
+        let calendar_refs = membership
+            .get("calendar_refs")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("CalendarSet membership is missing calendar_refs[]"))?;
+        for calendar_ref in calendar_refs {
+            let calendar_ref = calendar_ref
+                .as_str()
+                .ok_or_else(|| anyhow!("CalendarSet calendar_refs[] contains a non-string"))?;
+            memberships.push(TariaCalendarMembershipRecord {
+                reconciled_event_ref: reconciled_event_ref.clone(),
+                calendar_ref: calendar_ref.to_string(),
+            });
+        }
+    }
+
+    let result = store.replace_taria_calendar_set(
+        &TariaCalendarSetRecord {
+            calendar_set_id,
+            release_id: release_id.to_string(),
+            bundle_ref: bundle_ref.to_string(),
+            projection_ref,
+            input_reconciled_event_set_ref,
+            source_path: path.display().to_string(),
+            content_sha256: expected_hash,
+            raw_json: raw,
+        },
+        &calendars,
+        &memberships,
+    )?;
+
+    report.calendar_sets_imported += 1;
+    report.calendar_memberships += result.memberships;
+    report.resolved_calendar_memberships += result.resolved_memberships;
+
     Ok(())
 }
 
@@ -372,6 +569,40 @@ mod tests {
         format!("{:x}", Sha256::digest(std::fs::read(path).expect("read")))
     }
 
+    fn write_calendar_set(
+        root: &Path,
+        relative: &str,
+        calendar_set_id: &str,
+        projection_ref: &str,
+        reconciled_ref: &str,
+        calendar_id: &str,
+    ) -> String {
+        let path = root.join(relative);
+        write(
+            &path,
+            &format!(
+                r#"{{
+                  "schema_version": 1,
+                  "calendar_set_id": "{calendar_set_id}",
+                  "projection_ref": "{projection_ref}",
+                  "input_reconciled_event_set_ref": "reconciled-set:test",
+                  "calendars": [{{
+                    "calendar_id": "{calendar_id}",
+                    "name": "Test Calendar",
+                    "kind": "single",
+                    "event_refs": ["{reconciled_ref}"]
+                  }}],
+                  "event_membership": [{{
+                    "reconciled_event_ref": "{reconciled_ref}",
+                    "calendar_refs": ["{calendar_id}"]
+                  }}],
+                  "content_fingerprint": {{"algorithm":"sha256","value":"fixture"}}
+                }}"#
+            ),
+        );
+        hash(&path)
+    }
+
     #[test]
     fn accepts_taria_repo_or_resourcearium_root() {
         let dir = tempdir().expect("tempdir");
@@ -392,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn local_update_imports_compact_payload_and_reports_unsupported_shard() {
+    fn local_update_imports_compact_payload_and_calendar_membership() {
         let dir = tempdir().expect("tempdir");
         let root = dir.path().join("resourcearium");
         let compact_path = root.join("derived/politics/event-index.json");
@@ -416,6 +647,14 @@ mod tests {
             }"#,
         );
         let compact_hash = hash(&compact_path);
+        let calendar_hash = write_calendar_set(
+            &root,
+            "derived/politics/calendar-set.json",
+            "calendar-set:test-politics",
+            "projection:test-politics",
+            "reconciled-event:test",
+            "projected-calendar:test-politics",
+        );
 
         write(
             &root.join("examples/bundle-releases/current.json"),
@@ -424,12 +663,16 @@ mod tests {
                   "release_id": "temporal-bundle-release:test",
                   "schema_version": 1,
                   "status": "bootstrap-partial",
+                  "production_complete": false,
+                  "coverage": {{"ready_events":1}},
                   "shards": [
                     {{
                       "shard_id": "shard:politics",
                       "bundle_ref": "bundle:temporal/politics-government",
                       "event_index_path": "derived/politics/event-index.json",
-                      "event_index_content_sha256": "{compact_hash}"
+                      "event_index_content_sha256": "{compact_hash}",
+                      "calendar_set_path": "derived/politics/calendar-set.json",
+                      "calendar_set_content_sha256": "{calendar_hash}"
                     }},
                     {{
                       "shard_id": "shard:sports",
@@ -457,7 +700,127 @@ channels:
         assert_eq!(report.skipped_artifacts, 1);
         assert_eq!(report.imported_events, 1);
         assert_eq!(report.created, 1);
+        assert_eq!(report.calendar_sets_imported, 1);
+        assert_eq!(report.calendar_memberships, 1);
+        assert_eq!(report.resolved_calendar_memberships, 1);
         assert_eq!(store.event_count().expect("count"), 1);
+        assert_eq!(store.taria_release_count().expect("release count"), 1);
+        assert_eq!(
+            store
+                .taria_calendar_membership_count()
+                .expect("membership count"),
+            1
+        );
+    }
+
+    #[test]
+    fn production_overlapping_bundles_share_one_canonical_event() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("resourcearium");
+
+        let payload = |projection: &str| {
+            format!(
+                r#"{{
+                  "schema_version": 1,
+                  "reconciled_projection_event_set_id": "reconciled-set:{projection}",
+                  "projection_ref": "{projection}",
+                  "events": [{{
+                    "reconciled_event_key": "reconciled-event:shared",
+                    "event_ref": "event:shared",
+                    "assertion_refs": ["assertion:shared"],
+                    "retained_provenance_refs": ["trace:shared"],
+                    "renderability": "ready",
+                    "display_fields": {{
+                      "title": "Shared event",
+                      "temporal_value": {{"kind":"date","start":"2026-12-01"}},
+                      "schedule_status": "confirmed",
+                      "event_class": "meeting"
+                    }}
+                  }}]
+                }}"#
+            )
+        };
+
+        let politics_payload = root.join("derived/politics/reconciled.json");
+        let finance_payload = root.join("derived/finance/reconciled.json");
+        write(&politics_payload, &payload("projection:politics"));
+        write(&finance_payload, &payload("projection:finance"));
+        let politics_hash = hash(&politics_payload);
+        let finance_hash = hash(&finance_payload);
+
+        let politics_calendar_hash = write_calendar_set(
+            &root,
+            "derived/politics/calendar-set.json",
+            "calendar-set:politics",
+            "projection:politics",
+            "reconciled-event:shared",
+            "projected-calendar:politics",
+        );
+        let finance_calendar_hash = write_calendar_set(
+            &root,
+            "derived/finance/calendar-set.json",
+            "calendar-set:finance",
+            "projection:finance",
+            "reconciled-event:shared",
+            "projected-calendar:finance",
+        );
+
+        write(
+            &root.join("examples/bundle-releases/current.json"),
+            &format!(
+                r#"{{
+                  "release_id": "temporal-bundle-release:production:test",
+                  "schema_version": 1,
+                  "status": "production-partial",
+                  "production_complete": false,
+                  "bundle_artifacts": [
+                    {{
+                      "artifact_id": "bundle-artifact:politics",
+                      "bundle_ref": "bundle:temporal/politics-government",
+                      "reconciled_event_set_path": "derived/politics/reconciled.json",
+                      "reconciled_event_set_sha256": "{politics_hash}",
+                      "calendar_set_path": "derived/politics/calendar-set.json",
+                      "calendar_set_sha256": "{politics_calendar_hash}"
+                    }},
+                    {{
+                      "artifact_id": "bundle-artifact:finance",
+                      "bundle_ref": "bundle:temporal/finance-markets",
+                      "reconciled_event_set_path": "derived/finance/reconciled.json",
+                      "reconciled_event_set_sha256": "{finance_hash}",
+                      "calendar_set_path": "derived/finance/calendar-set.json",
+                      "calendar_set_sha256": "{finance_calendar_hash}"
+                    }}
+                  ]
+                }}"#
+            ),
+        );
+        write(
+            &root.join(RELEASE_REGISTRY_RELATIVE),
+            r#"version: 1
+channels:
+  production:
+    current_release_ref: temporal-bundle-release:production:test
+    manifest_path: examples/bundle-releases/current.json
+"#,
+        );
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let report = update_taria_sources(&store, &root, "production").expect("update");
+
+        assert_eq!(report.imported_artifacts, 2);
+        assert_eq!(report.skipped_artifacts, 0);
+        assert_eq!(report.created, 1);
+        assert_eq!(report.unchanged, 1);
+        assert_eq!(report.calendar_sets_imported, 2);
+        assert_eq!(report.calendar_memberships, 2);
+        assert_eq!(report.resolved_calendar_memberships, 2);
+        assert_eq!(store.event_count().expect("canonical event count"), 1);
+        assert_eq!(
+            store
+                .taria_calendar_membership_count()
+                .expect("membership count"),
+            2
+        );
     }
 
     #[test]
