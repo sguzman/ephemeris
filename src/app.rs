@@ -868,10 +868,6 @@ fn render_time_spec(ui: &mut egui::Ui, time: &TimeSpec, timezone: Tz) {
     ui.strong("Temporal representation");
 
     match time {
-        TimeSpec::DateOnly { date } => {
-            inspector_row(ui, "Date", &date.to_string());
-            ui.small("Date-only: the source did not assert full-day semantics.");
-        }
         TimeSpec::DateOnly {
             start,
             end_exclusive,
