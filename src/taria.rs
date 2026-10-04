@@ -644,6 +644,14 @@ mod tests {
       "calendar_set_policy": {
         "merged_calendar_name": "Fixture Calendar"
       },
+      "blocked_events": [
+        {
+          "reconciled_event_key": "reconciled-event:blocked",
+          "event_ref": "event:blocked",
+          "renderability": "blocked-temporal-conflict",
+          "blockers": ["temporal-conflict"]
+        }
+      ],
       "events": [
         {
           "reconciled_event_key": "reconciled-event:date",
@@ -721,6 +729,12 @@ mod tests {
         assert_eq!(report.blocked_or_undated, 1);
         assert_eq!(store.event_count().expect("count"), 4);
         assert_eq!(store.unplaced_event_count().expect("unplaced"), 1);
+        assert!(
+            store
+                .event_by_source_record(report.source_id, "event:date")
+                .expect("identity query")
+                .is_some()
+        );
 
         let october_start = NaiveDate::from_ymd_opt(2027, 10, 1).expect("start");
         let december_start = NaiveDate::from_ymd_opt(2027, 12, 1).expect("end");
@@ -857,6 +871,32 @@ mod tests {
         assert_eq!(second.created, 0);
         assert_eq!(second.retained_missing, 3);
         assert_eq!(store.event_count().expect("count"), 4);
+    }
+
+    #[test]
+    fn refresh_retains_records_missing_from_later_snapshot() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let first = import_reconciled_event_set_json(&store, FIXTURE, None).expect("first import");
+        assert_eq!(first.created, 4);
+
+        let mut later: Value = serde_json::from_str(FIXTURE).expect("fixture json");
+        let events = later
+            .get_mut("events")
+            .and_then(Value::as_array_mut)
+            .expect("events");
+        events.retain(|event| event.get("event_ref").and_then(Value::as_str) != Some("event:month"));
+        let later = serde_json::to_string(&later).expect("encode later snapshot");
+
+        let report =
+            import_reconciled_event_set_json(&store, &later, None).expect("refresh import");
+        assert_eq!(report.retained_missing, 1);
+        assert_eq!(store.event_count().expect("count"), 4);
+        assert!(
+            store
+                .event_by_source_record(report.source_id, "event:month")
+                .expect("identity query")
+                .is_some()
+        );
     }
 
     #[test]
