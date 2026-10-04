@@ -69,6 +69,27 @@ pub struct TariaCalendarSetImportResult {
     pub resolved_memberships: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TariaReleaseStatusRecord {
+    pub release_id: String,
+    pub channel: String,
+    pub status: String,
+    pub production_complete: bool,
+    pub generated_at: Option<String>,
+    pub adopted_at: String,
+    pub coverage_json: String,
+    pub manifest_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TariaProjectedCalendarChoice {
+    pub bundle_ref: String,
+    pub calendar_set_id: String,
+    pub calendar_id: String,
+    pub name: String,
+    pub kind: String,
+}
+
 pub struct TemporalStore {
     conn: Connection,
     path: Option<PathBuf>,
@@ -778,6 +799,100 @@ impl TemporalStore {
             .query_row("SELECT COUNT(*) FROM taria_releases", [], |row| row.get(0))
             .context("failed to count Taria releases")?;
         u64::try_from(count).context("Taria release count cannot be represented as u64")
+    }
+
+    pub fn taria_release_status(
+        &self,
+        release_id: Option<&str>,
+    ) -> anyhow::Result<Option<TariaReleaseStatusRecord>> {
+        let Some(release_id) = release_id else {
+            return Ok(None);
+        };
+
+        self.conn
+            .query_row(
+                r#"
+                SELECT release_id, channel, status, production_complete,
+                       generated_at, adopted_at, coverage_json, manifest_json
+                FROM taria_releases
+                WHERE release_id = ?1
+                "#,
+                params![release_id],
+                |row| {
+                    Ok(TariaReleaseStatusRecord {
+                        release_id: row.get(0)?,
+                        channel: row.get(1)?,
+                        status: row.get(2)?,
+                        production_complete: row.get(3)?,
+                        generated_at: row.get(4)?,
+                        adopted_at: row.get(5)?,
+                        coverage_json: row.get(6)?,
+                        manifest_json: row.get(7)?,
+                    })
+                },
+            )
+            .optional()
+            .context("failed to query adopted Taria release status")
+    }
+
+    pub fn taria_bundle_refs_for_release(
+        &self,
+        release_id: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        let Some(release_id) = release_id else {
+            return Ok(Vec::new());
+        };
+
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT DISTINCT bundle_ref
+            FROM taria_release_calendar_sets
+            WHERE release_id = ?1
+            ORDER BY bundle_ref
+            "#,
+        )?;
+        let mut rows = stmt.query(params![release_id])?;
+        let mut refs = Vec::new();
+        while let Some(row) = rows.next()? {
+            refs.push(row.get(0)?);
+        }
+        Ok(refs)
+    }
+
+    pub fn taria_projected_calendar_choices_for_release(
+        &self,
+        release_id: Option<&str>,
+    ) -> anyhow::Result<Vec<TariaProjectedCalendarChoice>> {
+        let Some(release_id) = release_id else {
+            return Ok(Vec::new());
+        };
+
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT release_set.bundle_ref,
+                   calendar.calendar_set_id,
+                   calendar.calendar_id,
+                   calendar.name,
+                   calendar.kind
+            FROM taria_projected_calendars AS calendar
+            JOIN taria_release_calendar_sets AS release_set
+              ON release_set.calendar_set_id = calendar.calendar_set_id
+            WHERE release_set.release_id = ?1
+            ORDER BY release_set.bundle_ref, calendar.name COLLATE NOCASE, calendar.calendar_id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![release_id])?;
+        let mut calendars = Vec::new();
+        while let Some(row) = rows.next()? {
+            calendars.push(TariaProjectedCalendarChoice {
+                bundle_ref: row.get(0)?,
+                calendar_set_id: row.get(1)?,
+                calendar_id: row.get(2)?,
+                name: row.get(3)?,
+                kind: row.get(4)?,
+            });
+        }
+        Ok(calendars)
     }
 
     pub fn taria_event_memberships_for_release(
@@ -2239,6 +2354,68 @@ mod tests {
         assert!(columns.contains(&"color_rules_json".to_string()));
         assert!(columns.contains(&"overlays_json".to_string()));
         assert!(columns.contains(&"composition_layers_json".to_string()));
+    }
+
+    #[test]
+    fn release_status_and_query_choices_are_readable() {
+        let store = TemporalStore::open_in_memory().expect("store");
+
+        store
+            .upsert_taria_release(&TariaReleaseRecord {
+                release_id: "release:choices".to_string(),
+                channel: "bootstrap".to_string(),
+                status: "bootstrap-partial".to_string(),
+                production_complete: false,
+                manifest_path: "manifest.json".to_string(),
+                manifest_sha256: "abc".to_string(),
+                generated_at: Some("2026-10-04T20:00:00Z".to_string()),
+                coverage_json: r#"{"ready_events":12}"#.to_string(),
+                manifest_json: r#"{"canonical_bundle_slots":[]}"#.to_string(),
+            })
+            .expect("release");
+
+        store
+            .replace_taria_calendar_set(
+                &TariaCalendarSetRecord {
+                    calendar_set_id: "calendar-set:choices".to_string(),
+                    release_id: "release:choices".to_string(),
+                    bundle_ref: "bundle:temporal/politics-government".to_string(),
+                    projection_ref: "projection:choices".to_string(),
+                    input_reconciled_event_set_ref: "reconciled-set:choices".to_string(),
+                    source_path: "calendar-set.json".to_string(),
+                    content_sha256: "def".to_string(),
+                    raw_json: "{}".to_string(),
+                },
+                &[TariaProjectedCalendarRecord {
+                    calendar_id: "projected-calendar:choices".to_string(),
+                    name: "Politics".to_string(),
+                    kind: "single".to_string(),
+                    metadata_json: "{}".to_string(),
+                }],
+                &[],
+            )
+            .expect("calendar set");
+
+        let release = store
+            .taria_release_status(Some("release:choices"))
+            .expect("status")
+            .expect("release");
+        assert_eq!(release.status, "bootstrap-partial");
+        assert_eq!(release.generated_at.as_deref(), Some("2026-10-04T20:00:00Z"));
+
+        assert_eq!(
+            store
+                .taria_bundle_refs_for_release(Some("release:choices"))
+                .expect("bundles"),
+            vec!["bundle:temporal/politics-government".to_string()]
+        );
+
+        let calendars = store
+            .taria_projected_calendar_choices_for_release(Some("release:choices"))
+            .expect("calendars");
+        assert_eq!(calendars.len(), 1);
+        assert_eq!(calendars[0].name, "Politics");
+        assert_eq!(calendars[0].calendar_id, "projected-calendar:choices");
     }
 
     #[test]
