@@ -24,10 +24,7 @@ fn main() -> anyhow::Result<()> {
     );
     println!(
         "Imprecise: {}  Unplaced: {}  Blocked/undated: {}  Prior missing retained: {}",
-        report.imprecise,
-        report.unplaced,
-        report.blocked_or_undated,
-        report.retained_missing
+        report.imprecise, report.unplaced, report.blocked_or_undated, report.retained_missing
     );
 
     Ok(())
