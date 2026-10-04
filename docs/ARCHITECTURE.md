@@ -17,6 +17,9 @@ The baseline is no longer speculative:
 - ordered color rules
 - overlays
 - direct Taria reconciled-event-set ingestion
+- direct CompactReconciledEventIndex ingestion
+- filesystem-first Taria release/channel resolution
+- one-click local Taria source update
 
 Current SQLite schema version: **8**.
 
@@ -201,16 +204,26 @@ Taria owns acquisition, normalization, reconciliation, projections, CalendarSets
 
 Ephemeris owns local adoption and runtime interpretation.
 
-The direct `ReconciledProjectionEventSet` importer already exists and remains the preferred full event-payload adapter. Bootstrap r3 additionally establishes `CompactReconciledEventIndex` as an accepted compact post-reconciliation payload class for recovered shards; an Ephemeris adapter for it is still pending.
+The direct `ReconciledProjectionEventSet` importer remains the preferred full event-payload adapter. The `CompactReconciledEventIndex` adapter is also implemented for recovered bootstrap shards.
 
-The next architecture slice is a release-level adapter that:
+The implemented filesystem release layer now:
 
-- validates release schema/status/hashes;
-- resolves bootstrap or production artifact packaging;
-- imports canonical event payload once across overlapping bundles;
-- persists CalendarSet membership separately;
-- preserves release coverage/gap posture;
-- records adopted release identity.
+- persists a local Resourcearium root/channel in UI state;
+- auto-detects common local Taria checkout layouts;
+- resolves the local channel registry and immutable manifest;
+- confines artifact paths under the Resourcearium tree;
+- verifies declared SHA-256 payload hashes;
+- imports supported bootstrap post-reconciliation payloads;
+- reports unsupported populated shards explicitly.
+
+The next architecture slice must complete release semantics:
+
+- import canonical event payload once across overlapping production bundles;
+- persist CalendarSet membership separately;
+- preserve release coverage/gap posture canonically;
+- record adopted release identity/coverage in SQLite;
+- make multi-artifact adoption atomic;
+- execute large adoptions off the egui frame loop.
 
 CalendarSet is membership metadata, not event payload.
 
@@ -263,7 +276,9 @@ Avoid circular dependencies between rendering and canonical state.
 
 ## Async/background work
 
-Network refresh, large imports, indexing, and expensive reconciliation should not block egui's frame loop.
+The first one-click filesystem update path is currently synchronous.
+
+Large imports, future network discovery, indexing, and expensive reconciliation should not block egui's frame loop.
 
 The application should use explicit worker/task boundaries and communicate completion/progress safely back to the UI.
 
