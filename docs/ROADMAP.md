@@ -68,9 +68,9 @@ Still required:
 - relations/collections
 - richer indexed ontology
 
-## Phase 3 - Taria ingestion vertical slice
+## Phase 3 - Taria ingestion and bundle-release adoption
 
-Status: **first vertical slice working**
+Status: **direct event payload slice working; release adoption next**
 
 Implemented:
 
@@ -86,13 +86,44 @@ Implemented:
 - CLI import
 - provenance-rich event inspector
 
-Still required:
+Now established upstream:
 
-- richer native interchange/version evolution
+- immutable TemporalBundleRelease schema/registry
+- bootstrap and production release channels
+- bootstrap-partial integration release
+- production-partial / production-complete packaging
+- canonical 13-projection bundle build
+- CalendarSet packaging
+- release validation and integrity hashes
+
+Next Ephemeris implementation:
+
+- TemporalBundleRelease v1 manifest importer
+- support bootstrap `shards[]` and production `bundle_artifacts[]`
+- resolve reconciled event payloads from release artifacts
+- CalendarSet membership persistence
+- release/channel/coverage metadata persistence
+- partial/pending/gap-only UI posture
+- atomic hash/fingerprint validation
+- release-to-release adoption/diff foundation
+
+Still later:
+
 - snapshot/history persistence
-- source health
-- rollover state
-- additional Taria artifact families
+- source health/rollover presentation
+- additional Taria artifact families as Resourcearium evolves
+
+## Immediate program priority
+
+The highest-priority integration boundary is now Taria **TemporalBundleRelease v1** consumption.
+
+Resourcearium is independently building/populating frozen bundles. Ephemeris should consume those releases rather than duplicate acquisition work.
+
+The consumer contract is frozen in:
+
+- `docs/TARIA_BUNDLE_CONTRACT.md`
+
+Current low-level direct reconciled-event-set import remains valid and will be reused underneath the release importer.
 
 ## Phase 4 - Calendar views
 
@@ -201,7 +232,7 @@ Implemented overlay foundation:
 - independent overlay fallback coloring and color rules
 - saved-view persistence and UI editing
 
-Next:
+Next after the Taria release-consumer slice:
 
 - explicit intersection/subtraction composition in addition to union
 - richer facets
