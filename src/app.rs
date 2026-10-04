@@ -291,7 +291,7 @@ impl EphemerisApp {
                 event
                     .source_id
                     .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-                    && query.matches(event)
+                    && query.matches(event, &context)
             })
             .cloned()
             .collect::<Vec<_>>();
