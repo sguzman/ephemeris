@@ -110,9 +110,11 @@ mod tests {
     fn state_roundtrips() {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("ui-state.json");
-        let mut state = PersistedUiState::default();
-        state.calendar_view = CalendarView::Week;
-        state.display_timezone = "UTC".to_string();
+        let state = PersistedUiState {
+            calendar_view: CalendarView::Week,
+            display_timezone: "UTC".to_string(),
+            ..PersistedUiState::default()
+        };
 
         state.save_to_path(&path).expect("save");
         let loaded = PersistedUiState::load_from_path(&path).expect("load");
