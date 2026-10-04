@@ -17,9 +17,7 @@ use crate::query::{
     matches_composed_or_overlay_with_membership,
 };
 use crate::state::PersistedUiState;
-use crate::store::{
-    TariaProjectedCalendarChoice, TariaReleaseStatusRecord, TemporalStore,
-};
+use crate::store::{TariaProjectedCalendarChoice, TariaReleaseStatusRecord, TemporalStore};
 use crate::taria::import_reconciled_event_set_file;
 use crate::taria_workspace::{
     detect_resourcearium_root, normalize_resourcearium_root,
@@ -249,7 +247,11 @@ impl EphemerisApp {
             inspector_row(
                 ui,
                 "Production complete",
-                if release.production_complete { "yes" } else { "no" },
+                if release.production_complete {
+                    "yes"
+                } else {
+                    "no"
+                },
             );
             if let Some(generated_at) = release.generated_at.as_deref() {
                 inspector_row(ui, "Generated", generated_at);
@@ -286,7 +288,11 @@ impl EphemerisApp {
                     inspector_row(ui, "Ready events", &ready.to_string());
                 }
                 if let (Some(represented), Some(universe)) = (represented, universe) {
-                    inspector_row(ui, "Resources represented", &format!("{represented} / {universe}"));
+                    inspector_row(
+                        ui,
+                        "Resources represented",
+                        &format!("{represented} / {universe}"),
+                    );
                 }
                 if let Some(populated) = populated {
                     inspector_row(ui, "Populated bundle slots", &populated.to_string());
@@ -380,11 +386,9 @@ impl EphemerisApp {
         self.taria_bundle_refs = self
             .store
             .taria_bundle_refs_for_release(self.state.taria_last_release_id.as_deref())?;
-        self.taria_calendar_choices = self
-            .store
-            .taria_projected_calendar_choices_for_release(
-                self.state.taria_last_release_id.as_deref(),
-            )?;
+        self.taria_calendar_choices = self.store.taria_projected_calendar_choices_for_release(
+            self.state.taria_last_release_id.as_deref(),
+        )?;
         Ok(())
     }
 
