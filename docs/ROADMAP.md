@@ -145,13 +145,20 @@ Implemented:
 - saved layout
 - saved timezone/week-start/source visibility
 
+Implemented presentation dimensions:
+
+- grouping independent from filtering
+- stable multi-key sorting
+- semantic coloring independent from grouping/source visibility
+- persistence of grouping/sorting/color in saved views
+- application across Agenda and Grid layouts
+
 Next:
 
-- grouping
-- stable multi-key sorting
-- independent color rules
 - richer facets
 - boolean/nested query representation
+- typed query predicates
+- ordered color-rule sets
 - view composition/calendar algebra
 
 Exit criterion remains:
