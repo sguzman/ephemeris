@@ -748,6 +748,118 @@ impl EphemerisApp {
                 });
         });
 
+        ui.separator();
+        ui.strong("Overlays");
+        ui.small(
+            "Enabled overlays union independent queries into the current view. Topmost matching overlay controls overlay styling.",
+        );
+
+        let mut remove_overlay = None;
+        let mut swap_overlay = None;
+        let overlay_count = self.state.overlays.len();
+
+        for (index, overlay) in self.state.overlays.iter_mut().enumerate() {
+            ui.group(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    presentation_changed |= ui.checkbox(&mut overlay.enabled, "").changed();
+                    presentation_changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut overlay.name)
+                                .hint_text("Overlay name"),
+                        )
+                        .changed();
+
+                    egui::ComboBox::from_id_salt(("overlay-color", overlay.id))
+                        .selected_text(overlay.color_by.label())
+                        .show_ui(ui, |ui| {
+                            for color_by in ColorBy::ALL {
+                                presentation_changed |= ui
+                                    .selectable_value(
+                                        &mut overlay.color_by,
+                                        color_by,
+                                        color_by.label(),
+                                    )
+                                    .changed();
+                            }
+                        });
+
+                    if index > 0
+                        && ui
+                            .small_button("↑")
+                            .on_hover_text("Higher overlay precedence")
+                            .clicked()
+                    {
+                        swap_overlay = Some((index, index - 1));
+                    }
+                    if index + 1 < overlay_count
+                        && ui
+                            .small_button("↓")
+                            .on_hover_text("Lower overlay precedence")
+                            .clicked()
+                    {
+                        swap_overlay = Some((index, index + 1));
+                    }
+                    if ui.small_button("×").on_hover_text("Delete overlay").clicked() {
+                        remove_overlay = Some(index);
+                    }
+                });
+
+                if overlay.query.expression.is_none() {
+                    if overlay.query.is_empty() {
+                        ui.small("Empty query matches every visible-source event.");
+                    } else {
+                        ui.small(
+                            "This overlay also contains saved simple facets. They remain active.",
+                        );
+                    }
+
+                    if ui.button("Add overlay condition").clicked() {
+                        overlay.query.expression =
+                            Some(default_query_expr(QueryExprKind::Predicate));
+                        presentation_changed = true;
+                    }
+                } else if let Some(expression) = overlay.query.expression.as_mut() {
+                    presentation_changed |= render_query_expr_editor(
+                        ui,
+                        expression,
+                        &format!("overlay-query-{}", overlay.id),
+                    );
+                }
+
+                if !overlay.color_rules.is_empty() {
+                    ui.small(format!(
+                        "{} overlay-specific color rules are preserved and evaluated before its fallback.",
+                        overlay.color_rules.len()
+                    ));
+                }
+            });
+        }
+
+        if let Some((left, right)) = swap_overlay {
+            self.state.overlays.swap(left, right);
+            presentation_changed = true;
+        }
+        if let Some(index) = remove_overlay {
+            self.state.overlays.remove(index);
+            presentation_changed = true;
+        }
+
+        if ui.button("Add overlay").clicked() {
+            self.state.overlays.push(Overlay {
+                id: Uuid::new_v4(),
+                name: format!("Overlay {}", self.state.overlays.len() + 1),
+                enabled: false,
+                query: crate::query::EventQuery {
+                    expression: Some(default_query_expr(QueryExprKind::Predicate)),
+                    ..crate::query::EventQuery::default()
+                },
+                color_by: ColorBy::Domain,
+                color_rules: Vec::new(),
+            });
+            presentation_changed = true;
+        }
+
+        ui.separator();
         ui.strong("Sort rules");
         let mut remove_sort = None;
         let can_remove_sort = self.state.sort_rules.len() > 1;
