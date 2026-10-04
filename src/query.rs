@@ -844,6 +844,45 @@ impl ColorBy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RgbColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl RgbColor {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+}
+
+impl Default for RgbColor {
+    fn default() -> Self {
+        Self::new(116, 185, 255)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ColorRule {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub when: QueryExpr,
+    pub color: RgbColor,
+}
+
+impl ColorRule {
+    pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
+        self.enabled && self.when.matches(event, context)
+    }
+}
+
+const fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedView {
     pub id: Uuid,
@@ -861,6 +900,8 @@ pub struct SavedView {
     pub sort_rules: Vec<SortRule>,
     #[serde(default)]
     pub color_by: ColorBy,
+    #[serde(default)]
+    pub color_rules: Vec<ColorRule>,
     pub display_timezone: String,
     pub week_start_monday: bool,
 }
@@ -1151,6 +1192,17 @@ mod tests {
                 direction: SortDirection::Descending,
             }],
             color_by: ColorBy::EventType,
+            color_rules: vec![ColorRule {
+                id: Uuid::new_v4(),
+                name: "High importance".to_string(),
+                enabled: true,
+                when: QueryExpr::Predicate(QueryPredicate::Integer {
+                    field: IntegerField::Importance,
+                    operator: IntegerOperator::GreaterThanOrEqual,
+                    value: 80,
+                }),
+                color: RgbColor::new(255, 80, 80),
+            }],
             display_timezone: "America/Mexico_City".to_string(),
             week_start_monday: false,
         };
@@ -1159,6 +1211,8 @@ mod tests {
         assert_eq!(view.calendar_layout, CalendarLayout::Agenda);
         assert_eq!(view.group_by, GroupBy::Jurisdiction);
         assert_eq!(view.color_by, ColorBy::EventType);
+        assert_eq!(view.color_rules.len(), 1);
+        assert!(view.color_rules[0].matches(&event(), &test_context()));
         assert_eq!(view.sort_rules.len(), 1);
         assert!(!view.id.is_nil());
     }
