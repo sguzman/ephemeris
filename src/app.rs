@@ -654,15 +654,89 @@ impl EphemerisApp {
                 }
             });
 
-        egui::ComboBox::from_id_salt("presentation.color")
-            .selected_text(self.state.color_by.label())
-            .show_ui(ui, |ui| {
-                for color_by in ColorBy::ALL {
+        ui.strong("Color rules");
+        ui.small("Rules are evaluated top to bottom; the first enabled match wins.");
+
+        let mut remove_color_rule = None;
+        let mut swap_color_rule = None;
+        let color_rule_count = self.state.color_rules.len();
+
+        for (index, rule) in self.state.color_rules.iter_mut().enumerate() {
+            ui.group(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    presentation_changed |= ui.checkbox(&mut rule.enabled, "").changed();
                     presentation_changed |= ui
-                        .selectable_value(&mut self.state.color_by, color_by, color_by.label())
+                        .add(
+                            egui::TextEdit::singleline(&mut rule.name)
+                                .hint_text("Color rule name"),
+                        )
                         .changed();
-                }
+
+                    ui.label("RGB");
+                    presentation_changed |= ui
+                        .add(egui::DragValue::new(&mut rule.color.r).range(0..=255))
+                        .changed();
+                    presentation_changed |= ui
+                        .add(egui::DragValue::new(&mut rule.color.g).range(0..=255))
+                        .changed();
+                    presentation_changed |= ui
+                        .add(egui::DragValue::new(&mut rule.color.b).range(0..=255))
+                        .changed();
+
+                    if index > 0 && ui.small_button("↑").on_hover_text("Higher precedence").clicked()
+                    {
+                        swap_color_rule = Some((index, index - 1));
+                    }
+                    if index + 1 < color_rule_count
+                        && ui.small_button("↓").on_hover_text("Lower precedence").clicked()
+                    {
+                        swap_color_rule = Some((index, index + 1));
+                    }
+                    if ui.small_button("×").on_hover_text("Delete color rule").clicked() {
+                        remove_color_rule = Some(index);
+                    }
+                });
+
+                presentation_changed |= render_query_expr_editor(
+                    ui,
+                    &mut rule.when,
+                    &format!("color-rule-{}", rule.id),
+                );
             });
+        }
+
+        if let Some((left, right)) = swap_color_rule {
+            self.state.color_rules.swap(left, right);
+            presentation_changed = true;
+        }
+        if let Some(index) = remove_color_rule {
+            self.state.color_rules.remove(index);
+            presentation_changed = true;
+        }
+
+        if ui.button("Add color rule").clicked() {
+            self.state.color_rules.push(ColorRule {
+                id: Uuid::new_v4(),
+                name: format!("Rule {}", self.state.color_rules.len() + 1),
+                enabled: false,
+                when: default_query_expr(QueryExprKind::Predicate),
+                color: RgbColor::default(),
+            });
+            presentation_changed = true;
+        }
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Fallback:");
+            egui::ComboBox::from_id_salt("presentation.color")
+                .selected_text(self.state.color_by.label())
+                .show_ui(ui, |ui| {
+                    for color_by in ColorBy::ALL {
+                        presentation_changed |= ui
+                            .selectable_value(&mut self.state.color_by, color_by, color_by.label())
+                            .changed();
+                    }
+                });
+        });
 
         ui.strong("Sort rules");
         let mut remove_sort = None;
@@ -1924,8 +1998,16 @@ fn date_group_label(event: &TemporalEvent, timezone: Tz) -> String {
     }
 }
 
-fn event_color(event: &TemporalEvent, color_by: ColorBy) -> Color32 {
-    match color_by {
+fn event_color(event: &TemporalEvent, colors: ColorPresentation<'_>) -> Color32 {
+    if let Some(rule) = colors
+        .rules
+        .iter()
+        .find(|rule| rule.matches(event, &colors.query_context))
+    {
+        return Color32::from_rgb(rule.color.r, rule.color.g, rule.color.b);
+    }
+
+    match colors.fallback {
         ColorBy::None => Color32::WHITE,
         ColorBy::Status => status_color(event.status),
         ColorBy::Source => category_color(event_source_key(event).as_deref()),
