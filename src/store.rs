@@ -13,7 +13,7 @@ use crate::domain::{
 };
 use crate::query::SavedView;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -177,7 +177,9 @@ impl TemporalStore {
             r#"
             SELECT
                 id, name, query_json, hidden_source_ids_json,
-                calendar_view_json, calendar_layout, display_timezone, week_start_monday
+                calendar_view_json, calendar_layout,
+                group_by_json, sort_rules_json, color_by_json,
+                display_timezone, week_start_monday
             FROM saved_views
             ORDER BY name COLLATE NOCASE, id
             "#,
@@ -197,17 +199,27 @@ impl TemporalStore {
         let hidden_source_ids_json = serde_json::to_string(&view.hidden_source_ids)
             .context("failed to encode saved-view source visibility")?;
         let calendar_view_json = serde_json::to_string(&view.calendar_view)
-            .context("failed to encode saved-view calendar layout")?;
+            .context("failed to encode saved-view calendar range")?;
+        let group_by_json = serde_json::to_string(&view.group_by)
+            .context("failed to encode saved-view grouping")?;
+        let sort_rules_json = serde_json::to_string(&view.sort_rules)
+            .context("failed to encode saved-view sort rules")?;
+        let color_by_json = serde_json::to_string(&view.color_by)
+            .context("failed to encode saved-view color strategy")?;
 
         self.conn
             .execute(
                 r#"
                 INSERT INTO saved_views (
                     id, name, query_json, hidden_source_ids_json,
-                    calendar_view_json, calendar_layout, display_timezone, week_start_monday
+                    calendar_view_json, calendar_layout,
+                    group_by_json, sort_rules_json, color_by_json,
+                    display_timezone, week_start_monday
                 ) VALUES (
                     :id, :name, :query_json, :hidden_source_ids_json,
-                    :calendar_view_json, :calendar_layout, :display_timezone, :week_start_monday
+                    :calendar_view_json, :calendar_layout,
+                    :group_by_json, :sort_rules_json, :color_by_json,
+                    :display_timezone, :week_start_monday
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
@@ -215,6 +227,9 @@ impl TemporalStore {
                     hidden_source_ids_json = excluded.hidden_source_ids_json,
                     calendar_view_json = excluded.calendar_view_json,
                     calendar_layout = excluded.calendar_layout,
+                    group_by_json = excluded.group_by_json,
+                    sort_rules_json = excluded.sort_rules_json,
+                    color_by_json = excluded.color_by_json,
                     display_timezone = excluded.display_timezone,
                     week_start_monday = excluded.week_start_monday
                 "#,
@@ -225,6 +240,9 @@ impl TemporalStore {
                     ":hidden_source_ids_json": hidden_source_ids_json,
                     ":calendar_view_json": calendar_view_json,
                     ":calendar_layout": view.calendar_layout.as_str(),
+                    ":group_by_json": group_by_json,
+                    ":sort_rules_json": sort_rules_json,
+                    ":color_by_json": color_by_json,
                     ":display_timezone": view.display_timezone,
                     ":week_start_monday": view.week_start_monday,
                 },
@@ -596,6 +614,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 3 {
         migrate_v3_to_v4(conn)?;
+        current = 4;
+    }
+
+    if current == 4 {
+        migrate_v4_to_v5(conn)?;
     }
 
     Ok(())
@@ -720,6 +743,9 @@ fn create_saved_views_schema(conn: &Connection) -> anyhow::Result<()> {
             hidden_source_ids_json TEXT NOT NULL DEFAULT '[]',
             calendar_view_json TEXT NOT NULL,
             calendar_layout TEXT NOT NULL DEFAULT 'grid',
+            group_by_json TEXT NOT NULL DEFAULT '"date"',
+            sort_rules_json TEXT NOT NULL DEFAULT '[{"field":"time","direction":"ascending"}]',
+            color_by_json TEXT NOT NULL DEFAULT '"status"',
             display_timezone TEXT NOT NULL,
             week_start_monday INTEGER NOT NULL DEFAULT 0
         );
@@ -740,6 +766,25 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> anyhow::Result<()> {
         .context("failed to set schema version 3")?;
     tx.commit()
         .context("failed to commit v2 to v3 schema migration")
+}
+
+fn migrate_v4_to_v5(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v4 to v5 migration")?;
+    tx.execute_batch(
+        r#"
+        ALTER TABLE saved_views ADD COLUMN group_by_json TEXT NOT NULL DEFAULT '"date"';
+        ALTER TABLE saved_views ADD COLUMN sort_rules_json TEXT NOT NULL
+            DEFAULT '[{"field":"time","direction":"ascending"}]';
+        ALTER TABLE saved_views ADD COLUMN color_by_json TEXT NOT NULL DEFAULT '"status"';
+        "#,
+    )
+    .context("failed to add saved-view presentation dimensions")?;
+    tx.pragma_update(None, "user_version", 5)
+        .context("failed to set schema version 5")?;
+    tx.commit()
+        .context("failed to commit v4 to v5 schema migration")
 }
 
 fn migrate_v3_to_v4(conn: &mut Connection) -> anyhow::Result<()> {
@@ -917,6 +962,9 @@ fn decode_saved_view(row: &Row<'_>) -> rusqlite::Result<SavedView> {
     let query_raw: String = row.get("query_json")?;
     let hidden_raw: String = row.get("hidden_source_ids_json")?;
     let calendar_view_raw: String = row.get("calendar_view_json")?;
+    let group_by_raw: String = row.get("group_by_json")?;
+    let sort_rules_raw: String = row.get("sort_rules_json")?;
+    let color_by_raw: String = row.get("color_by_json")?;
 
     Ok(SavedView {
         id: Uuid::parse_str(&id_raw).map_err(to_sql_decode_error)?,
@@ -925,6 +973,9 @@ fn decode_saved_view(row: &Row<'_>) -> rusqlite::Result<SavedView> {
         hidden_source_ids: serde_json::from_str(&hidden_raw).map_err(to_sql_decode_error)?,
         calendar_view: serde_json::from_str(&calendar_view_raw).map_err(to_sql_decode_error)?,
         calendar_layout: CalendarLayout::parse(&row.get::<_, String>("calendar_layout")?),
+        group_by: serde_json::from_str(&group_by_raw).map_err(to_sql_decode_error)?,
+        sort_rules: serde_json::from_str(&sort_rules_raw).map_err(to_sql_decode_error)?,
+        color_by: serde_json::from_str(&color_by_raw).map_err(to_sql_decode_error)?,
         display_timezone: row.get("display_timezone")?,
         week_start_monday: row.get("week_start_monday")?,
     })
@@ -1275,7 +1326,7 @@ mod tests {
     #[test]
     fn schema_bootstraps_at_current_version() {
         let store = TemporalStore::open_in_memory().expect("store");
-        assert_eq!(store.schema_version().expect("version"), 4);
+        assert_eq!(store.schema_version().expect("version"), 5);
     }
 
     #[test]
@@ -1395,7 +1446,9 @@ mod tests {
     #[test]
     fn saved_view_roundtrips_through_database() {
         use crate::calendar::CalendarView;
-        use crate::query::{EventQuery, SavedView};
+        use crate::query::{
+            ColorBy, EventQuery, GroupBy, SavedView, SortDirection, SortField, SortRule,
+        };
 
         let store = TemporalStore::open_in_memory().expect("store");
         let view = SavedView::new(
@@ -1408,6 +1461,12 @@ mod tests {
             std::collections::BTreeSet::new(),
             CalendarView::Year,
             CalendarLayout::Agenda,
+            GroupBy::Jurisdiction,
+            vec![SortRule {
+                field: SortField::Importance,
+                direction: SortDirection::Descending,
+            }],
+            ColorBy::EventType,
             "America/Mexico_City",
             false,
         );
@@ -1417,6 +1476,9 @@ mod tests {
 
         assert_eq!(loaded, vec![view.clone()]);
         assert_eq!(loaded[0].calendar_layout, CalendarLayout::Agenda);
+        assert_eq!(loaded[0].group_by, GroupBy::Jurisdiction);
+        assert_eq!(loaded[0].color_by, ColorBy::EventType);
+        assert_eq!(loaded[0].sort_rules.len(), 1);
         store.delete_saved_view(view.id).expect("delete");
         assert!(store.list_saved_views().expect("list").is_empty());
     }
