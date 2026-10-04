@@ -1103,7 +1103,11 @@ fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
             exists: true,
         },
         QueryPredicateKind::TemporalKindAnyOf => QueryPredicate::TemporalKindAnyOf {
-            values: vec![TemporalKind::DateOnly, TemporalKind::AllDay, TemporalKind::Instant],
+            values: vec![
+                TemporalKind::DateOnly,
+                TemporalKind::AllDay,
+                TemporalKind::Instant,
+            ],
         },
         QueryPredicateKind::DateOverlaps => QueryPredicate::DateOverlaps {
             start: None,
@@ -1408,19 +1412,9 @@ fn render_optional_date_editor(
             let parts_changed = ui
                 .add(egui::DragValue::new(&mut year).prefix("Y ").speed(1))
                 .changed()
-                | ui
-                    .add(
-                        egui::DragValue::new(&mut month)
-                            .prefix("M ")
-                            .range(1..=12),
-                    )
+                | ui.add(egui::DragValue::new(&mut month).prefix("M ").range(1..=12))
                     .changed()
-                | ui
-                    .add(
-                        egui::DragValue::new(&mut day)
-                            .prefix("D ")
-                            .range(1..=31),
-                    )
+                | ui.add(egui::DragValue::new(&mut day).prefix("D ").range(1..=31))
                     .changed();
 
             if parts_changed {
@@ -1441,8 +1435,7 @@ fn clamped_date(year: i32, month: u32, mut day: u32) -> NaiveDate {
         day -= 1;
     }
 
-    NaiveDate::from_ymd_opt(year, month, 1)
-        .unwrap_or_else(|| Local::now().date_naive())
+    NaiveDate::from_ymd_opt(year, month, 1).unwrap_or_else(|| Local::now().date_naive())
 }
 
 #[derive(Debug, Clone, Copy)]
