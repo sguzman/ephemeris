@@ -5,5 +5,6 @@ pub mod query;
 pub mod state;
 pub mod store;
 pub mod taria;
+pub mod taria_workspace;
 
 pub use app::EphemerisApp;
