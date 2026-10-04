@@ -208,8 +208,8 @@ impl TemporalStore {
             .context("failed to encode saved-view color strategy")?;
         let color_rules_json = serde_json::to_string(&view.color_rules)
             .context("failed to encode saved-view color rules")?;
-        let overlays_json =
-            serde_json::to_string(&view.overlays).context("failed to encode saved-view overlays")?;
+        let overlays_json = serde_json::to_string(&view.overlays)
+            .context("failed to encode saved-view overlays")?;
 
         self.conn
             .execute(
