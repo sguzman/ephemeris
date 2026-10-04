@@ -667,8 +667,7 @@ impl EphemerisApp {
                     presentation_changed |= ui.checkbox(&mut rule.enabled, "").changed();
                     presentation_changed |= ui
                         .add(
-                            egui::TextEdit::singleline(&mut rule.name)
-                                .hint_text("Color rule name"),
+                            egui::TextEdit::singleline(&mut rule.name).hint_text("Color rule name"),
                         )
                         .changed();
 
@@ -683,16 +682,27 @@ impl EphemerisApp {
                         .add(egui::DragValue::new(&mut rule.color.b).range(0..=255))
                         .changed();
 
-                    if index > 0 && ui.small_button("↑").on_hover_text("Higher precedence").clicked()
+                    if index > 0
+                        && ui
+                            .small_button("↑")
+                            .on_hover_text("Higher precedence")
+                            .clicked()
                     {
                         swap_color_rule = Some((index, index - 1));
                     }
                     if index + 1 < color_rule_count
-                        && ui.small_button("↓").on_hover_text("Lower precedence").clicked()
+                        && ui
+                            .small_button("↓")
+                            .on_hover_text("Lower precedence")
+                            .clicked()
                     {
                         swap_color_rule = Some((index, index + 1));
                     }
-                    if ui.small_button("×").on_hover_text("Delete color rule").clicked() {
+                    if ui
+                        .small_button("×")
+                        .on_hover_text("Delete color rule")
+                        .clicked()
+                    {
                         remove_color_rule = Some(index);
                     }
                 });
