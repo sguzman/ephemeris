@@ -675,9 +675,10 @@ mod tests {
     }
 
     #[test]
-    fn local_update_imports_compact_payload_and_calendar_membership() {
+    fn bootstrap_update_imports_compact_and_full_reconciled_payloads() {
         let dir = tempdir().expect("tempdir");
         let root = dir.path().join("resourcearium");
+
         let compact_path = root.join("derived/politics/event-index.json");
         write(
             &compact_path,
@@ -687,26 +688,58 @@ mod tests {
               "projection_ref": "projection:test-politics",
               "content_fingerprint": {"algorithm":"sha256","value":"compact:test:fingerprint"},
               "events": [{
-                "reconciled_event_ref": "reconciled-event:test",
-                "assertion_ref": "assertion:test",
-                "event_ref": "event:test",
+                "reconciled_event_ref": "reconciled-event:politics",
+                "assertion_ref": "assertion:politics",
+                "event_ref": "event:politics",
                 "title": "Test election",
                 "temporal_value": {"kind":"date","start":"2026-11-03","end":"2026-11-04"},
                 "event_class": "election",
                 "schedule_status": "confirmed",
                 "categories": ["politics-government"],
-                "provenance_ref": "trace:test"
+                "provenance_ref": "trace:politics"
               }]
             }"#,
         );
         let compact_hash = "compact:test:fingerprint";
-        let (_, calendar_hash) = write_calendar_set(
+        let (_, politics_calendar_hash) = write_calendar_set(
             &root,
             "derived/politics/calendar-set.json",
             "calendar-set:test-politics",
             "projection:test-politics",
-            "reconciled-event:test",
+            "reconciled-event:politics",
             "projected-calendar:test-politics",
+        );
+
+        let sports_path = root.join("derived/sports/reconciled.json");
+        write(
+            &sports_path,
+            r#"{
+              "schema_version": 1,
+              "reconciled_projection_event_set_id": "reconciled-set:test-sports",
+              "projection_ref": "projection:test-sports",
+              "content_fingerprint": {"algorithm":"sha256","value":"reconciled:test:fingerprint"},
+              "events": [{
+                "reconciled_event_key": "reconciled-event:sports",
+                "event_ref": "event:sports",
+                "assertion_refs": ["assertion:sports"],
+                "retained_provenance_refs": ["trace:sports"],
+                "renderability": "ready",
+                "display_fields": {
+                  "title": "Test game",
+                  "temporal_value": {"kind":"date","start":"2026-11-04"},
+                  "schedule_status": "confirmed",
+                  "event_class": "game"
+                }
+              }]
+            }"#,
+        );
+        let (_, sports_calendar_hash) = write_calendar_set(
+            &root,
+            "derived/sports/calendar-set.json",
+            "calendar-set:test-sports",
+            "projection:test-sports",
+            "reconciled-event:sports",
+            "projected-calendar:test-sports",
         );
 
         write(
@@ -717,19 +750,25 @@ mod tests {
                   "schema_version": 1,
                   "status": "bootstrap-partial",
                   "production_complete": false,
-                  "coverage": {{"ready_events":1}},
+                  "coverage": {{"ready_events":2}},
                   "shards": [
                     {{
                       "shard_id": "shard:politics",
                       "bundle_ref": "bundle:temporal/politics-government",
+                      "event_payload_kind": "CompactReconciledEventIndex",
                       "event_index_path": "derived/politics/event-index.json",
                       "event_index_content_sha256": "{compact_hash}",
                       "calendar_set_path": "derived/politics/calendar-set.json",
-                      "calendar_set_content_sha256": "{calendar_hash}"
+                      "calendar_set_content_sha256": "{politics_calendar_hash}"
                     }},
                     {{
                       "shard_id": "shard:sports",
-                      "bundle_ref": "bundle:temporal/sports-competition"
+                      "bundle_ref": "bundle:temporal/sports-competition",
+                      "event_payload_kind": "ReconciledProjectionEventSet",
+                      "reconciled_event_set_path": "derived/sports/reconciled.json",
+                      "reconciled_event_set_content_sha256": "reconciled:test:fingerprint",
+                      "calendar_set_path": "derived/sports/calendar-set.json",
+                      "calendar_set_content_sha256": "{sports_calendar_hash}"
                     }}
                   ]
                 }}"#
@@ -749,20 +788,20 @@ channels:
         let report = update_taria_sources(&store, &root, "bootstrap").expect("update");
 
         assert_eq!(report.release_id, "temporal-bundle-release:test");
-        assert_eq!(report.imported_artifacts, 1);
-        assert_eq!(report.skipped_artifacts, 1);
-        assert_eq!(report.imported_events, 1);
-        assert_eq!(report.created, 1);
-        assert_eq!(report.calendar_sets_imported, 1);
-        assert_eq!(report.calendar_memberships, 1);
-        assert_eq!(report.resolved_calendar_memberships, 1);
-        assert_eq!(store.event_count().expect("count"), 1);
+        assert_eq!(report.imported_artifacts, 2);
+        assert_eq!(report.skipped_artifacts, 0);
+        assert_eq!(report.imported_events, 2);
+        assert_eq!(report.created, 2);
+        assert_eq!(report.calendar_sets_imported, 2);
+        assert_eq!(report.calendar_memberships, 2);
+        assert_eq!(report.resolved_calendar_memberships, 2);
+        assert_eq!(store.event_count().expect("count"), 2);
         assert_eq!(store.taria_release_count().expect("release count"), 1);
         assert_eq!(
             store
                 .taria_calendar_membership_count()
                 .expect("membership count"),
-            1
+            2
         );
     }
 
