@@ -129,9 +129,9 @@ impl EventQuery {
             }
         }
 
-        self.expression.as_ref().is_none_or(|expression| {
-            expression.matches_with_membership(event, context, membership)
-        })
+        self.expression
+            .as_ref()
+            .is_none_or(|expression| expression.matches_with_membership(event, context, membership))
     }
 }
 
@@ -303,10 +303,12 @@ impl QueryPredicate {
                     _ => false,
                 }
             }
-            Self::BundleMembership { bundle_ref } => membership
-                .is_some_and(|membership| membership.belongs_to_bundle(bundle_ref)),
-            Self::ProjectedCalendarMembership { calendar_id } => membership
-                .is_some_and(|membership| membership.belongs_to_calendar(calendar_id)),
+            Self::BundleMembership { bundle_ref } => {
+                membership.is_some_and(|membership| membership.belongs_to_bundle(bundle_ref))
+            }
+            Self::ProjectedCalendarMembership { calendar_id } => {
+                membership.is_some_and(|membership| membership.belongs_to_calendar(calendar_id))
+            }
         }
     }
 }
@@ -1540,16 +1542,8 @@ mod tests {
         };
 
         assert!(!bundle_query.matches(&event, &test_context()));
-        assert!(bundle_query.matches_with_membership(
-            &event,
-            &test_context(),
-            Some(&membership)
-        ));
-        assert!(calendar_query.matches_with_membership(
-            &event,
-            &test_context(),
-            Some(&membership)
-        ));
+        assert!(bundle_query.matches_with_membership(&event, &test_context(), Some(&membership)));
+        assert!(calendar_query.matches_with_membership(&event, &test_context(), Some(&membership)));
     }
 
     #[test]
