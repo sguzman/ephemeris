@@ -10,8 +10,9 @@ use uuid::Uuid;
 use crate::domain::{
     EventStatus, SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
 };
+use crate::query::SavedView;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -168,6 +169,72 @@ impl TemporalStore {
             sources.push(decode_source(row)?);
         }
         Ok(sources)
+    }
+
+    pub fn list_saved_views(&self) -> anyhow::Result<Vec<SavedView>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, name, query_json, hidden_source_ids_json,
+                calendar_view_json, display_timezone, week_start_monday
+            FROM saved_views
+            ORDER BY name COLLATE NOCASE, id
+            "#,
+        )?;
+
+        let mut rows = stmt.query([])?;
+        let mut views = Vec::new();
+        while let Some(row) = rows.next()? {
+            views.push(decode_saved_view(row)?);
+        }
+        Ok(views)
+    }
+
+    pub fn upsert_saved_view(&self, view: &SavedView) -> anyhow::Result<()> {
+        let query_json =
+            serde_json::to_string(&view.query).context("failed to encode saved-view query")?;
+        let hidden_source_ids_json = serde_json::to_string(&view.hidden_source_ids)
+            .context("failed to encode saved-view source visibility")?;
+        let calendar_view_json = serde_json::to_string(&view.calendar_view)
+            .context("failed to encode saved-view calendar layout")?;
+
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO saved_views (
+                    id, name, query_json, hidden_source_ids_json,
+                    calendar_view_json, display_timezone, week_start_monday
+                ) VALUES (
+                    :id, :name, :query_json, :hidden_source_ids_json,
+                    :calendar_view_json, :display_timezone, :week_start_monday
+                )
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    query_json = excluded.query_json,
+                    hidden_source_ids_json = excluded.hidden_source_ids_json,
+                    calendar_view_json = excluded.calendar_view_json,
+                    display_timezone = excluded.display_timezone,
+                    week_start_monday = excluded.week_start_monday
+                "#,
+                named_params! {
+                    ":id": view.id.to_string(),
+                    ":name": view.name,
+                    ":query_json": query_json,
+                    ":hidden_source_ids_json": hidden_source_ids_json,
+                    ":calendar_view_json": calendar_view_json,
+                    ":display_timezone": view.display_timezone,
+                    ":week_start_monday": view.week_start_monday,
+                },
+            )
+            .context("failed to upsert saved view")?;
+        Ok(())
+    }
+
+    pub fn delete_saved_view(&self, id: Uuid) -> anyhow::Result<()> {
+        self.conn
+            .execute("DELETE FROM saved_views WHERE id = ?1", params![id.to_string()])
+            .context("failed to delete saved view")?;
+        Ok(())
     }
 
     pub fn upsert_event(&self, event: &TemporalEvent) -> anyhow::Result<()> {
@@ -492,7 +559,7 @@ fn configure_connection(conn: &Connection) -> anyhow::Result<()> {
 }
 
 fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
-    let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let mut current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if current > SCHEMA_VERSION {
         return Err(anyhow!(
             "database schema version {current} is newer than supported version {SCHEMA_VERSION}"
@@ -504,6 +571,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
             .transaction()
             .context("failed to start schema migration")?;
         create_schema_v2(&tx)?;
+        create_saved_views_schema(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -512,6 +580,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 1 {
         migrate_v1_to_v2(conn)?;
+        current = 2;
+    }
+
+    if current == 2 {
+        migrate_v2_to_v3(conn)?;
     }
 
     Ok(())
@@ -624,6 +697,37 @@ fn create_schema_v2(conn: &Connection) -> anyhow::Result<()> {
         "#,
     )
     .context("failed to create temporal schema")
+}
+
+fn create_saved_views_schema(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE saved_views (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            query_json TEXT NOT NULL,
+            hidden_source_ids_json TEXT NOT NULL DEFAULT '[]',
+            calendar_view_json TEXT NOT NULL,
+            display_timezone TEXT NOT NULL,
+            week_start_monday INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX saved_views_name
+            ON saved_views(name COLLATE NOCASE);
+        "#,
+    )
+    .context("failed to create saved-view schema")
+}
+
+fn migrate_v2_to_v3(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v2 to v3 migration")?;
+    create_saved_views_schema(&tx)?;
+    tx.pragma_update(None, "user_version", 3)
+        .context("failed to set schema version 3")?;
+    tx.commit()
+        .context("failed to commit v2 to v3 schema migration")
 }
 
 fn migrate_v1_to_v2(conn: &mut Connection) -> anyhow::Result<()> {
@@ -755,8 +859,8 @@ fn migrate_v1_to_v2(conn: &mut Connection) -> anyhow::Result<()> {
     )
     .context("failed to migrate schema from v1 to v2")?;
 
-    tx.pragma_update(None, "user_version", SCHEMA_VERSION)
-        .context("failed to set schema version")?;
+    tx.pragma_update(None, "user_version", 2)
+        .context("failed to set schema version 2")?;
     tx.commit()
         .context("failed to commit v1 to v2 schema migration")
 }
@@ -780,6 +884,23 @@ fn event_select_sql(suffix: &str) -> String {
         {suffix}
         "#
     )
+}
+
+fn decode_saved_view(row: &Row<'_>) -> rusqlite::Result<SavedView> {
+    let id_raw: String = row.get("id")?;
+    let query_raw: String = row.get("query_json")?;
+    let hidden_raw: String = row.get("hidden_source_ids_json")?;
+    let calendar_view_raw: String = row.get("calendar_view_json")?;
+
+    Ok(SavedView {
+        id: Uuid::parse_str(&id_raw).map_err(to_sql_decode_error)?,
+        name: row.get("name")?,
+        query: serde_json::from_str(&query_raw).map_err(to_sql_decode_error)?,
+        hidden_source_ids: serde_json::from_str(&hidden_raw).map_err(to_sql_decode_error)?,
+        calendar_view: serde_json::from_str(&calendar_view_raw).map_err(to_sql_decode_error)?,
+        display_timezone: row.get("display_timezone")?,
+        week_start_monday: row.get("week_start_monday")?,
+    })
 }
 
 fn decode_source(row: &Row<'_>) -> rusqlite::Result<TemporalSource> {
@@ -1127,7 +1248,7 @@ mod tests {
     #[test]
     fn schema_bootstraps_at_version_two() {
         let store = TemporalStore::open_in_memory().expect("store");
-        assert_eq!(store.schema_version().expect("version"), 2);
+        assert_eq!(store.schema_version().expect("version"), 3);
     }
 
     #[test]
@@ -1230,6 +1351,33 @@ mod tests {
         second.source_record_key = Some("uid-1".to_string());
 
         assert!(store.upsert_event(&second).is_err());
+    }
+
+    #[test]
+    fn saved_view_roundtrips_through_database() {
+        use crate::calendar::CalendarView;
+        use crate::query::{EventQuery, SavedView};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let view = SavedView::new(
+            "US Elections",
+            EventQuery {
+                domain: Some("elections".to_string()),
+                jurisdiction: Some("US".to_string()),
+                ..EventQuery::default()
+            },
+            std::collections::BTreeSet::new(),
+            CalendarView::Year,
+            "America/Mexico_City",
+            false,
+        );
+
+        store.upsert_saved_view(&view).expect("save");
+        let loaded = store.list_saved_views().expect("list");
+
+        assert_eq!(loaded, vec![view.clone()]);
+        store.delete_saved_view(view.id).expect("delete");
+        assert!(store.list_saved_views().expect("list").is_empty());
     }
 
     #[test]
