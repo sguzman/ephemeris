@@ -51,9 +51,20 @@ impl EphemerisApp {
             focus,
             self.state.week_start_monday,
         );
-        self.events = self
-            .store
-            .events_in_window(window.start, window.end_exclusive, timezone)?;
+        let include_imprecise = matches!(
+            self.state.calendar_view,
+            CalendarView::Year | CalendarView::Quarter | CalendarView::Month
+        );
+        self.events = self.store.events_in_window(
+            window.start,
+            window.end_exclusive,
+            timezone,
+            include_imprecise,
+        )?;
+        if self.state.calendar_view != CalendarView::Year {
+            self.events
+                .retain(|event| !matches!(event.time, TimeSpec::Year { .. }));
+        }
         self.sources = self.store.list_sources()?;
         Ok(())
     }
@@ -332,6 +343,24 @@ impl EphemerisApp {
             if let Some(key) = event.source_record_key.as_deref() {
                 inspector_row(ui, "Source record", key);
             }
+            if let Some(value) = event.upstream_event_ref.as_deref() {
+                inspector_row(ui, "Taria event ref", value);
+            }
+            if let Some(value) = event.upstream_reconciled_key.as_deref() {
+                inspector_row(ui, "Reconciled key", value);
+            }
+            if let Some(value) = event.renderability.as_deref() {
+                inspector_row(ui, "Renderability", value);
+            }
+            if !event.assertion_refs.is_empty() {
+                inspector_row(ui, "Assertions", &event.assertion_refs.join(", "));
+            }
+            if !event.source_refs.is_empty() {
+                inspector_row(ui, "Upstream sources", &event.source_refs.join(", "));
+            }
+            if !event.provenance_refs.is_empty() {
+                inspector_row(ui, "Provenance", &event.provenance_refs.join(", "));
+            }
 
             render_time_spec(ui, &event.time, self.timezone());
 
@@ -469,8 +498,8 @@ fn render_calendar(
     }
 
     match view {
-        CalendarView::Year => render_year(ui, events, focus, timezone),
-        CalendarView::Quarter => render_quarter(ui, events, focus, timezone),
+        CalendarView::Year => render_year(ui, events, focus, timezone, selected),
+        CalendarView::Quarter => render_quarter(ui, events, focus, timezone, selected),
         CalendarView::Month => render_month(ui, events, focus, timezone, monday_start, selected),
         CalendarView::Week => render_week(ui, events, focus, timezone, monday_start, selected),
         CalendarView::Day => render_day(ui, events, focus, timezone, selected),
@@ -482,9 +511,27 @@ fn render_year(
     events: &[TemporalEvent],
     focus: NaiveDate,
     timezone: Tz,
+    selected: Option<Uuid>,
 ) -> Option<CalendarAction> {
     let months = year_months(focus);
     let mut action = None;
+
+    let year_precision = events
+        .iter()
+        .filter(|event| matches!(event.time, TimeSpec::Year { year } if year == focus.year()))
+        .collect::<Vec<_>>();
+    if !year_precision.is_empty() {
+        ui.group(|ui| {
+            ui.strong("Year-precision events");
+            ui.small("Taria knows the year, but not a month or day. No fake date is assigned.");
+            for event in year_precision {
+                if render_event_button(ui, event, timezone, selected).clicked() {
+                    action = Some(CalendarAction::Select(event.id));
+                }
+            }
+        });
+        ui.add_space(8.0);
+    }
 
     egui::Grid::new("year-grid")
         .num_columns(4)
@@ -498,12 +545,24 @@ fn render_year(
                     }
                     let count = events
                         .iter()
-                        .filter(|event| {
-                            let date = event.display_date(timezone);
-                            date.year() == month.year() && date.month() == month.month()
-                        })
+                        .filter(|event| event.time.belongs_to_month(*month, timezone))
                         .count();
                     ui.label(format!("{count} events"));
+
+                    for event in events.iter().filter(|event| {
+                        matches!(
+                            event.time,
+                            TimeSpec::Month {
+                                year,
+                                month: event_month
+                            } if year == month.year() && event_month == month.month()
+                        )
+                    }) {
+                        if render_event_button(ui, event, timezone, selected).clicked() {
+                            action = Some(CalendarAction::Select(event.id));
+                        }
+                    }
+
                     render_mini_month_counts(ui, events, *month, timezone);
                 });
                 if (index + 1) % 4 == 0 {
@@ -520,6 +579,7 @@ fn render_quarter(
     events: &[TemporalEvent],
     focus: NaiveDate,
     timezone: Tz,
+    selected: Option<Uuid>,
 ) -> Option<CalendarAction> {
     let months = quarter_months(focus);
     let mut action = None;
@@ -533,12 +593,24 @@ fn render_quarter(
                 }
                 let count = events
                     .iter()
-                    .filter(|event| {
-                        let date = event.display_date(timezone);
-                        date.year() == month.year() && date.month() == month.month()
-                    })
+                    .filter(|event| event.time.belongs_to_month(month, timezone))
                     .count();
                 ui.label(format!("{count} events"));
+
+                for event in events.iter().filter(|event| {
+                    matches!(
+                        event.time,
+                        TimeSpec::Month {
+                            year,
+                            month: event_month
+                        } if year == month.year() && event_month == month.month()
+                    )
+                }) {
+                    if render_event_button(ui, event, timezone, selected).clicked() {
+                        action = Some(CalendarAction::Select(event.id));
+                    }
+                }
+
                 render_mini_month_counts(ui, events, month, timezone);
             });
         }
@@ -593,6 +665,32 @@ fn render_month(
     let start = month_grid_start(focus, monday_start);
     let days = month_days(start);
     let mut action = None;
+
+    let month_precision = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.time,
+                TimeSpec::Month {
+                    year,
+                    month: event_month
+                } if year == focus.year() && event_month == focus.month()
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if !month_precision.is_empty() {
+        ui.group(|ui| {
+            ui.strong("Month-precision events");
+            ui.small("The source does not support a specific day, so these stay above the day grid.");
+            for event in month_precision {
+                if render_event_button(ui, event, timezone, selected).clicked() {
+                    action = Some(CalendarAction::Select(event.id));
+                }
+            }
+        });
+        ui.add_space(8.0);
+    }
 
     let weekday_labels = if monday_start {
         ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -770,6 +868,10 @@ fn render_time_spec(ui: &mut egui::Ui, time: &TimeSpec, timezone: Tz) {
     ui.strong("Temporal representation");
 
     match time {
+        TimeSpec::DateOnly { date } => {
+            inspector_row(ui, "Date", &date.to_string());
+            ui.small("Date-only: the source did not assert full-day semantics.");
+        }
         TimeSpec::AllDay {
             start,
             end_exclusive,
@@ -797,11 +899,35 @@ fn render_time_spec(ui: &mut egui::Ui, time: &TimeSpec, timezone: Tz) {
                 inspector_row(ui, "Source timezone", source_timezone);
             }
         }
-        TimeSpec::Floating { start, end } => {
-            inspector_row(ui, "Floating start", &start.to_string());
+        TimeSpec::Floating {
+            start,
+            end,
+            source_timezone,
+        } => {
+            inspector_row(ui, "Local start", &start.to_string());
             if let Some(end) = end {
-                inspector_row(ui, "Floating end", &end.to_string());
+                inspector_row(ui, "Local end", &end.to_string());
             }
+            if let Some(source_timezone) = source_timezone {
+                inspector_row(ui, "Source timezone", source_timezone);
+            } else {
+                ui.small("Floating local time: no timezone conversion is asserted.");
+            }
+        }
+        TimeSpec::Month { year, month } => {
+            inspector_row(ui, "Year", &year.to_string());
+            inspector_row(ui, "Month", &month.to_string());
+            ui.small("Month precision: Ephemeris does not invent a day.");
+        }
+        TimeSpec::Year { year } => {
+            inspector_row(ui, "Year", &year.to_string());
+            ui.small("Year precision: Ephemeris does not invent a month or day.");
+        }
+        TimeSpec::Unknown { original_value } => {
+            if let Some(original_value) = original_value {
+                inspector_row(ui, "Original value", original_value);
+            }
+            ui.small("This event is retained but cannot currently be placed on the calendar.");
         }
     }
 }
@@ -828,5 +954,6 @@ fn status_color(status: EventStatus) -> Color32 {
         EventStatus::Estimated => Color32::LIGHT_BLUE,
         EventStatus::Projected => Color32::LIGHT_BLUE,
         EventStatus::Disputed => Color32::LIGHT_RED,
+        EventStatus::Unknown => Color32::GRAY,
     }
 }
