@@ -1348,8 +1348,7 @@ mod tests {
         let mut conn = Connection::open_in_memory().expect("connection");
         configure_connection(&conn).expect("configure");
         create_schema_v2(&conn).expect("v2 temporal schema");
-        conn.pragma_update(None, "user_version", 2)
-            .expect("set v2");
+        conn.pragma_update(None, "user_version", 2).expect("set v2");
 
         migrate(&mut conn).expect("migrate");
 
