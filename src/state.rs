@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::calendar::CalendarView;
+use crate::domain::EventStatus;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedUiState {
@@ -19,6 +20,14 @@ pub struct PersistedUiState {
     pub show_inspector: bool,
     #[serde(default)]
     pub hidden_source_ids: BTreeSet<Uuid>,
+    #[serde(default)]
+    pub search_query: String,
+    #[serde(default)]
+    pub domain_filter: Option<String>,
+    #[serde(default)]
+    pub jurisdiction_filter: Option<String>,
+    #[serde(default)]
+    pub status_filter: Option<EventStatus>,
     pub selected_event_id: Option<Uuid>,
 }
 
@@ -33,6 +42,10 @@ impl Default for PersistedUiState {
             show_sources: true,
             show_inspector: true,
             hidden_source_ids: BTreeSet::new(),
+            search_query: String::new(),
+            domain_filter: None,
+            jurisdiction_filter: None,
+            status_filter: None,
             selected_event_id: None,
         }
     }
