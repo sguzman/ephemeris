@@ -236,20 +236,16 @@ impl QueryPredicate {
                 let start = context
                     .today
                     .checked_add_signed(Duration::days(i64::from(*start_offset_days)));
-                let end_exclusive = context.today.checked_add_signed(Duration::days(i64::from(
-                    *end_offset_days_exclusive,
-                )));
+                let end_exclusive = context
+                    .today
+                    .checked_add_signed(Duration::days(i64::from(*end_offset_days_exclusive)));
 
                 match (start, end_exclusive) {
                     (Some(start), Some(end_exclusive)) if end_exclusive > start => {
-                        event_date_span(
-                            &event.time,
-                            context.display_timezone,
-                            *include_imprecise,
-                        )
-                        .is_some_and(|(event_start, event_end_exclusive)| {
-                            event_end_exclusive > start && event_start < end_exclusive
-                        })
+                        event_date_span(&event.time, context.display_timezone, *include_imprecise)
+                            .is_some_and(|(event_start, event_end_exclusive)| {
+                                event_end_exclusive > start && event_start < end_exclusive
+                            })
                     }
                     _ => false,
                 }
