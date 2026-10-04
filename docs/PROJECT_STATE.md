@@ -169,6 +169,11 @@ Advanced queries support:
 - lifecycle-status sets
 - integer comparisons for importance and personal relevance
 - exists / missing predicates
+- temporal-kind sets
+- explicit civil-date overlap
+- timezone-aware instant-to-date evaluation
+- opt-in month/year imprecise-span matching
+- relative civil-date windows anchored to the view timezone's current day
 - recursive GUI editing
 - persistence through UI state and saved views
 - backward-compatible loading of older saved query JSON
@@ -237,7 +242,6 @@ The current milestone is a foundation, not the finished calendar.
 
 Not yet implemented:
 
-- timezone-aware date/range/relative-date predicates
 - rule-based color precedence beyond the current single semantic color dimension
 - saved-view inheritance/composition
 - overlays/calendar algebra
@@ -255,16 +259,15 @@ Not yet implemented:
 
 ## Immediate next implementation boundary
 
-Extend the verified boolean query engine into temporal predicates without flattening time semantics:
+Add richer dense-data views over the same query/presentation model:
 
-1. explicit query context carrying display timezone
-2. temporal-kind predicates
-3. civil-date overlap predicates
-4. correct treatment of exact instants in the display timezone
-5. explicit inclusion/exclusion policy for month/year precision
-6. later relative-date predicates using an explicit "today" anchor
+1. event table layout
+2. stable row selection into the existing inspector
+3. reuse saved query, sort, and semantic color rules
+4. expose core Taria columns without flattening extensible properties
+5. prepare for later user-defined columns
 
-After that, add richer dense-data views and expand color strategy into an ordered rule engine.
+After that, expand color strategy into an ordered rule engine and add view composition/overlays.
 
 ## Rule going forward
 
