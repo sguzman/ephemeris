@@ -73,11 +73,7 @@ impl EventQuery {
                 .chain(event.provenance_refs.iter())
                 .any(|value| value.to_lowercase().contains(&query));
 
-            let matches_properties = event
-                .properties
-                .to_string()
-                .to_lowercase()
-                .contains(&query);
+            let matches_properties = event.properties.to_string().to_lowercase().contains(&query);
 
             if !(matches_text || matches_collection || matches_properties) {
                 return false;
@@ -157,27 +153,22 @@ impl QueryPredicate {
                 if *operator == TextOperator::NotEquals {
                     !values.is_empty()
                         && values.into_iter().all(|candidate| {
-                            !text_matches(
-                                candidate,
-                                value,
-                                TextOperator::Equals,
-                                *case_sensitive,
-                            )
+                            !text_matches(candidate, value, TextOperator::Equals, *case_sensitive)
                         })
                 } else {
-                    values.into_iter().any(|candidate| {
-                        text_matches(candidate, value, *operator, *case_sensitive)
-                    })
+                    values
+                        .into_iter()
+                        .any(|candidate| text_matches(candidate, value, *operator, *case_sensitive))
                 }
-            },
+            }
             Self::TextAnyOf {
                 field,
                 values,
                 case_sensitive,
             } => text_values(event, *field).into_iter().any(|candidate| {
-                values
-                    .iter()
-                    .any(|value| text_matches(candidate, value, TextOperator::Equals, *case_sensitive))
+                values.iter().any(|value| {
+                    text_matches(candidate, value, TextOperator::Equals, *case_sensitive)
+                })
             }),
             Self::StatusAnyOf { values } => values.contains(&event.status),
             Self::Integer {
