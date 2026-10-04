@@ -208,76 +208,95 @@ pub fn update_taria_sources(
         .unwrap_or_else(|| Value::Object(Map::new()))
         .to_string();
 
-    store.upsert_taria_release(&TariaReleaseRecord {
-        release_id: release_id.clone(),
-        channel: channel.to_string(),
-        status: release_status.clone(),
-        production_complete: object
-            .get("production_complete")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        manifest_path: manifest_path.display().to_string(),
-        manifest_sha256,
-        generated_at: optional_string(object, "generated_at"),
-        coverage_json,
-        manifest_json: manifest_raw.clone(),
-    })?;
+    store.begin_taria_release_adoption()?;
+    let adoption_result = (|| -> anyhow::Result<TariaWorkspaceUpdateReport> {
+        store.upsert_taria_release(&TariaReleaseRecord {
+            release_id: release_id.clone(),
+            channel: channel.to_string(),
+            status: release_status.clone(),
+            production_complete: object
+                .get("production_complete")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            manifest_path: manifest_path.display().to_string(),
+            manifest_sha256,
+            generated_at: optional_string(object, "generated_at"),
+            coverage_json,
+            manifest_json: manifest_raw.clone(),
+        })?;
+    
+        let mut report = TariaWorkspaceUpdateReport {
+            resourcearium_root: root.clone(),
+            channel: channel.to_string(),
+            release_id,
+            release_status,
+            manifest_path,
+            imported_artifacts: 0,
+            skipped_artifacts: 0,
+            imported_events: 0,
+            created: 0,
+            updated: 0,
+            unchanged: 0,
+            retained_missing: 0,
+            imprecise: 0,
+            blocked_or_undated: 0,
+            calendar_sets_imported: 0,
+            calendar_memberships: 0,
+            resolved_calendar_memberships: 0,
+            skipped: Vec::new(),
+        };
+    
+        if let Some(shards) = object.get("shards").and_then(Value::as_array) {
+            for shard in shards {
+                let shard = shard
+                    .as_object()
+                    .ok_or_else(|| anyhow!("Taria release shards[] contains a non-object value"))?;
+                import_bootstrap_shard(store, &root, shard, &mut report)?;
+            }
+        }
+    
+        if let Some(artifacts) = object.get("bundle_artifacts").and_then(Value::as_array) {
+            for artifact in artifacts {
+                let artifact = artifact.as_object().ok_or_else(|| {
+                    anyhow!("Taria release bundle_artifacts[] contains a non-object value")
+                })?;
+                import_production_artifact(store, &root, artifact, &mut report)?;
+            }
+        }
+    
+        if report.imported_artifacts == 0
+            && report.skipped_artifacts == 0
+            && report.calendar_sets_imported == 0
+        {
+            return Err(anyhow!(
+                "Taria release {} contains neither consumable shards[] nor bundle_artifacts[]",
+                report.release_id
+            ));
+        }
+    
+        report.resolved_calendar_memberships += store.resolve_taria_calendar_memberships()?;
+        report.resolved_calendar_memberships = report
+            .resolved_calendar_memberships
+            .min(report.calendar_memberships);
+    
+        Ok(report)
+        })();
 
-    let mut report = TariaWorkspaceUpdateReport {
-        resourcearium_root: root.clone(),
-        channel: channel.to_string(),
-        release_id,
-        release_status,
-        manifest_path,
-        imported_artifacts: 0,
-        skipped_artifacts: 0,
-        imported_events: 0,
-        created: 0,
-        updated: 0,
-        unchanged: 0,
-        retained_missing: 0,
-        imprecise: 0,
-        blocked_or_undated: 0,
-        calendar_sets_imported: 0,
-        calendar_memberships: 0,
-        resolved_calendar_memberships: 0,
-        skipped: Vec::new(),
-    };
-
-    if let Some(shards) = object.get("shards").and_then(Value::as_array) {
-        for shard in shards {
-            let shard = shard
-                .as_object()
-                .ok_or_else(|| anyhow!("Taria release shards[] contains a non-object value"))?;
-            import_bootstrap_shard(store, &root, shard, &mut report)?;
+    match adoption_result {
+        Ok(report) => {
+            if let Err(error) = store.commit_taria_release_adoption() {
+                let _ = store.rollback_taria_release_adoption();
+                return Err(error);
+            }
+            Ok(report)
+        }
+        Err(error) => {
+            store
+                .rollback_taria_release_adoption()
+                .context("Taria release adoption failed and rollback also failed")?;
+            Err(error)
         }
     }
-
-    if let Some(artifacts) = object.get("bundle_artifacts").and_then(Value::as_array) {
-        for artifact in artifacts {
-            let artifact = artifact.as_object().ok_or_else(|| {
-                anyhow!("Taria release bundle_artifacts[] contains a non-object value")
-            })?;
-            import_production_artifact(store, &root, artifact, &mut report)?;
-        }
-    }
-
-    if report.imported_artifacts == 0
-        && report.skipped_artifacts == 0
-        && report.calendar_sets_imported == 0
-    {
-        return Err(anyhow!(
-            "Taria release {} contains neither consumable shards[] nor bundle_artifacts[]",
-            report.release_id
-        ));
-    }
-
-    report.resolved_calendar_memberships += store.resolve_taria_calendar_memberships()?;
-    report.resolved_calendar_memberships = report
-        .resolved_calendar_memberships
-        .min(report.calendar_memberships);
-
-    Ok(report)
 }
 
 fn import_bootstrap_shard(
