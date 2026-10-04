@@ -224,7 +224,7 @@ pub fn update_taria_sources(
             coverage_json,
             manifest_json: manifest_raw.clone(),
         })?;
-    
+
         let mut report = TariaWorkspaceUpdateReport {
             resourcearium_root: root.clone(),
             channel: channel.to_string(),
@@ -245,7 +245,7 @@ pub fn update_taria_sources(
             resolved_calendar_memberships: 0,
             skipped: Vec::new(),
         };
-    
+
         if let Some(shards) = object.get("shards").and_then(Value::as_array) {
             for shard in shards {
                 let shard = shard
@@ -254,7 +254,7 @@ pub fn update_taria_sources(
                 import_bootstrap_shard(store, &root, shard, &mut report)?;
             }
         }
-    
+
         if let Some(artifacts) = object.get("bundle_artifacts").and_then(Value::as_array) {
             for artifact in artifacts {
                 let artifact = artifact.as_object().ok_or_else(|| {
@@ -263,7 +263,7 @@ pub fn update_taria_sources(
                 import_production_artifact(store, &root, artifact, &mut report)?;
             }
         }
-    
+
         if report.imported_artifacts == 0
             && report.skipped_artifacts == 0
             && report.calendar_sets_imported == 0
@@ -273,14 +273,14 @@ pub fn update_taria_sources(
                 report.release_id
             ));
         }
-    
+
         report.resolved_calendar_memberships += store.resolve_taria_calendar_memberships()?;
         report.resolved_calendar_memberships = report
             .resolved_calendar_memberships
             .min(report.calendar_memberships);
-    
+
         Ok(report)
-        })();
+    })();
 
     match adoption_result {
         Ok(report) => {
