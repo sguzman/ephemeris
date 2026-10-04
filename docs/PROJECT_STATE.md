@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the membership-query checkpoint, all **49** library tests pass. Verified implementation head: `5c25e3adc85fad67a97704100d60a70a7439515c`, with format, check, strict Clippy, and tests all green.
+At the release-posture/query-selector checkpoint, all **50** library tests pass. Verified implementation head: `0392969043ec8684f2f9b2abf78c0612da733476`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -144,8 +144,8 @@ Current upstream state:
 - 177 direct single-Resource RICS profiles in the first exact-lineage production tranche
 - canonical 13-projection build tooling
 - frozen release packaging and validation
-- bootstrap channel currently pointing at `temporal-bundle-release:bootstrap:2026-10-04:r4`
-- bootstrap posture: 1,114 ready events, 15 represented canonical Resources, 2 typed recovered ingestion profiles, 196 recovered source surfaces, 3 partial canonical domain slots, 9 pending slots
+- bootstrap channel currently pointing at `temporal-bundle-release:bootstrap:2026-10-04:r10`
+- bootstrap posture: 1,357 unique ready events, 15 represented canonical Resources, 38 selected ingestion profiles, 196 recovered source surfaces, 8 partial canonical domain slots, 4 explicit gap-only slots, 0 pending slots
 - production channel independently advances as live acquisition-backed releases become available
 
 Important consumer rule:
@@ -156,11 +156,13 @@ Important consumer rule:
 
 The direct reconciled-event-set importer and CompactReconciledEventIndex importer are now low-level payload adapters beneath the local release updater.
 
-Current bootstrap r4 update behavior:
+Current bootstrap r10 update behavior:
 
 - recovered U.S. Politics and U.S. Holidays are consumed through pinned `CompactReconciledEventIndex` payloads;
 - European Elections and U.S. Sports are consumed through full `ReconciledProjectionEventSet` payloads;
-- all four populated bootstrap shards now expose accepted post-reconciliation payloads;
+- additional Economics, Finance, Business, Culture, and Education frozen-rebuild shards are consumed through compact reconciled indexes;
+- Science/Technology/Space, Public Health, Environment/Weather, and Transportation/Civic Infrastructure are explicitly represented as gap-only rather than silently empty;
+- all populated bootstrap shards expose accepted post-reconciliation payloads;
 - CalendarSets and their event memberships are persisted independently from canonical event identity;
 - bootstrap content-fingerprint semantics are validated exactly as Resourcearium defines them;
 - local artifact paths remain confined to the configured Resourcearium tree.
@@ -307,7 +309,6 @@ The current milestone is a foundation, not the finished calendar.
 
 Not yet implemented:
 
-- release coverage/pending/gap UI
 - richer release-history/diff inspection
 - whole-release atomic rollback across multiple source imports
 - background/worker execution for large release adoption
@@ -391,25 +392,23 @@ Implemented:
 
 ## Immediate next implementation boundary
 
-Expose **release coverage / pending / gap posture** in the Sources/Taria UI, then harden release adoption execution.
+Harden **release adoption execution** now that filesystem transport, identity, membership, query exposure, and release-posture UX are materialized.
 
-Membership-aware programmable views are now implemented:
+Implemented in the current slice:
 
-1. current-release bundle membership is queryable by stable bundle ref;
-2. projected CalendarSet membership is queryable by stable calendar ID;
-3. both predicates flow through the same recursive `QueryExpr` used by saved views, overlays, color rules, and calendar algebra;
-4. membership remains external query context and is not copied into `TemporalEvent`;
-5. event coloring and unplaced/conflicted rendering use the same membership-aware query semantics.
+1. the Sources/Taria panel shows the adopted release ID, channel, status, completeness, generated/adopted times, coverage counts, and per-canonical-bundle population posture;
+2. partial, pending, and gap-only states are rendered from the persisted manifest rather than hard-coded release assumptions;
+3. bundle-membership predicates offer selectable refs from the adopted release;
+4. projected-calendar predicates offer selectable stable calendar IDs with human-readable names/bundle context;
+5. raw ref text remains editable for portability/debugging;
+6. query choices come from SQLite, so normal view editing does not require live Taria filesystem access.
 
 The next slice should:
 
-1. expose current adopted release status, completeness, ready counts, pending/gap bundle posture, and CalendarSet/membership counts in the Taria source panel;
-2. expose stable bundle/calendar references ergonomically so membership predicates do not require remembering raw IDs;
-3. move large release adoption to a worker boundary;
-4. add whole-release transaction/rollback semantics;
-5. add release-history/diff inspection.
-
-After that, continue programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
+1. move large release adoption to a worker boundary so **Update Taria Sources** never stalls egui;
+2. add whole-release transaction/rollback semantics across all payloads, CalendarSets, aliases, and release metadata;
+3. add release-history/diff inspection;
+4. then continue programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
 
 ## Rule going forward
 
