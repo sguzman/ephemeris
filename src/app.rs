@@ -10,12 +10,14 @@ use crate::calendar::{
 use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
 use crate::state::PersistedUiState;
 use crate::store::TemporalStore;
+use crate::taria::import_reconciled_event_set_file;
 
 pub struct EphemerisApp {
     store: TemporalStore,
     state: PersistedUiState,
     events: Vec<TemporalEvent>,
     sources: Vec<TemporalSource>,
+    last_message: Option<String>,
     last_error: Option<String>,
     dirty_state: bool,
 }
@@ -29,11 +31,45 @@ impl EphemerisApp {
             state,
             events: Vec::new(),
             sources: Vec::new(),
+            last_message: None,
             last_error: None,
             dirty_state: false,
         };
         app.reload()?;
         Ok(app)
+    }
+
+    fn import_taria_path(&mut self, path: &std::path::Path) {
+        match import_reconciled_event_set_file(&self.store, path) {
+            Ok(report) => {
+                if let Some(focus) = report.suggested_focus {
+                    self.state.set_focus_date(focus);
+                    self.state.calendar_view = CalendarView::Month;
+                    self.state.selected_event_id = None;
+                    self.mark_state_dirty();
+                }
+
+                self.last_message = Some(format!(
+                    "Imported {}: {} created, {} updated, {} unchanged, {} retained missing; {} imprecise, {} blocked/unplaced",
+                    report.projection_ref,
+                    report.created,
+                    report.updated,
+                    report.unchanged,
+                    report.retained_missing,
+                    report.imprecise,
+                    report.blocked_or_undated
+                ));
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!(
+                    "Failed to import {}: {error:#}",
+                    path.display()
+                ));
+            }
+        }
     }
 
     fn timezone(&self) -> Tz {
@@ -234,8 +270,13 @@ impl EphemerisApp {
                 self.sources.len(),
                 self.state.display_timezone
             ));
+            ui.separator();
+            ui.small("Drop Taria reconciled JSON anywhere to import");
         });
 
+        if let Some(message) = self.last_message.as_deref() {
+            ui.colored_label(Color32::LIGHT_GREEN, message);
+        }
         if let Some(error) = self.last_error.as_deref() {
             ui.colored_label(Color32::LIGHT_RED, error);
         }
@@ -427,6 +468,19 @@ impl EphemerisApp {
 impl eframe::App for EphemerisApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.handle_shortcuts(ui);
+
+        let dropped_paths = ui.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect::<Vec<_>>()
+        });
+        for path in dropped_paths {
+            self.import_taria_path(&path);
+        }
+
         self.toolbar(ui);
         ui.separator();
 
