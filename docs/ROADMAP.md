@@ -183,7 +183,7 @@ Implemented presentation dimensions:
 - stable multi-key sorting
 - semantic coloring independent from grouping/source visibility
 - persistence of grouping/sorting/color in saved views
-- application across Agenda and Grid layouts
+- application across Grid, Agenda, and Table layouts
 
 Implemented query algebra:
 
@@ -257,7 +257,14 @@ Goals:
 
 ## Phase 7 - Rich temporal visualization
 
-Status: **started through Agenda**
+Status: **started through Agenda and dense Table**
+
+Implemented:
+
+- Agenda layout
+- dense Table layout
+- true group partitioning in dense views
+- direct selection into the event inspector
 
 Goals:
 
@@ -265,7 +272,7 @@ Goals:
 - chronological stream
 - timeline
 - heatmap/density
-- user-defined columns
+- user-defined Table columns
 - pivot/summary foundation
 
 ## Phase 8 - Advanced temporal semantics
