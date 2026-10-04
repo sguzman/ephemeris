@@ -492,7 +492,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
     }
 
     if current == 0 {
-        let tx = conn.transaction().context("failed to start schema migration")?;
+        let tx = conn\n            .transaction()\n            .context("failed to start schema migration")?;
         create_schema_v2(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
@@ -617,7 +617,7 @@ fn create_schema_v2(conn: &Connection) -> anyhow::Result<()> {
 }
 
 fn migrate_v1_to_v2(conn: &mut Connection) -> anyhow::Result<()> {
-    let tx = conn.transaction().context("failed to start v1 to v2 migration")?;
+    let tx = conn\n        .transaction()\n        .context("failed to start v1 to v2 migration")?;
 
     tx.execute_batch(
         r#"
@@ -1116,11 +1116,8 @@ mod tests {
     #[test]
     fn window_query_preserves_precise_time_kinds() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let source = TemporalSource::new(
-            "Test source",
-            SourceKind::Taria,
-            SourceAuthority::Official,
-        );
+        let source =
+            TemporalSource::new("Test source", SourceKind::Taria, SourceAuthority::Official);
         store.upsert_source(&source).expect("source");
 
         let day = NaiveDate::from_ymd_opt(2026, 10, 4).expect("date");
@@ -1149,11 +1146,9 @@ mod tests {
         instant.source_id = Some(source.id);
         store.upsert_event(&instant).expect("instant event");
 
-        let floating_start = NaiveDateTime::parse_from_str(
-            "2026-10-04T15:00:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("floating");
+        let floating_start =
+            NaiveDateTime::parse_from_str("2026-10-04T15:00:00", "%Y-%m-%dT%H:%M:%S")
+                .expect("floating");
         let mut floating = TemporalEvent::new(
             "Floating",
             TimeSpec::Floating {
@@ -1167,12 +1162,7 @@ mod tests {
 
         let next_day = day.succ_opt().expect("next day");
         let events = store
-            .events_in_window(
-                day,
-                next_day,
-                chrono_tz::America::Mexico_City,
-                false,
-            )
+            .events_in_window(day, next_day, chrono_tz::America::Mexico_City, false)
             .expect("window query");
 
         assert_eq!(events.len(), 3);
@@ -1209,11 +1199,7 @@ mod tests {
     #[test]
     fn source_record_identity_is_unique_per_source() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let source = TemporalSource::new(
-            "Test source",
-            SourceKind::Ics,
-            SourceAuthority::Official,
-        );
+        let source = TemporalSource::new("Test source", SourceKind::Ics, SourceAuthority::Official);
         store.upsert_source(&source).expect("source");
 
         let day = NaiveDate::from_ymd_opt(2026, 10, 4).expect("date");
