@@ -58,6 +58,7 @@ Implemented:
 - persisted local Resourcearium root and release channel
 - automatic local/sibling Taria checkout detection
 - one-click **Update Taria Sources** from local release manifests
+- background/nonblocking Taria release adoption using a dedicated SQLite worker connection
 - Resourcearium-compatible integrity validation: bootstrap content fingerprints and production file SHA-256
 - immutable Taria release metadata in SQLite
 - immutable CalendarSet storage plus release-to-CalendarSet associations
@@ -77,7 +78,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation milestone at 2026-10-04 passes the full CI gate at `17cef55daf6acf8dc3a43693d42c6c3b461a5585`: format, compile, strict Clippy, and **51 library tests**.
+The verified implementation milestone at 2026-10-04 passes the full CI gate at `9c55239ba1309dd5d15a13126d0188dc26be1076`: format, compile, strict Clippy, and **51 library tests**.
 
 ## Product boundary
 
