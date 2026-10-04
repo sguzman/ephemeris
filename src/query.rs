@@ -48,7 +48,7 @@ impl EventQuery {
             return false;
         }
 
-        let query = self.text.trim().to_ascii_lowercase();
+        let query = self.text.trim().to_lowercase();
         if !query.is_empty() {
             let matches_text = [
                 Some(event.normalized_title.as_str()),
@@ -63,7 +63,7 @@ impl EventQuery {
             ]
             .into_iter()
             .flatten()
-            .any(|value| value.to_ascii_lowercase().contains(&query));
+            .any(|value| value.to_lowercase().contains(&query));
 
             let matches_collection = event
                 .tags
@@ -71,12 +71,12 @@ impl EventQuery {
                 .chain(event.source_refs.iter())
                 .chain(event.assertion_refs.iter())
                 .chain(event.provenance_refs.iter())
-                .any(|value| value.to_ascii_lowercase().contains(&query));
+                .any(|value| value.to_lowercase().contains(&query));
 
             let matches_properties = event
                 .properties
                 .to_string()
-                .to_ascii_lowercase()
+                .to_lowercase()
                 .contains(&query);
 
             if !(matches_text || matches_collection || matches_properties) {
@@ -148,9 +148,24 @@ impl QueryPredicate {
                 operator,
                 value,
                 case_sensitive,
-            } => text_values(event, *field)
-                .into_iter()
-                .any(|candidate| text_matches(candidate, value, *operator, *case_sensitive)),
+            } => {
+                let values = text_values(event, *field);
+                if *operator == TextOperator::NotEquals {
+                    !values.is_empty()
+                        && values.into_iter().all(|candidate| {
+                            !text_matches(
+                                candidate,
+                                value,
+                                TextOperator::Equals,
+                                *case_sensitive,
+                            )
+                        })
+                } else {
+                    values.into_iter().any(|candidate| {
+                        text_matches(candidate, value, *operator, *case_sensitive)
+                    })
+                }
+            },
             Self::TextAnyOf {
                 field,
                 values,
@@ -288,8 +303,8 @@ fn text_matches(
         };
     }
 
-    let candidate = candidate.to_ascii_lowercase();
-    let expected = expected.to_ascii_lowercase();
+    let candidate = candidate.to_lowercase();
+    let expected = expected.to_lowercase();
     match operator {
         TextOperator::Equals => candidate == expected,
         TextOperator::NotEquals => candidate != expected,
@@ -607,6 +622,21 @@ mod tests {
         };
 
         assert!(query.matches(&event()));
+    }
+
+    #[test]
+    fn not_equals_on_collection_requires_no_equal_member() {
+        let query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::Text {
+                field: TextField::Tags,
+                operator: TextOperator::NotEquals,
+                value: "general".to_string(),
+                case_sensitive: false,
+            })),
+            ..EventQuery::default()
+        };
+
+        assert!(!query.matches(&event()));
     }
 
     #[test]
