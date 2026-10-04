@@ -17,7 +17,9 @@ use crate::query::{
     matches_composed_or_overlay_with_membership,
 };
 use crate::state::PersistedUiState;
-use crate::store::TemporalStore;
+use crate::store::{
+    TariaProjectedCalendarChoice, TariaReleaseStatusRecord, TemporalStore,
+};
 use crate::taria::import_reconciled_event_set_file;
 use crate::taria_workspace::{
     detect_resourcearium_root, normalize_resourcearium_root,
@@ -31,6 +33,9 @@ pub struct EphemerisApp {
     unplaced_events: Vec<TemporalEvent>,
     sources: Vec<TemporalSource>,
     taria_memberships: HashMap<Uuid, EventMembership>,
+    taria_release_status: Option<TariaReleaseStatusRecord>,
+    taria_bundle_refs: Vec<String>,
+    taria_calendar_choices: Vec<TariaProjectedCalendarChoice>,
     last_message: Option<String>,
     last_error: Option<String>,
     dirty_state: bool,
@@ -66,6 +71,9 @@ impl EphemerisApp {
             unplaced_events: Vec::new(),
             sources: Vec::new(),
             taria_memberships: HashMap::new(),
+            taria_release_status: None,
+            taria_bundle_refs: Vec::new(),
+            taria_calendar_choices: Vec::new(),
             last_message: None,
             last_error: None,
             dirty_state: false,
@@ -259,6 +267,17 @@ impl EphemerisApp {
         self.taria_memberships = self
             .store
             .taria_event_memberships_for_release(self.state.taria_last_release_id.as_deref())?;
+        self.taria_release_status = self
+            .store
+            .taria_release_status(self.state.taria_last_release_id.as_deref())?;
+        self.taria_bundle_refs = self
+            .store
+            .taria_bundle_refs_for_release(self.state.taria_last_release_id.as_deref())?;
+        self.taria_calendar_choices = self
+            .store
+            .taria_projected_calendar_choices_for_release(
+                self.state.taria_last_release_id.as_deref(),
+            )?;
         Ok(())
     }
 
