@@ -82,7 +82,6 @@ struct CalendarSetArtifactSpec<'a> {
     integrity_mode: IntegrityMode,
 }
 
-
 #[derive(Debug, Deserialize)]
 struct ReleaseRegistry {
     channels: BTreeMap<String, ReleaseChannel>,
