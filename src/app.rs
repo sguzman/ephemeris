@@ -13,8 +13,9 @@ use crate::calendar::{
 };
 use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
 use crate::query::{
-    ColorBy, ColorRule, EventMembership, GroupBy, IntegerField, IntegerOperator, Overlay,
-    PresenceField, QueryContext, QueryExpr, QueryPredicate, RgbColor, SavedView, SortDirection,
+    ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
+    IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
+    RgbColor, SavedView, SortDirection,
     SortField, SortRule, TemporalKind, TextField, TextOperator,
     matches_composed_or_overlay_with_membership,
 };
@@ -1133,6 +1134,121 @@ impl EphemerisApp {
                     }
                 });
         });
+
+        ui.separator();
+        ui.strong("Calendar algebra");
+        ui.small(
+            "Layers run top to bottom over the base query. Union adds, Intersect narrows, Subtract removes. Overlays are applied afterward.",
+        );
+
+        let mut remove_composition_layer = None;
+        let mut swap_composition_layer = None;
+        let composition_layer_count = self.state.composition_layers.len();
+
+        for (index, layer) in self.state.composition_layers.iter_mut().enumerate() {
+            ui.group(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    presentation_changed |= ui.checkbox(&mut layer.enabled, "").changed();
+                    presentation_changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut layer.name)
+                                .hint_text("Algebra layer name"),
+                        )
+                        .changed();
+
+                    egui::ComboBox::from_id_salt(("composition-operator", layer.id))
+                        .selected_text(format!(
+                            "{} {}",
+                            layer.operator.symbol(),
+                            layer.operator.label()
+                        ))
+                        .show_ui(ui, |ui| {
+                            for operator in CompositionOperator::ALL {
+                                presentation_changed |= ui
+                                    .selectable_value(
+                                        &mut layer.operator,
+                                        operator,
+                                        format!("{} {}", operator.symbol(), operator.label()),
+                                    )
+                                    .changed();
+                            }
+                        });
+
+                    if index > 0
+                        && ui
+                            .small_button("↑")
+                            .on_hover_text("Evaluate earlier")
+                            .clicked()
+                    {
+                        swap_composition_layer = Some((index, index - 1));
+                    }
+                    if index + 1 < composition_layer_count
+                        && ui
+                            .small_button("↓")
+                            .on_hover_text("Evaluate later")
+                            .clicked()
+                    {
+                        swap_composition_layer = Some((index, index + 1));
+                    }
+                    if ui
+                        .small_button("×")
+                        .on_hover_text("Delete algebra layer")
+                        .clicked()
+                    {
+                        remove_composition_layer = Some(index);
+                    }
+                });
+
+                if layer.query.expression.is_none() {
+                    if layer.query.is_empty() {
+                        ui.small("Empty query matches every visible-source event.");
+                    } else {
+                        ui.small(
+                            "This layer also contains saved simple facets. They remain active.",
+                        );
+                    }
+
+                    if ui.button("Add layer condition").clicked() {
+                        layer.query.expression =
+                            Some(default_query_expr(QueryExprKind::Predicate));
+                        presentation_changed = true;
+                    }
+                } else if let Some(expression) = layer.query.expression.as_mut() {
+                    presentation_changed |= render_query_expr_editor(
+                        ui,
+                        expression,
+                        &format!("composition-query-{}", layer.id),
+                        &membership_options,
+                    );
+                }
+            });
+        }
+
+        if let Some((left, right)) = swap_composition_layer {
+            self.state.composition_layers.swap(left, right);
+            presentation_changed = true;
+        }
+        if let Some(index) = remove_composition_layer {
+            self.state.composition_layers.remove(index);
+            presentation_changed = true;
+        }
+
+        if ui.button("Add algebra layer").clicked() {
+            self.state.composition_layers.push(CompositionLayer {
+                id: Uuid::new_v4(),
+                name: format!(
+                    "Layer {}",
+                    self.state.composition_layers.len() + 1
+                ),
+                enabled: false,
+                operator: CompositionOperator::Union,
+                query: crate::query::EventQuery {
+                    expression: Some(default_query_expr(QueryExprKind::Predicate)),
+                    ..crate::query::EventQuery::default()
+                },
+            });
+            presentation_changed = true;
+        }
 
         ui.separator();
         ui.strong("Overlays");
