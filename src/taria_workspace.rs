@@ -66,6 +66,12 @@ impl TariaWorkspaceUpdateReport {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntegrityMode {
+    FileSha256,
+    ContentFingerprint,
+}
+
 #[derive(Debug, Deserialize)]
 struct ReleaseRegistry {
     channels: BTreeMap<String, ReleaseChannel>,
@@ -275,9 +281,10 @@ fn import_bootstrap_shard(
 
     let imported_payload = if let Some(relative) = optional_string(shard, "event_index_path") {
         let path = resolve_relative_artifact(root, &relative)?;
-        validate_declared_hash(
+        validate_declared_integrity(
             &path,
             optional_string(shard, "event_index_content_sha256").as_deref(),
+            IntegrityMode::ContentFingerprint,
         )?;
         let imported = import_compact_reconciled_event_index_file(store, &path, Some(&bundle_ref))?;
         merge_import_report(report, &imported);
@@ -285,11 +292,12 @@ fn import_bootstrap_shard(
         true
     } else if let Some(relative) = optional_string(shard, "reconciled_event_set_path") {
         let path = resolve_relative_artifact(root, &relative)?;
-        validate_declared_hash(
+        validate_declared_integrity(
             &path,
             optional_string(shard, "reconciled_event_set_sha256")
                 .or_else(|| optional_string(shard, "reconciled_event_set_content_sha256"))
                 .as_deref(),
+            IntegrityMode::ContentFingerprint,
         )?;
         let imported = import_reconciled_event_set_file(store, &path)?;
         merge_import_report(report, &imported);
@@ -307,6 +315,7 @@ fn import_bootstrap_shard(
         shard,
         "calendar_set_path",
         &["calendar_set_content_sha256", "calendar_set_sha256"],
+        IntegrityMode::ContentFingerprint,
         report,
     )?;
 
@@ -330,9 +339,10 @@ fn import_production_artifact(
     let bundle_ref = required_string(artifact, "bundle_ref")?;
     let relative = required_string(artifact, "reconciled_event_set_path")?;
     let path = resolve_relative_artifact(root, &relative)?;
-    validate_declared_hash(
+    validate_declared_integrity(
         &path,
         optional_string(artifact, "reconciled_event_set_sha256").as_deref(),
+        IntegrityMode::FileSha256,
     )?;
 
     let imported = import_reconciled_event_set_file(store, &path)
@@ -348,6 +358,7 @@ fn import_production_artifact(
         artifact,
         "calendar_set_path",
         &["calendar_set_sha256", "calendar_set_content_sha256"],
+        IntegrityMode::FileSha256,
         report,
     )?;
 
@@ -362,6 +373,7 @@ fn import_calendar_set_from_container(
     container: &Map<String, Value>,
     path_field: &str,
     hash_fields: &[&str],
+    integrity_mode: IntegrityMode,
     report: &mut TariaWorkspaceUpdateReport,
 ) -> anyhow::Result<()> {
     let Some(relative) = optional_string(container, path_field) else {
@@ -372,7 +384,7 @@ fn import_calendar_set_from_container(
         .find_map(|field| optional_string(container, field))
         .ok_or_else(|| anyhow!("CalendarSet {relative} has no declared content hash"))?;
     let path = resolve_relative_artifact(root, &relative)?;
-    validate_declared_hash(&path, Some(&expected_hash))?;
+    validate_declared_integrity(&path, Some(&expected_hash), integrity_mode)?;
 
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read CalendarSet {}", path.display()))?;
@@ -518,20 +530,47 @@ fn resolve_relative_artifact(root: &Path, relative: &str) -> anyhow::Result<Path
     Ok(canonical)
 }
 
-fn validate_declared_hash(path: &Path, expected: Option<&str>) -> anyhow::Result<()> {
+fn validate_declared_integrity(
+    path: &Path,
+    expected: Option<&str>,
+    mode: IntegrityMode,
+) -> anyhow::Result<()> {
     let Some(expected) = expected else {
         return Err(anyhow!(
-            "Taria release does not declare an integrity hash for {}",
+            "Taria release does not declare integrity metadata for {}",
             path.display()
         ));
     };
 
-    let bytes =
-        std::fs::read(path).with_context(|| format!("failed to hash {}", path.display()))?;
-    let actual = format!("{:x}", Sha256::digest(bytes));
-    if actual != expected.to_ascii_lowercase() {
+    let actual = match mode {
+        IntegrityMode::FileSha256 => {
+            let bytes =
+                std::fs::read(path).with_context(|| format!("failed to hash {}", path.display()))?;
+            format!("{:x}", Sha256::digest(bytes))
+        }
+        IntegrityMode::ContentFingerprint => {
+            let raw = std::fs::read_to_string(path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            let value: Value = serde_json::from_str(&raw)
+                .with_context(|| format!("failed to decode {}", path.display()))?;
+            value
+                .get("content_fingerprint")
+                .and_then(Value::as_object)
+                .and_then(|fingerprint| fingerprint.get("value"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Taria artifact {} has no content_fingerprint.value",
+                        path.display()
+                    )
+                })?
+        }
+    };
+
+    if actual != expected.to_ascii_lowercase() && actual != expected {
         return Err(anyhow!(
-            "Taria artifact hash mismatch for {}: expected {}, got {}",
+            "Taria artifact integrity mismatch for {}: expected {}, got {}",
             path.display(),
             expected,
             actual
@@ -576,8 +615,9 @@ mod tests {
         projection_ref: &str,
         reconciled_ref: &str,
         calendar_id: &str,
-    ) -> String {
+    ) -> (String, String) {
         let path = root.join(relative);
+        let content_fingerprint = format!("{calendar_set_id}:fingerprint");
         write(
             &path,
             &format!(
@@ -596,11 +636,11 @@ mod tests {
                     "reconciled_event_ref": "{reconciled_ref}",
                     "calendar_refs": ["{calendar_id}"]
                   }}],
-                  "content_fingerprint": {{"algorithm":"sha256","value":"fixture"}}
+                  "content_fingerprint": {{"algorithm":"sha256","value":"{content_fingerprint}"}}
                 }}"#
             ),
         );
-        hash(&path)
+        (hash(&path), content_fingerprint)
     }
 
     #[test]
@@ -633,6 +673,7 @@ mod tests {
               "schema_version": 1,
               "kind": "CompactReconciledEventIndex",
               "projection_ref": "projection:test-politics",
+              "content_fingerprint": {"algorithm":"sha256","value":"compact:test:fingerprint"},
               "events": [{
                 "reconciled_event_ref": "reconciled-event:test",
                 "assertion_ref": "assertion:test",
@@ -646,8 +687,8 @@ mod tests {
               }]
             }"#,
         );
-        let compact_hash = hash(&compact_path);
-        let calendar_hash = write_calendar_set(
+        let compact_hash = "compact:test:fingerprint";
+        let (_, calendar_hash) = write_calendar_set(
             &root,
             "derived/politics/calendar-set.json",
             "calendar-set:test-politics",
@@ -748,7 +789,7 @@ channels:
         let politics_hash = hash(&politics_payload);
         let finance_hash = hash(&finance_payload);
 
-        let politics_calendar_hash = write_calendar_set(
+        let (politics_calendar_hash, _) = write_calendar_set(
             &root,
             "derived/politics/calendar-set.json",
             "calendar-set:politics",
@@ -756,7 +797,7 @@ channels:
             "reconciled-event:shared",
             "projected-calendar:politics",
         );
-        let finance_calendar_hash = write_calendar_set(
+        let (finance_calendar_hash, _) = write_calendar_set(
             &root,
             "derived/finance/calendar-set.json",
             "calendar-set:finance",
@@ -829,7 +870,7 @@ channels:
         let root = dir.path().join("resourcearium");
         write(
             &root.join("derived/politics/event-index.json"),
-            r#"{"schema_version":1,"kind":"CompactReconciledEventIndex","projection_ref":"projection:test","events":[]}"#,
+            r#"{"schema_version":1,"kind":"CompactReconciledEventIndex","projection_ref":"projection:test","content_fingerprint":{"algorithm":"sha256","value":"actual"},"events":[]}"#,
         );
         write(
             &root.join("examples/bundle-releases/current.json"),
@@ -857,7 +898,7 @@ channels:
 
         let store = TemporalStore::open_in_memory().expect("store");
         let error = update_taria_sources(&store, &root, "bootstrap").expect_err("hash failure");
-        assert!(error.to_string().contains("hash mismatch"));
+        assert!(error.to_string().contains("integrity mismatch"));
         assert_eq!(store.event_count().expect("count"), 0);
     }
 }
