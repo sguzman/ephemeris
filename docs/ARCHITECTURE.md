@@ -18,7 +18,7 @@ The baseline is no longer speculative:
 - overlays
 - direct Taria reconciled-event-set ingestion
 
-Current SQLite schema version: **7**.
+Current SQLite schema version: **8**.
 
 ## Architectural goals
 
@@ -126,7 +126,7 @@ The current database owns:
 - canonical temporal events;
 - durable saved views.
 
-Saved views currently embed their query/presentation state, including overlays and ordered color rules.
+Saved views currently embed their query/presentation state, including ordered composition layers, overlays, and ordered color rules.
 
 Transient UI state remains outside canonical event storage.
 
