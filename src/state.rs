@@ -10,7 +10,7 @@ use crate::calendar::{CalendarLayout, CalendarView};
 use crate::domain::EventStatus;
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, EventQuery, GroupBy, Overlay, QueryExpr, SavedView,
-    SortRule,
+    SortRule, TableColumn, default_table_columns,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +48,8 @@ pub struct PersistedUiState {
     pub composition_layers: Vec<CompositionLayer>,
     #[serde(default)]
     pub overlays: Vec<Overlay>,
+    #[serde(default = "default_table_columns")]
+    pub table_columns: Vec<TableColumn>,
     #[serde(default, rename = "saved_views", skip_serializing_if = "Vec::is_empty")]
     pub legacy_saved_views: Vec<SavedView>,
     #[serde(default)]
@@ -68,7 +70,7 @@ pub struct PersistedUiState {
 impl Default for PersistedUiState {
     fn default() -> Self {
         Self {
-            version: 9,
+            version: 10,
             calendar_view: CalendarView::Month,
             calendar_layout: CalendarLayout::Grid,
             focus_date: Local::now().date_naive().to_string(),
@@ -88,6 +90,7 @@ impl Default for PersistedUiState {
             color_rules: Vec::new(),
             composition_layers: Vec::new(),
             overlays: Vec::new(),
+            table_columns: default_table_columns(),
             legacy_saved_views: Vec::new(),
             active_saved_view_id: None,
             selected_event_id: None,
@@ -122,14 +125,17 @@ impl PersistedUiState {
             .with_context(|| format!("failed to read {}", path.display()))?;
         let mut state: Self = serde_json::from_str(&raw)
             .with_context(|| format!("failed to decode {}", path.display()))?;
-        if state.version < 9 {
-            state.version = 9;
+        if state.version < 10 {
+            state.version = 10;
         }
         if state.taria_channel.trim().is_empty() {
             state.taria_channel = default_taria_channel();
         }
         if state.sort_rules.is_empty() {
             state.sort_rules.push(SortRule::default());
+        }
+        if state.table_columns.is_empty() {
+            state.table_columns = default_table_columns();
         }
         Ok(state)
     }
@@ -199,6 +205,7 @@ impl PersistedUiState {
             color_rules: self.color_rules.clone(),
             composition_layers: self.composition_layers.clone(),
             overlays: self.overlays.clone(),
+            table_columns: self.table_columns.clone(),
             display_timezone: self.display_timezone.clone(),
             week_start_monday: self.week_start_monday,
         }
@@ -218,6 +225,10 @@ impl PersistedUiState {
         self.color_rules.clone_from(&view.color_rules);
         self.composition_layers.clone_from(&view.composition_layers);
         self.overlays.clone_from(&view.overlays);
+        self.table_columns.clone_from(&view.table_columns);
+        if self.table_columns.is_empty() {
+            self.table_columns = default_table_columns();
+        }
         self.display_timezone.clone_from(&view.display_timezone);
         self.week_start_monday = view.week_start_monday;
         self.active_saved_view_id = Some(view.id);
@@ -262,6 +273,11 @@ mod tests {
             })),
             group_by: GroupBy::Jurisdiction,
             color_by: ColorBy::EventType,
+            table_columns: vec![
+                TableColumn::Title,
+                TableColumn::Date,
+                TableColumn::Status,
+            ],
             ..PersistedUiState::default()
         };
 
@@ -274,6 +290,14 @@ mod tests {
         assert_eq!(loaded.domain_filter.as_deref(), Some("elections"));
         assert_eq!(loaded.group_by, GroupBy::Jurisdiction);
         assert_eq!(loaded.color_by, ColorBy::EventType);
+        assert_eq!(
+            loaded.table_columns,
+            vec![
+                TableColumn::Title,
+                TableColumn::Date,
+                TableColumn::Status,
+            ]
+        );
         assert!(loaded.color_rules.is_empty());
         assert!(loaded.overlays.is_empty());
         assert!(loaded.query_expression.is_some());
@@ -294,6 +318,7 @@ mod tests {
             })),
             group_by: GroupBy::Domain,
             color_by: ColorBy::Jurisdiction,
+            table_columns: vec![TableColumn::Title, TableColumn::Institution],
             ..PersistedUiState::default()
         };
         let view = state.capture_saved_view("Elections");
@@ -307,6 +332,10 @@ mod tests {
         assert_eq!(state.calendar_layout, CalendarLayout::Agenda);
         assert_eq!(state.group_by, GroupBy::Domain);
         assert_eq!(state.color_by, ColorBy::Jurisdiction);
+        assert_eq!(
+            state.table_columns,
+            vec![TableColumn::Title, TableColumn::Institution]
+        );
         assert!(state.query_expression.is_some());
         assert_eq!(state.active_saved_view_id, Some(view.id));
     }
