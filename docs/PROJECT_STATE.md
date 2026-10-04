@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the checkpoint, all **40** library tests pass. The verified code head is `f83e2f0a7273a03b40f952e43377fe77518ebac5`, with format, check, strict Clippy, and tests all green.
+At the filesystem-updater checkpoint, all **43** library tests pass. Verified implementation head: `f844391b29315af1396c37b02857c273a90c63f8`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
