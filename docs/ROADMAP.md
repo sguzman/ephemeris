@@ -70,7 +70,7 @@ Still required:
 
 ## Phase 3 - Taria ingestion and bundle-release adoption
 
-Status: **filesystem-first release adoption, membership queries, and release posture UI working; execution hardening next**
+Status: **filesystem-first release adoption, membership queries, release posture UI, and whole-release atomicity working; worker execution next**
 
 Implemented:
 
@@ -106,6 +106,9 @@ Implemented:
 - per-bundle partial/pending/gap-only posture rendering
 - release-backed bundle selector in query predicates
 - release-backed projected-calendar selector in query predicates
+- whole-release SQLite transaction across release metadata, all payloads, CalendarSets, aliases, and memberships
+- rollback of every earlier mutation if a later shard/artifact fails
+- regression coverage proving failed multi-shard releases leave no partial adoption state
 
 Now established upstream:
 
@@ -120,7 +123,6 @@ Now established upstream:
 Next Ephemeris implementation:
 
 - worker-boundary execution for large releases
-- whole-release atomic adoption/rollback
 - release-to-release adoption/diff foundation
 
 Still later:
@@ -131,7 +133,7 @@ Still later:
 
 ## Immediate program priority
 
-The highest-priority integration boundary is now **release-adoption execution hardening**: keep large updates off the egui frame loop and make the whole release atomic.
+The highest-priority integration boundary is now **release-adoption execution hardening**: whole-release atomicity is complete; the remaining execution issue is keeping large updates off the egui frame loop.
 
 Resourcearium is independently building/populating frozen bundles. Ephemeris should consume those releases rather than duplicate acquisition work.
 
