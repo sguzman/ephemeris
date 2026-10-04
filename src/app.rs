@@ -6,8 +6,8 @@ use eframe::egui::{self, Color32, RichText};
 use uuid::Uuid;
 
 use crate::calendar::{
-    CalendarView, calendar_title, month_days, month_grid_start, quarter_months, shift_focus,
-    week_days, window_for_view, year_months,
+    CalendarLayout, CalendarView, calendar_title, month_days, month_grid_start, quarter_months,
+    shift_focus, week_days, window_for_view, year_months,
 };
 use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
 use crate::query::SavedView;
@@ -169,6 +169,16 @@ impl EphemerisApp {
         self.reload_or_report();
     }
 
+    fn set_layout(&mut self, layout: CalendarLayout) {
+        if self.state.calendar_layout == layout {
+            return;
+        }
+        self.state.calendar_layout = layout;
+        self.state.active_saved_view_id = None;
+        self.state.selected_event_id = None;
+        self.mark_state_dirty();
+    }
+
     fn save_current_view(&mut self) {
         let name = self.saved_view_name.trim();
         if name.is_empty() {
@@ -272,6 +282,7 @@ impl EphemerisApp {
 
         let mut navigate = 0;
         let mut target_view = None;
+        let mut target_layout = None;
         let mut today = false;
 
         ui.input(|input| {
@@ -299,6 +310,12 @@ impl EphemerisApp {
             if input.key_pressed(egui::Key::D) {
                 target_view = Some(CalendarView::Day);
             }
+            if input.key_pressed(egui::Key::G) {
+                target_layout = Some(CalendarLayout::Grid);
+            }
+            if input.key_pressed(egui::Key::A) {
+                target_layout = Some(CalendarLayout::Agenda);
+            }
         });
 
         if navigate != 0 {
@@ -309,6 +326,9 @@ impl EphemerisApp {
         }
         if let Some(view) = target_view {
             self.set_view(view);
+        }
+        if let Some(layout) = target_layout {
+            self.set_layout(layout);
         }
     }
 
@@ -344,6 +364,18 @@ impl EphemerisApp {
                     .clicked()
                 {
                     self.set_view(view);
+                }
+            }
+
+            ui.separator();
+
+            for layout in CalendarLayout::ALL {
+                let selected = self.state.calendar_layout == layout;
+                if ui
+                    .add(egui::Button::new(layout.label()).selected(selected))
+                    .clicked()
+                {
+                    self.set_layout(layout);
                 }
             }
 
@@ -807,6 +839,7 @@ impl eframe::App for EphemerisApp {
                             ui,
                             &events,
                             self.state.calendar_view,
+                            self.state.calendar_layout,
                             focus,
                             timezone,
                             self.state.week_start_monday,
@@ -901,6 +934,7 @@ fn render_calendar(
     ui: &mut egui::Ui,
     events: &[TemporalEvent],
     view: CalendarView,
+    layout: CalendarLayout,
     focus: NaiveDate,
     timezone: Tz,
     monday_start: bool,
@@ -914,12 +948,100 @@ fn render_calendar(
         });
     }
 
+    if layout == CalendarLayout::Agenda {
+        return render_agenda(ui, events, timezone, selected);
+    }
+
     match view {
         CalendarView::Year => render_year(ui, events, focus, timezone, selected),
         CalendarView::Quarter => render_quarter(ui, events, focus, timezone, selected),
         CalendarView::Month => render_month(ui, events, focus, timezone, monday_start, selected),
         CalendarView::Week => render_week(ui, events, focus, timezone, monday_start, selected),
         CalendarView::Day => render_day(ui, events, focus, timezone, selected),
+    }
+}
+
+fn render_agenda(
+    ui: &mut egui::Ui,
+    events: &[TemporalEvent],
+    timezone: Tz,
+    selected: Option<Uuid>,
+) -> Option<CalendarAction> {
+    let mut ordered = events.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        agenda_sort_date(left, timezone)
+            .cmp(&agenda_sort_date(right, timezone))
+            .then_with(|| left.display_time_label(timezone).cmp(&right.display_time_label(timezone)))
+            .then_with(|| left.normalized_title.cmp(&right.normalized_title))
+    });
+
+    let mut action = None;
+    let mut previous_group: Option<String> = None;
+
+    for event in ordered {
+        let group = agenda_group_label(event, timezone);
+        if previous_group.as_deref() != Some(group.as_str()) {
+            if previous_group.is_some() {
+                ui.add_space(8.0);
+            }
+            ui.heading(&group);
+            ui.separator();
+            previous_group = Some(group);
+        }
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(event.display_time_label(timezone))
+                    .monospace()
+                    .color(Color32::GRAY),
+            );
+            if ui
+                .selectable_label(
+                    selected == Some(event.id),
+                    RichText::new(&event.normalized_title)
+                        .color(status_color(event.status))
+                        .strong(),
+                )
+                .clicked()
+            {
+                action = Some(CalendarAction::Select(event.id));
+            }
+
+            if let Some(domain) = event.domain.as_deref() {
+                ui.small(domain);
+            }
+            if let Some(jurisdiction) = event.jurisdiction.as_deref() {
+                ui.small(format!("· {jurisdiction}"));
+            }
+            if let Some(institution) = event.institution.as_deref() {
+                ui.small(format!("· {institution}"));
+            }
+        });
+    }
+
+    action
+}
+
+fn agenda_sort_date(event: &TemporalEvent, timezone: Tz) -> Option<NaiveDate> {
+    match event.time {
+        TimeSpec::Month { year, month } => NaiveDate::from_ymd_opt(year, month, 1),
+        TimeSpec::Year { year } => NaiveDate::from_ymd_opt(year, 1, 1),
+        TimeSpec::Unknown { .. } => None,
+        _ => event.display_date(timezone),
+    }
+}
+
+fn agenda_group_label(event: &TemporalEvent, timezone: Tz) -> String {
+    match event.time {
+        TimeSpec::Month { year, month } => NaiveDate::from_ymd_opt(year, month, 1)
+            .map(|date| format!("{} · month precision", date.format("%B %Y")))
+            .unwrap_or_else(|| format!("{year}-{month:02} · month precision")),
+        TimeSpec::Year { year } => format!("{year} · year precision"),
+        TimeSpec::Unknown { .. } => "Unplaced / unresolved".to_string(),
+        _ => event
+            .display_date(timezone)
+            .map(|date| date.format("%A, %B %e, %Y").to_string())
+            .unwrap_or_else(|| "Unplaced / unresolved".to_string()),
     }
 }
 
