@@ -195,12 +195,7 @@ impl EphemerisApp {
     }
 
     fn apply_saved_view(&mut self, id: Uuid) {
-        let Some(view) = self
-            .saved_views
-            .iter()
-            .find(|view| view.id == id)
-            .cloned()
-        else {
+        let Some(view) = self.saved_views.iter().find(|view| view.id == id).cloned() else {
             return;
         };
 
