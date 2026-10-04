@@ -37,7 +37,7 @@ At the checkpoint, all 26 tests pass.
 
 SQLite via bundled `rusqlite`.
 
-Current schema version: 4.
+Current schema version: 5.
 
 The database owns:
 
@@ -138,9 +138,9 @@ Layouts are independent from date range:
 
 That separation is deliberate. A Month view can be rendered as a grid or agenda; presentation does not define the temporal query.
 
-### Querying
+### Querying and presentation
 
-Current simple query surface:
+Current query surface:
 
 - text search
 - domain
@@ -150,7 +150,16 @@ Current simple query surface:
 
 Source visibility is independent from the event query.
 
-The advanced boolean/query-expression system is not implemented yet.
+Current presentation dimensions are also independent:
+
+- grouping by date, week, month, source, domain, jurisdiction, institution, event type, or status
+- stable multi-key sorting
+- semantic coloring by source, domain, jurisdiction, institution, event type, or status
+- Grid and Agenda layouts
+
+These dimensions persist in saved views and do not reorganize or duplicate canonical events.
+
+The advanced boolean/query-expression system is the next active boundary.
 
 ### Saved views
 
@@ -162,6 +171,9 @@ A saved view currently retains:
 - hidden/visible source selection
 - date-range mode
 - layout
+- grouping
+- stable multi-key sort rules
+- semantic color strategy
 - display timezone
 - week-start behavior
 
@@ -212,9 +224,7 @@ The current milestone is a foundation, not the finished calendar.
 Not yet implemented:
 
 - arbitrary boolean query algebra
-- grouping rules
-- multiple sort rules
-- independent color-rule sets
+- rule-based color precedence beyond the current single semantic color dimension
 - saved-view inheritance/composition
 - overlays/calendar algebra
 - event-occurrence/recurrence engine
@@ -231,15 +241,16 @@ Not yet implemented:
 
 ## Immediate next implementation boundary
 
-Build the next layer of programmable-view semantics without coupling it to event storage:
+Expand the query representation without coupling it to event storage:
 
-1. grouping foundation
-2. stable sort-rule foundation
-3. independent color strategy/rule foundation
-4. persist those dimensions in saved views
-5. apply them first to Agenda and existing calendar event rendering
+1. nested boolean expression model
+2. explicit AND / OR / NOT
+3. typed field predicates
+4. preserve the simple facet controls as convenient query builders
+5. persist advanced expressions in saved views
+6. test expression evaluation independently from rendering
 
-After that, expand the query representation toward boolean composition and add richer dense-data views.
+After that, add richer dense-data views and expand color strategy into an ordered rule engine.
 
 ## Rule going forward
 
