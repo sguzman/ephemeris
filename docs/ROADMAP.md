@@ -8,114 +8,159 @@ Do not spend months rebuilding every Rivetr calendar feature before establishing
 
 ## Phase 0 - Documentation and inheritance audit
 
-Status: active at project creation.
+Status: **complete**
 
-Goals:
+Completed:
 
-- establish product identity
-- document architecture and temporal model
-- document Rivet/Rivetr lineage
-- inventory reusable Rivetr calendar code
-- identify task-backed assumptions that must not become canonical
-
-Exit criteria:
-
-- documentation surface exists
-- first implementation boundary is explicit
-- Rivetr is treated as source material, not a dependency by accident
+- product identity and documentation contract
+- architecture and temporal model
+- Rivet/Rivetr/Ephemeris lineage
+- focused Rivetr calendar implementation audit
+- explicit reuse/adapt/reject inheritance map
+- SQLite storage ADR
 
 ## Phase 1 - Native application skeleton
 
-Goals:
+Status: **substantially complete**
 
-- Rust workspace
-- `eframe`/`egui` app
-- logging
-- config
-- local data directory
+Implemented:
+
+- Rust application
+- `eframe`/`egui`
+- native local data directory
+- SQLite bootstrap
+- native UI-state persistence
 - CI
 - test harness
-- visible diagnostics/status
-
-Prefer extraction of proven Rivetr shell/calendar utilities where appropriate.
-
-Exit criteria:
-
-- app starts natively
-- empty temporal store opens
+- visible import/error/status messaging
 - no Tauri/React/WebView dependency
+
+Still to deepen:
+
+- structured runtime logging/observability
+- richer configuration surface
 
 ## Phase 2 - Canonical temporal core
 
-Goals:
+Status: **active / substantial foundation implemented**
 
-- choose embedded storage engine via ADR
-- implement schema/migrations
-- TemporalEvent
-- EventOccurrence
-- TemporalSource
-- provenance/snapshot minimum
-- annotation minimum
-- stable IDs
-- time semantics
+Implemented:
 
-Exit criteria:
+- SQLite schema and migrations
+- `TemporalEvent`
+- `TemporalSource`
+- stable local IDs
+- source-record identity
+- lifecycle status
+- rich extensible properties
+- source/provenance reference retention
+- explicit date-only/all-day/instant/floating/month/year/unresolved semantics
+- indexed date/source/status/domain querying
+- saved-view storage
 
-- events can be persisted and queried without task-model mediation
-- tests cover identity and time semantics
+Still required:
+
+- `EventOccurrence`
+- recurrence engine
+- dedicated provenance records/tables
+- snapshot/history tables
+- annotations
+- relations/collections
+- richer indexed ontology
 
 ## Phase 3 - Taria ingestion vertical slice
 
-Goals:
+Status: **first vertical slice working**
 
-- define versioned Taria temporal interchange
-- ingest one real Taria temporal resource family
-- preserve source/provenance
-- repeatable refresh
-- source status
-- event inspector
+Implemented:
 
-Exit criteria:
+- import of real Resourcearium reconciled temporal event sets
+- Taria projection/source identity retention
+- assertion/source/provenance refs
+- source contexts and rich Taria properties
+- blocked/unplaced event preservation
+- transactional import
+- repeatable identity-aware re-import
+- created/updated/unchanged/retained-missing accounting
+- GUI drag/drop import
+- CLI import
+- provenance-rich event inspector
 
-- real Taria events render locally
-- re-import/refresh does not duplicate unchanged events
-- provenance is inspectable
+Still required:
+
+- richer native interchange/version evolution
+- snapshot/history persistence
+- source health
+- rollover state
+- additional Taria artifact families
 
 ## Phase 4 - Calendar views
 
-Goals:
+Status: **substantial**
 
-- year
-- quarter
-- month
-- week
-- day
-- agenda
-- dense-day handling
+Implemented date ranges:
 
-Reuse/adapt proven Rivetr calendar rendering where useful.
+- Year
+- Quarter
+- Month
+- Week
+- Day
 
-Exit criteria:
+Implemented layouts:
 
-- real corpus is navigable across standard calendar views
-- dense days remain usable
+- Grid
+- Agenda
+
+Also implemented:
+
+- navigation
+- keyboard shortcuts
+- imprecise month/year presentation without fake dates
+- separate unplaced/conflicted surface
+- source visibility
+- event inspection
+
+Still required:
+
+- stronger dense-day aggregation
+- compact agenda modes
+- richer layout customization
 
 ## Phase 5 - Query and saved views
 
-Goals:
+Status: **active**
 
-- facets
-- boolean query representation
+Implemented:
+
 - text search
-- saved views
-- independent color rules
-- group/sort foundation
+- domain facet
+- jurisdiction facet
+- lifecycle-status facet
+- source visibility as independent dimension
+- canonical `EventQuery` model
+- durable named `SavedView`
+- SQLite saved-view persistence
+- saved view create/apply/update/delete
+- saved date-range mode
+- saved layout
+- saved timezone/week-start/source visibility
 
-Exit criteria:
+Next:
+
+- grouping
+- stable multi-key sorting
+- independent color rules
+- richer facets
+- boolean/nested query representation
+- view composition/calendar algebra
+
+Exit criterion remains:
 
 - user can create durable conceptual calendars without duplicating events
 
 ## Phase 6 - Source management and history
+
+Status: **not started beyond source identity/import metadata**
 
 Goals:
 
@@ -125,11 +170,9 @@ Goals:
 - added/moved/cancelled changes
 - stale/rollover states
 
-Exit criteria:
-
-- source-backed temporal data is auditable over time
-
 ## Phase 7 - Rich temporal visualization
+
+Status: **started through Agenda**
 
 Goals:
 
@@ -143,6 +186,8 @@ Goals:
 
 ## Phase 8 - Advanced temporal semantics
 
+Status: **not started**
+
 Goals:
 
 - full recurrence behavior
@@ -155,9 +200,11 @@ Goals:
 
 ## Phase 9 - External interoperability
 
+Status: **not started**
+
 Goals:
 
-- ICS export/projection
+- ICS import/export projection
 - webcal/remote ICS ingestion
 - CalDAV where valuable
 - JSCalendar/jCal
@@ -165,6 +212,8 @@ Goals:
 - optional mobile/cloud bridges
 
 ## Phase 10 - Personal scheduling completeness
+
+Status: **not started**
 
 Goals:
 
@@ -184,3 +233,4 @@ Every phase must preserve:
 - correctness
 - low interaction latency
 - no accidental return to task-centric canonical storage
+- no coupling of event organization to visibility/color/layout
