@@ -37,7 +37,7 @@ At the checkpoint, all 26 tests pass.
 
 SQLite via bundled `rusqlite`.
 
-Current schema version: 5.
+Current schema version: 7.
 
 The database owns:
 
@@ -157,8 +157,9 @@ Current presentation dimensions are also independent:
 
 - grouping by date, week, month, source, domain, jurisdiction, institution, event type, or status
 - stable multi-key sorting
-- semantic coloring by source, domain, jurisdiction, institution, event type, or status
-- Grid and Agenda layouts
+- semantic fallback coloring by source, domain, jurisdiction, institution, event type, or status
+- ordered query-driven color rules with first-match precedence
+- Grid, Agenda, and Table layouts
 
 These dimensions persist in saved views and do not reorganize or duplicate canonical events.
 
@@ -195,7 +196,9 @@ A saved view currently retains:
 - layout
 - grouping
 - stable multi-key sort rules
-- semantic color strategy
+- semantic color fallback
+- ordered color rules
+- overlays
 - display timezone
 - week-start behavior
 
@@ -245,9 +248,8 @@ The current milestone is a foundation, not the finished calendar.
 
 Not yet implemented:
 
-- rule-based color precedence beyond the current single semantic color dimension
-- saved-view inheritance/composition
-- overlays/calendar algebra
+- saved-view inheritance
+- full calendar algebra beyond the current overlay-union slice
 - event-occurrence/recurrence engine
 - dedicated provenance/snapshot/history tables
 - snapshot diffs
@@ -261,18 +263,50 @@ Not yet implemented:
 - ICS/webcal/CalDAV ingestion/export
 - full personal event editing
 
+### Ordered color rules
+
+Color is now a rule engine rather than a calendar-container property.
+
+Implemented:
+
+- rules reuse the full recursive query language, including temporal predicates
+- rules are ordered and deterministic
+- first enabled matching rule wins
+- explicit RGB colors
+- enable/disable, edit, add/delete, and reorder controls
+- existing semantic ColorBy strategy remains the fallback
+- rules apply consistently across Grid, Agenda, Table, and unplaced records
+- rules persist in saved views
+
+### Overlays
+
+The first overlay slice is implemented.
+
+An overlay is an independently defined query rendered into the same canonical event result without copying event membership.
+
+Implemented:
+
+- enabled overlays union their query matches with the base view query
+- global source visibility remains independent
+- overlay order is styling precedence
+- overlays have independent semantic fallback coloring
+- overlays can carry their own ordered color rules
+- recursive overlay query editing
+- overlay enable/disable, naming, reorder, and deletion
+- overlays persist in saved views
+
 ## Immediate next implementation boundary
 
-Expand semantic coloring into an ordered rule engine:
+Generalize composition beyond overlay union:
 
-1. reusable query expressions as color-rule conditions
-2. ordered precedence with first-match-wins semantics
-3. explicit fallback to the existing semantic ColorBy strategy
-4. persist the rule list in saved views
-5. edit/reorder/enable/disable rules from the calendar UI
-6. apply rules consistently across Grid, Agenda, Table, and unplaced records
+1. explicit union / intersection / subtraction query composition
+2. keep operands logical and event-native
+3. deterministic nested evaluation
+4. avoid saved-view reference cycles in the first slice
+5. expose composition in the advanced view editor
+6. preserve ordinary overlays as the ergonomic simultaneous-union surface
 
-After that, add view composition/overlays and user-defined table columns.
+After that, add user-defined Table columns and richer facets.
 
 ## Rule going forward
 
