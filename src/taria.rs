@@ -111,7 +111,9 @@ pub fn import_reconciled_event_set_json(
                     .get("reconciled_event_key")
                     .and_then(Value::as_str)
             })
-            .ok_or_else(|| anyhow!("Taria reconciled event is missing event_ref/reconciled_event_key"))?
+            .ok_or_else(|| {
+                anyhow!("Taria reconciled event is missing event_ref/reconciled_event_key")
+            })?
             .to_string();
 
         let existing = store.event_by_source_record(source.id, &record_key)?;
@@ -306,9 +308,7 @@ fn parse_temporal_value(value: Option<&Value>) -> anyhow::Result<TimeSpec> {
             }
             Ok(TimeSpec::Month { year, month })
         }
-        "date-time" | "date_time" | "datetime" | "instant" => {
-            parse_datetime_temporal_value(object)
-        }
+        "date-time" | "date_time" | "datetime" | "instant" => parse_datetime_temporal_value(object),
         "local-datetime" | "local_datetime" => parse_local_datetime_temporal_value(object),
         "interval" => Ok(TimeSpec::Unknown {
             original_value: Some(Value::Object(object.clone()).to_string()),
@@ -372,9 +372,7 @@ fn parse_datetime_temporal_value(object: &Map<String, Value>) -> anyhow::Result<
     })
 }
 
-fn parse_local_datetime_temporal_value(
-    object: &Map<String, Value>,
-) -> anyhow::Result<TimeSpec> {
+fn parse_local_datetime_temporal_value(object: &Map<String, Value>) -> anyhow::Result<TimeSpec> {
     let raw = temporal_start_string(object)?;
     let clock_basis = object
         .get("clock_basis")
@@ -417,8 +415,7 @@ fn temporal_start_string(object: &Map<String, Value>) -> anyhow::Result<String> 
 }
 
 fn parse_date(raw: &str) -> anyhow::Result<NaiveDate> {
-    NaiveDate::parse_from_str(raw, "%Y-%m-%d")
-        .with_context(|| format!("invalid Taria date {raw}"))
+    NaiveDate::parse_from_str(raw, "%Y-%m-%d").with_context(|| format!("invalid Taria date {raw}"))
 }
 
 fn parse_naive_datetime(raw: &str) -> anyhow::Result<NaiveDateTime> {
@@ -635,8 +632,8 @@ mod tests {
     #[test]
     fn imports_real_reconciled_shape_without_inventing_dates() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let report =
-            import_reconciled_event_set_json(&store, FIXTURE, Some("fixture.json")).expect("import");
+        let report = import_reconciled_event_set_json(&store, FIXTURE, Some("fixture.json"))
+            .expect("import");
 
         assert_eq!(report.total_events, 4);
         assert_eq!(report.created, 4);
