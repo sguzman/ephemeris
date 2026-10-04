@@ -1,5 +1,5 @@
 name: Format Once
-# rerun: post-taria-import
+# rerun: post-syntax-repair
 
 on:
   push:
