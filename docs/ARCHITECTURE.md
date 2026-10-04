@@ -192,7 +192,7 @@ The preferred upstream boundary is:
 
 ```text
 TemporalBundleRelease
-    -> referenced ReconciledProjectionEventSet payloads
+    -> referenced ReconciledProjectionEventSet / accepted compact reconciled payloads
     -> referenced CalendarSets
     -> Ephemeris transactional adoption
 ```
@@ -201,7 +201,7 @@ Taria owns acquisition, normalization, reconciliation, projections, CalendarSets
 
 Ephemeris owns local adoption and runtime interpretation.
 
-The direct `ReconciledProjectionEventSet` importer already exists and remains the low-level event-payload adapter.
+The direct `ReconciledProjectionEventSet` importer already exists and remains the preferred full event-payload adapter. Bootstrap r3 additionally establishes `CompactReconciledEventIndex` as an accepted compact post-reconciliation payload class for recovered shards; an Ephemeris adapter for it is still pending.
 
 The next architecture slice is a release-level adapter that:
 
