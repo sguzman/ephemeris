@@ -24,6 +24,8 @@ pub struct TariaImportReport {
     pub imprecise: usize,
     pub unplaced: usize,
     pub blocked_or_undated: usize,
+    pub retained_missing: usize,
+    pub suggested_focus: Option<NaiveDate>,
 }
 
 pub fn import_reconciled_event_set_file(
@@ -63,6 +65,11 @@ pub fn import_reconciled_event_set_json(
         .get("events")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("Taria reconciled event set is missing events[]"))?;
+    let blocked_events = object
+        .get("blocked_events")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
 
     let mut source = match store.source_by_external_ref(&projection_ref)? {
         Some(source) => source,
@@ -86,71 +93,68 @@ pub fn import_reconciled_event_set_json(
     source.updated_at = Utc::now();
     source.properties = source_properties(object);
 
-    let mut report = TariaImportReport {
-        projection_ref: projection_ref.clone(),
-        reconciled_set_ref: reconciled_set_ref.clone(),
-        source_id: source.id,
-        total_events: events.len(),
-        created: 0,
-        updated: 0,
-        unchanged: 0,
-        retained_missing: 0,
-        imprecise: 0,
-        unplaced: 0,
-        blocked_or_undated: 0,
-    };
-
-    let mut normalized_events = Vec::with_capacity(events.len());
-
+    let mut normalized = Vec::with_capacity(events.len() + blocked_events.len());
     for raw_event in events {
         let event_object = raw_event
             .as_object()
             .ok_or_else(|| anyhow!("Taria events[] contains a non-object value"))?;
-        let record_key = event_object
-            .get("event_ref")
-            .and_then(Value::as_str)
-            .or_else(|| {
-                event_object
-                    .get("reconciled_event_key")
-                    .and_then(Value::as_str)
-            })
-            .ok_or_else(|| {
-                anyhow!("Taria reconciled event is missing event_ref/reconciled_event_key")
-            })?
-            .to_string();
-
-        let event = normalized_event(
+        let record_key = reconciled_record_key(event_object)?;
+        normalized.push(normalized_event(
             event_object,
             source.id,
             &record_key,
             &projection_ref,
             reconciled_set_ref.as_deref(),
-        )?;
-
-        if event.time.is_imprecise() {
-            report.imprecise += 1;
-        }
-        if matches!(event.time, TimeSpec::Unknown { .. }) {
-            report.unplaced += 1;
-        }
-        if event
-            .renderability
-            .as_deref()
-            .is_some_and(|state| state != "ready")
-        {
-            report.blocked_or_undated += 1;
-        }
-
-        normalized_events.push(event);
+        )?);
     }
 
-    let batch = store.import_batch(&source, &mut normalized_events)?;
-    report.created = batch.created;
-    report.updated = batch.updated;
-    report.unchanged = batch.unchanged;
-    report.retained_missing = batch.retained_missing;
+    for raw_event in blocked_events {
+        let event_object = raw_event
+            .as_object()
+            .ok_or_else(|| anyhow!("Taria blocked_events[] contains a non-object value"))?;
+        let record_key = reconciled_record_key(event_object)?;
+        normalized.push(normalized_blocked_event(
+            event_object,
+            source.id,
+            &record_key,
+            &projection_ref,
+            reconciled_set_ref.as_deref(),
+        ));
+    }
 
-    Ok(report)
+    let imprecise = normalized.iter().filter(|event| event.time.is_imprecise()).count();
+    let unplaced = normalized
+        .iter()
+        .filter(|event| matches!(event.time, TimeSpec::Unknown { .. }))
+        .count();
+    let blocked_or_undated = normalized
+        .iter()
+        .filter(|event| {
+            event
+                .renderability
+                .as_deref()
+                .is_some_and(|state| state != "ready")
+                || matches!(event.time, TimeSpec::Unknown { .. })
+        })
+        .count();
+    let suggested_focus = normalized.iter().filter_map(event_focus_date).min();
+
+    let batch = store.import_batch(&source, &mut normalized)?;
+
+    Ok(TariaImportReport {
+        projection_ref,
+        reconciled_set_ref,
+        source_id: source.id,
+        total_events: normalized.len(),
+        created: batch.created,
+        updated: batch.updated,
+        unchanged: batch.unchanged,
+        imprecise,
+        unplaced,
+        blocked_or_undated,
+        retained_missing: batch.retained_missing,
+        suggested_focus,
+    })
 }
 
 fn normalized_event(
@@ -202,6 +206,10 @@ fn normalized_event(
 
     let mut taria = Map::new();
     taria.insert(
+        "raw_reconciled_event".to_string(),
+        Value::Object(raw.clone()),
+    );
+    taria.insert(
         "projection_ref".to_string(),
         Value::String(projection_ref.to_string()),
     );
@@ -236,6 +244,70 @@ fn normalized_event(
     Ok(event)
 }
 
+fn reconciled_record_key(raw: &Map<String, Value>) -> anyhow::Result<String> {
+    raw.get("reconciled_event_key")
+        .and_then(Value::as_str)
+        .or_else(|| raw.get("event_ref").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow!("Taria event is missing reconciled_event_key/event_ref"))
+}
+
+fn normalized_blocked_event(
+    raw: &Map<String, Value>,
+    source_id: Uuid,
+    record_key: &str,
+    projection_ref: &str,
+    reconciled_set_ref: Option<&str>,
+) -> TemporalEvent {
+    let title = raw
+        .get("title")
+        .and_then(Value::as_str)
+        .or_else(|| raw.get("event_ref").and_then(Value::as_str))
+        .unwrap_or(record_key);
+    let mut event = TemporalEvent::new(
+        title,
+        TimeSpec::Unknown {
+            original_value: None,
+        },
+    );
+    event.source_id = Some(source_id);
+    event.source_record_key = Some(record_key.to_string());
+    event.upstream_event_ref = optional_string(raw, "event_ref");
+    event.upstream_reconciled_key = optional_string(raw, "reconciled_event_key");
+    event.renderability = optional_string(raw, "renderability")
+        .or_else(|| Some("blocked".to_string()));
+    event.status = EventStatus::Unknown;
+
+    let mut taria = Map::new();
+    taria.insert(
+        "projection_ref".to_string(),
+        Value::String(projection_ref.to_string()),
+    );
+    if let Some(reconciled_set_ref) = reconciled_set_ref {
+        taria.insert(
+            "reconciled_projection_event_set_ref".to_string(),
+            Value::String(reconciled_set_ref.to_string()),
+        );
+    }
+    taria.insert(
+        "raw_blocked_event".to_string(),
+        Value::Object(raw.clone()),
+    );
+    event.properties = json!({ "taria": Value::Object(taria) });
+    event
+}
+
+fn event_focus_date(event: &TemporalEvent) -> Option<NaiveDate> {
+    match event.time {
+        TimeSpec::DateOnly { start, .. } | TimeSpec::AllDay { start, .. } => Some(start),
+        TimeSpec::Instant { start_utc, .. } => Some(start_utc.date_naive()),
+        TimeSpec::Floating { start, .. } => Some(start.date()),
+        TimeSpec::Month { year, month } => NaiveDate::from_ymd_opt(year, month, 1),
+        TimeSpec::Year { year } => NaiveDate::from_ymd_opt(year, 1, 1),
+        TimeSpec::Unknown { .. } => None,
+    }
+}
+
 fn parse_temporal_value(value: Option<&Value>) -> anyhow::Result<TimeSpec> {
     let Some(value) = value else {
         return Ok(TimeSpec::Unknown {
@@ -259,8 +331,16 @@ fn parse_temporal_value(value: Option<&Value>) -> anyhow::Result<TimeSpec> {
     match kind.as_str() {
         "date" | "date-only" | "date_only" => {
             let raw = temporal_start_string(object)?;
+            let start = parse_date(&raw)?;
+            let end_exclusive = object
+                .get("end")
+                .or_else(|| object.get("interval_end"))
+                .and_then(Value::as_str)
+                .map(parse_date)
+                .transpose()?;
             Ok(TimeSpec::DateOnly {
-                date: parse_date(&raw)?,
+                start,
+                end_exclusive,
             })
         }
         "all-day-date" | "all_day_date" | "all-day" | "all_day" => {
