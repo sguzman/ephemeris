@@ -13,6 +13,13 @@ use crate::domain::{
 
 const SCHEMA_VERSION: i64 = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImportBatchResult {
+    pub created: usize,
+    pub updated: usize,
+    pub retained_missing: usize,
+}
+
 pub struct TemporalStore {
     conn: Connection,
     path: Option<PathBuf>,
@@ -373,6 +380,81 @@ impl TemporalStore {
             events.push(decode_event(row)?);
         }
         Ok(events)
+    }
+
+    pub fn import_batch(
+        &self,
+        source: &TemporalSource,
+        events: &mut [TemporalEvent],
+    ) -> anyhow::Result<ImportBatchResult> {
+        let existing_keys = self.source_record_keys(source.id)?;
+        let incoming_keys = events
+            .iter()
+            .filter_map(|event| event.source_record_key.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .context("failed to begin temporal import transaction")?;
+
+        let result = (|| -> anyhow::Result<ImportBatchResult> {
+            self.upsert_source(source)?;
+
+            let mut created = 0usize;
+            let mut updated = 0usize;
+
+            for event in events {
+                event.source_id = Some(source.id);
+                if let Some(source_record_key) = event.source_record_key.as_deref()
+                    && let Some(existing) =
+                        self.event_by_source_record(source.id, source_record_key)?
+                {
+                    event.id = existing.id;
+                    event.created_at = existing.created_at;
+                    event.updated_at = Utc::now();
+                    updated += 1;
+                } else {
+                    created += 1;
+                }
+                self.upsert_event(event)?;
+            }
+
+            Ok(ImportBatchResult {
+                created,
+                updated,
+                retained_missing: existing_keys.difference(&incoming_keys).count(),
+            })
+        })();
+
+        match result {
+            Ok(result) => {
+                tx.commit()
+                    .context("failed to commit temporal import transaction")?;
+                Ok(result)
+            }
+            Err(error) => {
+                let _ = tx.rollback();
+                Err(error)
+            }
+        }
+    }
+
+    pub fn source_record_keys(
+        &self,
+        source_id: Uuid,
+    ) -> anyhow::Result<std::collections::BTreeSet<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT source_record_key
+             FROM temporal_events
+             WHERE source_id = ?1 AND source_record_key IS NOT NULL",
+        )?;
+        let mut rows = stmt.query(params![source_id.to_string()])?;
+        let mut keys = std::collections::BTreeSet::new();
+        while let Some(row) = rows.next()? {
+            keys.insert(row.get::<_, String>(0)?);
+        }
+        Ok(keys)
     }
 
     pub fn unplaced_events(&self) -> anyhow::Result<Vec<TemporalEvent>> {
