@@ -1639,35 +1639,21 @@ fn render_calendar(
     }
 
     match layout {
-        CalendarLayout::Agenda => render_agenda(
-            ui, events, timezone, selected, group_by, sort_rules, colors,
-        ),
-        CalendarLayout::Table => render_table(
-            ui, events, timezone, selected, group_by, sort_rules, colors,
-        ),
+        CalendarLayout::Agenda => {
+            render_agenda(ui, events, timezone, selected, group_by, sort_rules, colors)
+        }
+        CalendarLayout::Table => {
+            render_table(ui, events, timezone, selected, group_by, sort_rules, colors)
+        }
         CalendarLayout::Grid => match view {
             CalendarView::Year => render_year(ui, events, focus, timezone, selected, colors),
-            CalendarView::Quarter => {
-                render_quarter(ui, events, focus, timezone, selected, colors)
+            CalendarView::Quarter => render_quarter(ui, events, focus, timezone, selected, colors),
+            CalendarView::Month => {
+                render_month(ui, events, focus, timezone, monday_start, selected, colors)
             }
-            CalendarView::Month => render_month(
-                ui,
-                events,
-                focus,
-                timezone,
-                monday_start,
-                selected,
-                colors,
-            ),
-            CalendarView::Week => render_week(
-                ui,
-                events,
-                focus,
-                timezone,
-                monday_start,
-                selected,
-                colors,
-            ),
+            CalendarView::Week => {
+                render_week(ui, events, focus, timezone, monday_start, selected, colors)
+            }
             CalendarView::Day => render_day(ui, events, focus, timezone, selected, colors),
         },
     }
