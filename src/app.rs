@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use chrono::{Datelike, Local, NaiveDate};
 use chrono_tz::Tz;
 use eframe::egui::{self, Color32, RichText};
@@ -154,11 +156,7 @@ impl EphemerisApp {
     fn visible_events(&self) -> Vec<TemporalEvent> {
         self.events
             .iter()
-            .filter(|event| {
-                event
-                    .source_id
-                    .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-            })
+            .filter(|event| event_matches_query(event, &self.state))
             .cloned()
             .collect()
     }
@@ -166,11 +164,7 @@ impl EphemerisApp {
     fn visible_unplaced_events(&self) -> Vec<TemporalEvent> {
         self.unplaced_events
             .iter()
-            .filter(|event| {
-                event
-                    .source_id
-                    .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-            })
+            .filter(|event| event_matches_query(event, &self.state))
             .cloned()
             .collect()
     }
@@ -296,9 +290,130 @@ impl EphemerisApp {
     }
 
     fn render_sources(&mut self, ui: &mut egui::Ui) {
-        ui.set_width(240.0);
+        ui.set_width(260.0);
+        ui.heading("Query");
+        ui.small("Filtering is independent from source organization.");
+
+        let mut filters_changed = false;
+        ui.horizontal(|ui| {
+            ui.label("Search");
+            filters_changed |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.state.search_query)
+                        .hint_text("title, institution, tags…"),
+                )
+                .changed();
+            if !self.state.search_query.is_empty() && ui.small_button("×").clicked() {
+                self.state.search_query.clear();
+                filters_changed = true;
+            }
+        });
+
+        let domains = self
+            .events
+            .iter()
+            .chain(self.unplaced_events.iter())
+            .filter_map(|event| event.domain.clone())
+            .collect::<BTreeSet<_>>();
+        egui::ComboBox::from_id_salt("query.domain")
+            .selected_text(
+                self.state
+                    .domain_filter
+                    .as_deref()
+                    .unwrap_or("All domains"),
+            )
+            .show_ui(ui, |ui| {
+                filters_changed |= ui
+                    .selectable_value(&mut self.state.domain_filter, None, "All domains")
+                    .changed();
+                for domain in domains {
+                    filters_changed |= ui
+                        .selectable_value(
+                            &mut self.state.domain_filter,
+                            Some(domain.clone()),
+                            domain,
+                        )
+                        .changed();
+                }
+            });
+
+        let jurisdictions = self
+            .events
+            .iter()
+            .chain(self.unplaced_events.iter())
+            .filter_map(|event| event.jurisdiction.clone())
+            .collect::<BTreeSet<_>>();
+        egui::ComboBox::from_id_salt("query.jurisdiction")
+            .selected_text(
+                self.state
+                    .jurisdiction_filter
+                    .as_deref()
+                    .unwrap_or("All jurisdictions"),
+            )
+            .show_ui(ui, |ui| {
+                filters_changed |= ui
+                    .selectable_value(
+                        &mut self.state.jurisdiction_filter,
+                        None,
+                        "All jurisdictions",
+                    )
+                    .changed();
+                for jurisdiction in jurisdictions {
+                    filters_changed |= ui
+                        .selectable_value(
+                            &mut self.state.jurisdiction_filter,
+                            Some(jurisdiction.clone()),
+                            jurisdiction,
+                        )
+                        .changed();
+                }
+            });
+
+        egui::ComboBox::from_id_salt("query.status")
+            .selected_text(
+                self.state
+                    .status_filter
+                    .map(EventStatus::as_str)
+                    .unwrap_or("All statuses"),
+            )
+            .show_ui(ui, |ui| {
+                filters_changed |= ui
+                    .selectable_value(&mut self.state.status_filter, None, "All statuses")
+                    .changed();
+                for status in EventStatus::ALL {
+                    filters_changed |= ui
+                        .selectable_value(
+                            &mut self.state.status_filter,
+                            Some(status),
+                            status.as_str(),
+                        )
+                        .changed();
+                }
+            });
+
+        if filters_changed {
+            self.state.selected_event_id = None;
+            self.mark_state_dirty();
+        }
+
+        if self.state.domain_filter.is_some()
+            || self.state.jurisdiction_filter.is_some()
+            || self.state.status_filter.is_some()
+            || !self.state.search_query.is_empty()
+        {
+            if ui.button("Clear query").clicked() {
+                self.state.search_query.clear();
+                self.state.domain_filter = None;
+                self.state.jurisdiction_filter = None;
+                self.state.status_filter = None;
+                self.state.selected_event_id = None;
+                self.mark_state_dirty();
+            }
+        }
+
+        ui.separator();
         ui.heading("Sources");
-        ui.small("Visibility is independent from event organization.");
+        ui.small("Source visibility is another independent dimension.");
         ui.separator();
 
         if self.sources.is_empty() {
@@ -582,6 +697,67 @@ enum CalendarAction {
     Select(Uuid),
     OpenDay(NaiveDate),
     OpenMonth(NaiveDate),
+}
+
+fn event_matches_query(event: &TemporalEvent, state: &PersistedUiState) -> bool {
+    if event
+        .source_id
+        .is_some_and(|source_id| state.hidden_source_ids.contains(&source_id))
+    {
+        return false;
+    }
+
+    if let Some(domain) = state.domain_filter.as_deref()
+        && event.domain.as_deref() != Some(domain)
+    {
+        return false;
+    }
+
+    if let Some(jurisdiction) = state.jurisdiction_filter.as_deref()
+        && event.jurisdiction.as_deref() != Some(jurisdiction)
+    {
+        return false;
+    }
+
+    if let Some(status) = state.status_filter
+        && event.status != status
+    {
+        return false;
+    }
+
+    let query = state.search_query.trim().to_ascii_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+
+    let matches_text = [
+        Some(event.normalized_title.as_str()),
+        event.raw_title.as_deref(),
+        event.description.as_deref(),
+        event.event_type.as_deref(),
+        event.domain.as_deref(),
+        event.jurisdiction.as_deref(),
+        event.institution.as_deref(),
+        event.upstream_event_ref.as_deref(),
+        event.upstream_reconciled_key.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.to_ascii_lowercase().contains(&query));
+
+    matches_text
+        || event
+            .tags
+            .iter()
+            .chain(event.source_refs.iter())
+            .chain(event.assertion_refs.iter())
+            .chain(event.provenance_refs.iter())
+            .any(|value| value.to_ascii_lowercase().contains(&query))
+        || event
+            .properties
+            .to_string()
+            .to_ascii_lowercase()
+            .contains(&query)
 }
 
 fn render_calendar(
