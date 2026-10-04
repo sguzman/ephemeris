@@ -1026,10 +1026,11 @@ enum QueryPredicateKind {
     Exists,
     TemporalKindAnyOf,
     DateOverlaps,
+    RelativeDateOverlaps,
 }
 
 impl QueryPredicateKind {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Text,
         Self::TextAnyOf,
         Self::StatusAnyOf,
@@ -1037,6 +1038,7 @@ impl QueryPredicateKind {
         Self::Exists,
         Self::TemporalKindAnyOf,
         Self::DateOverlaps,
+        Self::RelativeDateOverlaps,
     ];
 
     const fn label(self) -> &'static str {
@@ -1048,6 +1050,7 @@ impl QueryPredicateKind {
             Self::Exists => "Exists / missing",
             Self::TemporalKindAnyOf => "Time kind set",
             Self::DateOverlaps => "Date overlap",
+            Self::RelativeDateOverlaps => "Relative date window",
         }
     }
 }
@@ -1114,6 +1117,11 @@ fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
             end_exclusive: None,
             include_imprecise: false,
         },
+        QueryPredicateKind::RelativeDateOverlaps => QueryPredicate::RelativeDateOverlaps {
+            start_offset_days: 1,
+            end_offset_days_exclusive: 31,
+            include_imprecise: false,
+        },
     }
 }
 
@@ -1126,6 +1134,7 @@ fn query_predicate_kind(predicate: &QueryPredicate) -> QueryPredicateKind {
         QueryPredicate::Exists { .. } => QueryPredicateKind::Exists,
         QueryPredicate::TemporalKindAnyOf { .. } => QueryPredicateKind::TemporalKindAnyOf,
         QueryPredicate::DateOverlaps { .. } => QueryPredicateKind::DateOverlaps,
+        QueryPredicate::RelativeDateOverlaps { .. } => QueryPredicateKind::RelativeDateOverlaps,
     }
 }
 
@@ -1374,6 +1383,60 @@ fn render_query_predicate_editor(
             ui.small("Civil-date overlap in the current view timezone.");
             changed |= render_optional_date_editor(ui, "Start inclusive", start);
             changed |= render_optional_date_editor(ui, "End exclusive", end_exclusive);
+            changed |= ui
+                .checkbox(
+                    include_imprecise,
+                    "Include month/year-precision events by their full known span",
+                )
+                .changed();
+        }
+        QueryPredicate::RelativeDateOverlaps {
+            start_offset_days,
+            end_offset_days_exclusive,
+            include_imprecise,
+        } => {
+            ui.small("Offsets are civil days from today; the end offset is exclusive.");
+            ui.horizontal_wrapped(|ui| {
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(start_offset_days)
+                            .prefix("start ")
+                            .suffix(" d"),
+                    )
+                    .changed();
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(end_offset_days_exclusive)
+                            .prefix("end ")
+                            .suffix(" d"),
+                    )
+                    .changed();
+            });
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Today").clicked() {
+                    *start_offset_days = 0;
+                    *end_offset_days_exclusive = 1;
+                    changed = true;
+                }
+                if ui.button("Next 7 days").clicked() {
+                    *start_offset_days = 1;
+                    *end_offset_days_exclusive = 8;
+                    changed = true;
+                }
+                if ui.button("Next 30 days").clicked() {
+                    *start_offset_days = 1;
+                    *end_offset_days_exclusive = 31;
+                    changed = true;
+                }
+                if ui.button("Previous 7 days").clicked() {
+                    *start_offset_days = -7;
+                    *end_offset_days_exclusive = 0;
+                    changed = true;
+                }
+            });
+            if *end_offset_days_exclusive <= *start_offset_days {
+                ui.colored_label(Color32::LIGHT_RED, "End offset must be greater than start.");
+            }
             changed |= ui
                 .checkbox(
                     include_imprecise,
