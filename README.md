@@ -67,6 +67,8 @@ Implemented:
 - current-release Taria bundle membership predicates
 - projected CalendarSet membership predicates
 - membership-aware saved views, overlays, color rules, and calendar algebra without copying membership into events
+- adopted-release coverage/status and per-bundle population posture in the Sources panel
+- release-backed bundle/projected-calendar selectors in the recursive query editor
 - repeatable Taria re-import using stable source-record and upstream event identity
 - transactional source import reconciliation
 - created / updated / unchanged / retained-missing accounting
@@ -74,7 +76,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation milestone at 2026-10-04 passes the full CI gate at `5c25e3adc85fad67a97704100d60a70a7439515c`: format, compile, strict Clippy, and **49 library tests**.
+The verified implementation milestone at 2026-10-04 passes the full CI gate at `0392969043ec8684f2f9b2abf78c0612da733476`: format, compile, strict Clippy, and **50 library tests**.
 
 ## Product boundary
 
@@ -159,7 +161,7 @@ Important contract rules:
 - partial/pending/gap-only coverage must remain visible and must not be interpreted as an empty world.
 - ICS/JSCalendar/jCal/CSV are downstream projections, not the canonical interchange.
 
-The current bootstrap channel is `temporal-bundle-release:bootstrap:2026-10-04:r4`: 1,114 ready events across Politics, Sports, and Holidays while nine canonical domain slots remain pending. All four populated bootstrap shards now expose accepted post-reconciliation payloads: compact reconciled indexes for recovered Politics/Holidays and full ReconciledProjectionEventSets for Elections/Sports. Ephemeris can resolve and ingest that mixed release shape directly from the local Resourcearium checkout while also persisting CalendarSet membership.
+The current bootstrap channel is `temporal-bundle-release:bootstrap:2026-10-04:r10`: 1,357 unique ready events, eight partially populated canonical domain slots, four explicit gap-only slots, and zero pending slots. The release combines compact reconciled recovery/frozen-rebuild indexes with full ReconciledProjectionEventSets. Ephemeris resolves and ingests that mixed release shape directly from the local Resourcearium checkout, persists CalendarSet membership, and renders the adopted release's coverage/posture in the Sources panel.
 
 Production `bundle_artifacts[]` adoption is implemented and regression-tested with overlapping Politics/Finance projections: stable upstream identities converge on one canonical local event while bundle/calendar memberships remain separate. The live Resourcearium production channel is still unset, so this path is implemented and tested but not yet exercised against a live production release.
 
