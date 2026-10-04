@@ -296,7 +296,13 @@ Whole-release adoption is now atomic:
 - upstream identity aliases and memberships join it too;
 - a failure in any later artifact rolls back every earlier mutation from the release.
 
+The explicit update operation is now asynchronous from egui's point of view:
+
+- the UI thread launches a worker;
+- the worker opens its own SQLite connection;
+- the atomic release adoption runs there;
+- the UI remains interactive, shows an update-in-progress state, and reloads only when the worker returns.
+
 The next work is:
 
-1. make the explicit update operation asynchronous so large releases never stall the frame loop;
-2. add release-to-release diff/history inspection.
+1. add release-to-release diff/history inspection.
