@@ -170,6 +170,8 @@ pub fn calendar_title(view: CalendarView, focus: NaiveDate, monday_start: bool) 
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     #[test]
