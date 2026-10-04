@@ -1716,8 +1716,7 @@ fn render_query_expr_editor(
 
         match expression {
             QueryExpr::Predicate(predicate) => {
-                changed |=
-                    render_query_predicate_editor(ui, predicate, path, membership_options);
+                changed |= render_query_predicate_editor(ui, predicate, path, membership_options);
             }
             QueryExpr::All(children) | QueryExpr::Any(children) => {
                 let mut remove = None;
@@ -1768,12 +1767,8 @@ fn render_query_expr_editor(
             }
             QueryExpr::Not(child) => {
                 ui.strong("Negates:");
-                changed |= render_query_expr_editor(
-                    ui,
-                    child,
-                    &format!("{path}.not"),
-                    membership_options,
-                );
+                changed |=
+                    render_query_expr_editor(ui, child, &format!("{path}.not"), membership_options);
             }
         }
     });
@@ -2071,11 +2066,7 @@ fn render_query_predicate_editor(
                             short_bundle_label(&calendar.bundle_ref)
                         );
                         changed |= ui
-                            .selectable_value(
-                                calendar_id,
-                                calendar.calendar_id.clone(),
-                                label,
-                            )
+                            .selectable_value(calendar_id, calendar.calendar_id.clone(), label)
                             .changed();
                     }
                 });
