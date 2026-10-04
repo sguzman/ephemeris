@@ -30,6 +30,22 @@ impl QueryContext {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EventMembership {
+    pub bundle_refs: BTreeSet<String>,
+    pub calendar_refs: BTreeSet<String>,
+}
+
+impl EventMembership {
+    pub fn belongs_to_bundle(&self, bundle_ref: &str) -> bool {
+        self.bundle_refs.contains(bundle_ref)
+    }
+
+    pub fn belongs_to_calendar(&self, calendar_id: &str) -> bool {
+        self.calendar_refs.contains(calendar_id)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventQuery {
     #[serde(default)]
@@ -54,6 +70,15 @@ impl EventQuery {
     }
 
     pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
+        self.matches_with_membership(event, context, None)
+    }
+
+    pub fn matches_with_membership(
+        &self,
+        event: &TemporalEvent,
+        context: &QueryContext,
+        membership: Option<&EventMembership>,
+    ) -> bool {
         if let Some(domain) = self.domain.as_deref()
             && event.domain.as_deref() != Some(domain)
         {
@@ -104,9 +129,9 @@ impl EventQuery {
             }
         }
 
-        self.expression
-            .as_ref()
-            .is_none_or(|expression| expression.matches(event, context))
+        self.expression.as_ref().is_none_or(|expression| {
+            expression.matches_with_membership(event, context, membership)
+        })
     }
 }
 
@@ -121,15 +146,28 @@ pub enum QueryExpr {
 
 impl QueryExpr {
     pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
+        self.matches_with_membership(event, context, None)
+    }
+
+    pub fn matches_with_membership(
+        &self,
+        event: &TemporalEvent,
+        context: &QueryContext,
+        membership: Option<&EventMembership>,
+    ) -> bool {
         match self {
             Self::All(expressions) => expressions
                 .iter()
-                .all(|expression| expression.matches(event, context)),
+                .all(|expression| expression.matches_with_membership(event, context, membership)),
             Self::Any(expressions) => expressions
                 .iter()
-                .any(|expression| expression.matches(event, context)),
-            Self::Not(expression) => !expression.matches(event, context),
-            Self::Predicate(predicate) => predicate.matches(event, context),
+                .any(|expression| expression.matches_with_membership(event, context, membership)),
+            Self::Not(expression) => {
+                !expression.matches_with_membership(event, context, membership)
+            }
+            Self::Predicate(predicate) => {
+                predicate.matches_with_membership(event, context, membership)
+            }
         }
     }
 }
@@ -177,10 +215,25 @@ pub enum QueryPredicate {
         #[serde(default)]
         include_imprecise: bool,
     },
+    BundleMembership {
+        bundle_ref: String,
+    },
+    ProjectedCalendarMembership {
+        calendar_id: String,
+    },
 }
 
 impl QueryPredicate {
     pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
+        self.matches_with_membership(event, context, None)
+    }
+
+    pub fn matches_with_membership(
+        &self,
+        event: &TemporalEvent,
+        context: &QueryContext,
+        membership: Option<&EventMembership>,
+    ) -> bool {
         match self {
             Self::Text {
                 field,
@@ -250,6 +303,10 @@ impl QueryPredicate {
                     _ => false,
                 }
             }
+            Self::BundleMembership { bundle_ref } => membership
+                .is_some_and(|membership| membership.belongs_to_bundle(bundle_ref)),
+            Self::ProjectedCalendarMembership { calendar_id } => membership
+                .is_some_and(|membership| membership.belongs_to_calendar(calendar_id)),
         }
     }
 }
@@ -875,7 +932,19 @@ pub struct ColorRule {
 
 impl ColorRule {
     pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
-        self.enabled && self.when.matches(event, context)
+        self.matches_with_membership(event, context, None)
+    }
+
+    pub fn matches_with_membership(
+        &self,
+        event: &TemporalEvent,
+        context: &QueryContext,
+        membership: Option<&EventMembership>,
+    ) -> bool {
+        self.enabled
+            && self
+                .when
+                .matches_with_membership(event, context, membership)
     }
 }
 
@@ -926,7 +995,19 @@ pub struct CompositionLayer {
 
 impl CompositionLayer {
     pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
-        self.enabled && self.query.matches(event, context)
+        self.matches_with_membership(event, context, None)
+    }
+
+    pub fn matches_with_membership(
+        &self,
+        event: &TemporalEvent,
+        context: &QueryContext,
+        membership: Option<&EventMembership>,
+    ) -> bool {
+        self.enabled
+            && self
+                .query
+                .matches_with_membership(event, context, membership)
     }
 }
 
@@ -936,10 +1017,22 @@ pub fn matches_composed_query(
     event: &TemporalEvent,
     context: &QueryContext,
 ) -> bool {
-    let mut included = base.matches(event, context);
+    matches_composed_query_with_membership(base, layers, event, context, None)
+}
+
+pub fn matches_composed_query_with_membership(
+    base: &EventQuery,
+    layers: &[CompositionLayer],
+    event: &TemporalEvent,
+    context: &QueryContext,
+    membership: Option<&EventMembership>,
+) -> bool {
+    let mut included = base.matches_with_membership(event, context, membership);
 
     for layer in layers.iter().filter(|layer| layer.enabled) {
-        let layer_matches = layer.query.matches(event, context);
+        let layer_matches = layer
+            .query
+            .matches_with_membership(event, context, membership);
         included = match layer.operator {
             CompositionOperator::Union => included || layer_matches,
             CompositionOperator::Intersect => included && layer_matches,
@@ -966,7 +1059,19 @@ pub struct Overlay {
 
 impl Overlay {
     pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
-        self.enabled && self.query.matches(event, context)
+        self.matches_with_membership(event, context, None)
+    }
+
+    pub fn matches_with_membership(
+        &self,
+        event: &TemporalEvent,
+        context: &QueryContext,
+        membership: Option<&EventMembership>,
+    ) -> bool {
+        self.enabled
+            && self
+                .query
+                .matches_with_membership(event, context, membership)
     }
 }
 
@@ -977,10 +1082,28 @@ pub fn matches_composed_or_overlay(
     event: &TemporalEvent,
     context: &QueryContext,
 ) -> bool {
-    matches_composed_query(base, composition_layers, event, context)
+    matches_composed_or_overlay_with_membership(
+        base,
+        composition_layers,
+        overlays,
+        event,
+        context,
+        None,
+    )
+}
+
+pub fn matches_composed_or_overlay_with_membership(
+    base: &EventQuery,
+    composition_layers: &[CompositionLayer],
+    overlays: &[Overlay],
+    event: &TemporalEvent,
+    context: &QueryContext,
+    membership: Option<&EventMembership>,
+) -> bool {
+    matches_composed_query_with_membership(base, composition_layers, event, context, membership)
         || overlays
             .iter()
-            .any(|overlay| overlay.matches(event, context))
+            .any(|overlay| overlay.matches_with_membership(event, context, membership))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1387,6 +1510,45 @@ mod tests {
             &overlays,
             &event(),
             &test_context()
+        ));
+    }
+
+    #[test]
+    fn membership_predicates_use_external_query_context() {
+        let event = event();
+        let mut membership = EventMembership::default();
+        membership
+            .bundle_refs
+            .insert("bundle:temporal/politics-government".to_string());
+        membership
+            .calendar_refs
+            .insert("projected-calendar:us-politics".to_string());
+
+        let bundle_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::BundleMembership {
+                bundle_ref: "bundle:temporal/politics-government".to_string(),
+            })),
+            ..EventQuery::default()
+        };
+        let calendar_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(
+                QueryPredicate::ProjectedCalendarMembership {
+                    calendar_id: "projected-calendar:us-politics".to_string(),
+                },
+            )),
+            ..EventQuery::default()
+        };
+
+        assert!(!bundle_query.matches(&event, &test_context()));
+        assert!(bundle_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+        assert!(calendar_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
         ));
     }
 
