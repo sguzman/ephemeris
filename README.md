@@ -71,12 +71,13 @@ Implemented:
 - release-backed bundle/projected-calendar selectors in the recursive query editor
 - repeatable Taria re-import using stable source-record and upstream event identity
 - transactional source import reconciliation
+- whole-release atomic Taria adoption/rollback across payloads, release metadata, CalendarSets, aliases, and memberships
 - created / updated / unchanged / retained-missing accounting
 - drag-and-drop Taria JSON import in the GUI
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation milestone at 2026-10-04 passes the full CI gate at `0392969043ec8684f2f9b2abf78c0612da733476`: format, compile, strict Clippy, and **50 library tests**.
+The verified implementation milestone at 2026-10-04 passes the full CI gate at `17cef55daf6acf8dc3a43693d42c6c3b461a5585`: format, compile, strict Clippy, and **51 library tests**.
 
 ## Product boundary
 
