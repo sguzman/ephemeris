@@ -158,9 +158,7 @@ impl SourceKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TimeSpec {
     /// A source supplied a civil date, but did not assert that it occupied the full day.
-    DateOnly {
-        date: NaiveDate,
-    },
+    DateOnly { date: NaiveDate },
     /// A source explicitly supplied all-day semantics.
     AllDay {
         start: NaiveDate,
@@ -179,18 +177,11 @@ pub enum TimeSpec {
         source_timezone: Option<String>,
     },
     /// The event is known only to a calendar month.
-    Month {
-        year: i32,
-        month: u32,
-    },
+    Month { year: i32, month: u32 },
     /// The event is known only to a calendar year.
-    Year {
-        year: i32,
-    },
+    Year { year: i32 },
     /// Taria retained the event, but no renderable temporal placement is available.
-    Unknown {
-        original_value: Option<String>,
-    },
+    Unknown { original_value: Option<String> },
 }
 
 impl TimeSpec {
@@ -230,7 +221,9 @@ impl TimeSpec {
                 let end = end_exclusive.unwrap_or_else(|| start.succ_opt().unwrap_or(*start));
                 day >= *start && day < end
             }
-            Self::Instant { start_utc, end_utc, .. } => {
+            Self::Instant {
+                start_utc, end_utc, ..
+            } => {
                 let start_day = start_utc.with_timezone(&timezone).date_naive();
                 let end_day = end_utc
                     .map(|end| end.with_timezone(&timezone).date_naive())
@@ -253,9 +246,9 @@ impl TimeSpec {
                 month: event_month,
             } => *year == month.year() && *event_month == month.month(),
             Self::Year { .. } | Self::Unknown { .. } => false,
-            _ => self.display_date(timezone).is_some_and(|date| {
-                date.year() == month.year() && date.month() == month.month()
-            }),
+            _ => self
+                .display_date(timezone)
+                .is_some_and(|date| date.year() == month.year() && date.month() == month.month()),
         }
     }
 
@@ -273,7 +266,10 @@ impl TimeSpec {
     }
 
     pub const fn is_imprecise(&self) -> bool {
-        matches!(self, Self::Month { .. } | Self::Year { .. } | Self::Unknown { .. })
+        matches!(
+            self,
+            Self::Month { .. } | Self::Year { .. } | Self::Unknown { .. }
+        )
     }
 
     pub fn display_time_label(&self, timezone: Tz) -> String {
@@ -435,10 +431,7 @@ mod tests {
         };
 
         assert_eq!(time.display_date(chrono_tz::UTC), Some(start));
-        assert_eq!(
-            time.display_date(chrono_tz::Pacific::Honolulu),
-            Some(start)
-        );
+        assert_eq!(time.display_date(chrono_tz::Pacific::Honolulu), Some(start));
         assert_eq!(time.display_date(chrono_tz::Asia::Tokyo), Some(start));
     }
 
