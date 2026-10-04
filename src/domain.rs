@@ -158,7 +158,10 @@ impl SourceKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TimeSpec {
     /// A source supplied a civil date, but did not assert that it occupied the full day.
-    DateOnly { date: NaiveDate },
+    DateOnly {
+        start: NaiveDate,
+        end_exclusive: Option<NaiveDate>,
+    },
     /// A source explicitly supplied all-day semantics.
     AllDay {
         start: NaiveDate,
@@ -200,7 +203,7 @@ impl TimeSpec {
     /// Returns an exact display date only when the source precision supports one.
     pub fn display_date(&self, timezone: Tz) -> Option<NaiveDate> {
         match self {
-            Self::DateOnly { date } => Some(*date),
+            Self::DateOnly { start, .. } => Some(*start),
             Self::AllDay { start, .. } => Some(*start),
             Self::Instant { start_utc, .. } => {
                 Some(start_utc.with_timezone(&timezone).date_naive())
@@ -213,7 +216,13 @@ impl TimeSpec {
     /// Day-grid membership. Imprecise month/year values intentionally return false.
     pub fn occurs_on(&self, day: NaiveDate, timezone: Tz) -> bool {
         match self {
-            Self::DateOnly { date } => *date == day,
+            Self::DateOnly {
+                start,
+                end_exclusive,
+            } => {
+                let end = end_exclusive.unwrap_or_else(|| start.succ_opt().unwrap_or(*start));
+                day >= *start && day < end
+            },
             Self::AllDay {
                 start,
                 end_exclusive,
@@ -274,6 +283,10 @@ impl TimeSpec {
 
     pub fn display_time_label(&self, timezone: Tz) -> String {
         match self {
+            Self::DateOnly {
+                end_exclusive: Some(_),
+                ..
+            } => "Date range".to_string(),
             Self::DateOnly { .. } => "Date only".to_string(),
             Self::AllDay { .. } => "All day".to_string(),
             Self::Instant {
@@ -438,7 +451,10 @@ mod tests {
     #[test]
     fn date_only_is_not_all_day() {
         let date = NaiveDate::from_ymd_opt(2027, 10, 24).expect("valid date");
-        let time = TimeSpec::DateOnly { date };
+        let time = TimeSpec::DateOnly {
+            start: date,
+            end_exclusive: None,
+        };
 
         assert_eq!(time.kind_name(), "date_only");
         assert_eq!(time.display_time_label(chrono_tz::UTC), "Date only");
