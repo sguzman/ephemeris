@@ -8,25 +8,31 @@ Power should be progressively exposed.
 
 ## Primary surfaces
 
-Long-term useful layouts include:
+Implemented date ranges:
 
 - year
 - quarter
 - month
 - week
-- multi-day
 - day
-- agenda
+
+Implemented layouts:
+
+- Grid
+- Agenda
+- dense Table
+
+Long-term additional layouts include:
+
+- multi-day
 - compact agenda
 - chronological stream
 - continuous timeline
 - vertical timeline
-- event table
-- grouped list
 - density/heatmap
 - interval/Gantt-like views where appropriate
 
-The existing Rivetr year/quarter/month/week/day work is a useful starting point, not the complete visualization vocabulary.
+Date range and layout are independent. Table/Agenda/Grid consume the same canonical query result rather than defining separate event containers.
 
 ## Dense-day behavior
 
@@ -102,24 +108,31 @@ Changing filters should be immediate and should not modify canonical organizatio
 
 ## Saved views
 
-Saved views should be easy to:
+Implemented actions:
 
 - create from current state
-- rename
-- clone
-- modify
-- compare
-- overlay
-- export
+- apply
+- update from current state
+- delete
 - return to later
 
-The product should make clear that a saved view is not a duplicated event container.
+Implemented saved state includes query, source visibility, date range, layout, grouping, sorting, color rules, overlays, timezone, and week-start behavior.
+
+Still useful future actions include:
+
+- rename
+- clone
+- compare
+- export
+- inheritance/composition
+
+The product must make clear that a saved view is not a duplicated event container.
 
 ## Color configuration
 
-Changing color logic should be a view-level operation.
+Changing color logic is a view-level operation.
 
-Useful built-in strategies may include:
+Implemented semantic fallback strategies:
 
 - by source
 - by domain
@@ -127,9 +140,39 @@ Useful built-in strategies may include:
 - by institution
 - by event type
 - by status
-- by relevance
+- no semantic fallback
 
-Custom rule sets can follow.
+Implemented custom color rules:
+
+- full recursive query condition
+- explicit RGB color
+- first-enabled-match precedence
+- add/edit/delete
+- enable/disable
+- reorder
+- persistence in saved views
+- overlay-specific rule sets
+
+Color remains presentation; it does not imply event ownership or membership.
+
+## Overlays
+
+Overlays are now an implemented view-level surface.
+
+An overlay can:
+
+- define its own query;
+- contribute matching canonical events to the visible result;
+- carry its own semantic fallback coloring;
+- carry its own ordered color rules;
+- be enabled/disabled;
+- be renamed;
+- be reordered for styling precedence;
+- be deleted.
+
+Overlay union does not copy events.
+
+Future calendar algebra will extend this into explicit intersection/subtraction composition.
 
 ## Keyboard interaction
 
