@@ -144,7 +144,7 @@ Ephemeris:
 6. retains stable reconciled/event/assertion/provenance identity;
 7. reconciles repeat imports against the existing source.
 
-This consumes the recovered U.S. Politics and U.S. Holidays bootstrap-r4 shards directly from disk.
+This consumes recovered and frozen-rebuild bootstrap-r10 shards directly from disk, including Politics, Holidays, Economics, Finance, Business, Culture, and Education payloads.
 
 ### ReconciledProjectionEventSet
 
@@ -152,7 +152,7 @@ The updater also recognizes a bootstrap shard that exposes a reconciled-event-se
 
 The existing direct Taria reconciled-event-set adapter is reused.
 
-Bootstrap r4 uses this path for:
+Bootstrap r10 uses this path for:
 
 - 2027 European national elections;
 - 2026 U.S. pro sports excluding hockey.
@@ -172,7 +172,7 @@ Ephemeris does not:
 - fall back to ICS;
 - pretend a missing payload was successfully adopted.
 
-Bootstrap r4 currently exposes accepted rich payloads for every populated shard, so the current bootstrap channel has no such payload gap.
+Bootstrap r10 exposes accepted rich payloads for every populated shard, so the current bootstrap channel has no payload-resolution gap. Explicit gap-only shards are preserved as coverage state.
 
 ## Production releases
 
@@ -267,7 +267,9 @@ Ephemeris remembers:
 - last update timestamp;
 - last update summary.
 
-The Sources panel displays these values.
+The Sources panel displays these values plus adopted release status, completeness, generated/adopted timestamps, coverage counts, and per-bundle partial/pending/gap-only posture.
+
+Bundle-membership and projected-calendar predicates also use release-backed selectors populated from the adopted SQLite state, so normal query editing remains offline after adoption.
 
 ## Network behavior
 
@@ -289,8 +291,6 @@ The filesystem transport and core release-adoption semantics are now implemented
 
 The next work is:
 
-1. expose current-release bundle and projected-calendar membership to programmable queries/views;
-2. expose release coverage/pending/gap posture in the UI;
-3. make multi-artifact release adoption atomic as one operation;
-4. make the explicit update operation asynchronous so large releases never stall the frame loop;
-5. add release-to-release diff/history inspection.
+1. make the explicit update operation asynchronous so large releases never stall the frame loop;
+2. make multi-artifact release adoption atomic as one operation;
+3. add release-to-release diff/history inspection.
