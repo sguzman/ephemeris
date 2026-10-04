@@ -1403,7 +1403,10 @@ mod tests {
     #[test]
     fn schema_bootstraps_at_current_version() {
         let store = TemporalStore::open_in_memory().expect("store");
-        assert_eq!(store.schema_version().expect("version"), 5);
+        assert_eq!(
+            store.schema_version().expect("version"),
+            SCHEMA_VERSION
+        );
     }
 
     #[test]
