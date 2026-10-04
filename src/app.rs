@@ -505,16 +505,15 @@ impl EphemerisApp {
             self.mark_state_dirty();
         }
 
-        if self.state.domain_filter.is_some()
+        if (self.state.domain_filter.is_some()
             || self.state.jurisdiction_filter.is_some()
             || self.state.status_filter.is_some()
-            || !self.state.search_query.is_empty()
+            || !self.state.search_query.is_empty())
+            && ui.button("Clear query").clicked()
         {
-            if ui.button("Clear query").clicked() {
-                self.state.clear_query();
-                self.state.selected_event_id = None;
-                self.mark_state_dirty();
-            }
+            self.state.clear_query();
+            self.state.selected_event_id = None;
+            self.mark_state_dirty();
         }
 
         ui.separator();
