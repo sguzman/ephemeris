@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the release-posture/query-selector checkpoint, all **50** library tests pass. Verified implementation head: `0392969043ec8684f2f9b2abf78c0612da733476`, with format, check, strict Clippy, and tests all green.
+At the whole-release atomic-adoption checkpoint, all **51** library tests pass. Verified implementation head: `17cef55daf6acf8dc3a43693d42c6c3b461a5585`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -310,7 +310,6 @@ The current milestone is a foundation, not the finished calendar.
 Not yet implemented:
 
 - richer release-history/diff inspection
-- whole-release atomic rollback across multiple source imports
 - background/worker execution for large release adoption
 - composition-layer GUI editor
 - saved-view-reference composition / inheritance with cycle-safe semantics
@@ -403,12 +402,18 @@ Implemented in the current slice:
 5. raw ref text remains editable for portability/debugging;
 6. query choices come from SQLite, so normal view editing does not require live Taria filesystem access.
 
+Whole-release transaction/rollback is now implemented and verified:
+
+- one outer SQLite transaction encloses release metadata, all payload imports, upstream identity aliases, CalendarSets, projected calendars, and memberships;
+- nested Taria import helpers join the existing transaction rather than committing independently;
+- if any later shard/artifact fails, all earlier mutations from that release are rolled back;
+- the rollback regression deliberately imports one valid shard, fails a later shard integrity check, and verifies zero events, zero release metadata, and zero memberships remain.
+
 The next slice should:
 
 1. move large release adoption to a worker boundary so **Update Taria Sources** never stalls egui;
-2. add whole-release transaction/rollback semantics across all payloads, CalendarSets, aliases, and release metadata;
-3. add release-history/diff inspection;
-4. then continue programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
+2. add release-history/diff inspection;
+3. then continue programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
 
 ## Rule going forward
 
