@@ -557,6 +557,30 @@ impl TemporalStore {
         Ok(None)
     }
 
+    pub fn begin_taria_release_adoption(&self) -> anyhow::Result<()> {
+        if !self.conn.is_autocommit() {
+            return Err(anyhow!("cannot begin Taria release adoption inside another transaction"));
+        }
+        self.conn
+            .execute_batch("BEGIN IMMEDIATE")
+            .context("failed to begin whole-release Taria adoption transaction")
+    }
+
+    pub fn commit_taria_release_adoption(&self) -> anyhow::Result<()> {
+        self.conn
+            .execute_batch("COMMIT")
+            .context("failed to commit whole-release Taria adoption transaction")
+    }
+
+    pub fn rollback_taria_release_adoption(&self) -> anyhow::Result<()> {
+        if self.conn.is_autocommit() {
+            return Ok(());
+        }
+        self.conn
+            .execute_batch("ROLLBACK")
+            .context("failed to roll back whole-release Taria adoption transaction")
+    }
+
     pub fn upsert_taria_release(&self, release: &TariaReleaseRecord) -> anyhow::Result<()> {
         let existing_hash: Option<String> = self
             .conn
@@ -638,13 +662,15 @@ impl TemporalStore {
             ));
         }
 
-        let tx = self
-            .conn
-            .unchecked_transaction()
-            .context("failed to begin CalendarSet transaction")?;
+        let owns_transaction = self.conn.is_autocommit();
+        if owns_transaction {
+            self.conn
+                .execute_batch("BEGIN IMMEDIATE")
+                .context("failed to begin CalendarSet transaction")?;
+        }
 
         let result = (|| -> anyhow::Result<TariaCalendarSetImportResult> {
-            tx.execute(
+            self.conn.execute(
                 r#"
                 INSERT INTO taria_calendar_sets (
                     calendar_set_id, projection_ref,
@@ -668,7 +694,7 @@ impl TemporalStore {
             )
             .context("failed to insert immutable Taria CalendarSet")?;
 
-            tx.execute(
+            self.conn.execute(
                 r#"
                 INSERT INTO taria_release_calendar_sets (
                     release_id, calendar_set_id, bundle_ref
@@ -679,19 +705,19 @@ impl TemporalStore {
             )
             .context("failed to associate CalendarSet with Taria release")?;
 
-            tx.execute(
+            self.conn.execute(
                 "DELETE FROM taria_calendar_memberships WHERE calendar_set_id = ?1",
                 params![set.calendar_set_id],
             )
             .context("failed to clear prior CalendarSet memberships")?;
-            tx.execute(
+            self.conn.execute(
                 "DELETE FROM taria_projected_calendars WHERE calendar_set_id = ?1",
                 params![set.calendar_set_id],
             )
             .context("failed to clear prior projected calendars")?;
 
             for calendar in calendars {
-                tx.execute(
+                self.conn.execute(
                     r#"
                     INSERT INTO taria_projected_calendars (
                         calendar_set_id, calendar_id, name, kind, metadata_json
@@ -710,7 +736,7 @@ impl TemporalStore {
 
             let mut resolved_memberships = 0usize;
             for membership in memberships {
-                let event_id: Option<String> = tx
+                let event_id: Option<String> = self.conn
                     .query_row(
                         r#"
                         SELECT event_id
@@ -728,7 +754,7 @@ impl TemporalStore {
                     resolved_memberships += 1;
                 }
 
-                tx.execute(
+                self.conn.execute(
                     r#"
                     INSERT OR REPLACE INTO taria_calendar_memberships (
                         calendar_set_id, calendar_id, reconciled_event_ref, event_id
@@ -753,12 +779,17 @@ impl TemporalStore {
 
         match result {
             Ok(result) => {
-                tx.commit()
-                    .context("failed to commit CalendarSet transaction")?;
+                if owns_transaction {
+                    self.conn
+                        .execute_batch("COMMIT")
+                        .context("failed to commit CalendarSet transaction")?;
+                }
                 Ok(result)
             }
             Err(error) => {
-                let _ = tx.rollback();
+                if owns_transaction {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                }
                 Err(error)
             }
         }
@@ -1098,10 +1129,12 @@ impl TemporalStore {
             .filter_map(|event| event.source_record_key.clone())
             .collect::<std::collections::BTreeSet<_>>();
 
-        let tx = self
-            .conn
-            .unchecked_transaction()
-            .context("failed to begin Taria import transaction")?;
+        let owns_transaction = self.conn.is_autocommit();
+        if owns_transaction {
+            self.conn
+                .execute_batch("BEGIN IMMEDIATE")
+                .context("failed to begin Taria import transaction")?;
+        }
 
         let result = (|| -> anyhow::Result<ImportBatchResult> {
             self.upsert_source(source)?;
@@ -1161,7 +1194,7 @@ impl TemporalStore {
                     let Some(identity_value) = identity_value else {
                         continue;
                     };
-                    let existing_event_id: Option<String> = tx
+                    let existing_event_id: Option<String> = self.conn
                         .query_row(
                             r#"
                             SELECT event_id
@@ -1184,7 +1217,7 @@ impl TemporalStore {
                             ));
                         }
                     } else {
-                        tx.execute(
+                        self.conn.execute(
                             r#"
                             INSERT INTO temporal_event_upstream_identities (
                                 identity_kind, identity_value, event_id
@@ -1196,7 +1229,7 @@ impl TemporalStore {
                     }
                 }
 
-                tx.execute(
+                self.conn.execute(
                     r#"
                     INSERT INTO temporal_event_import_records (
                         source_id, source_record_key, event_id
@@ -1223,12 +1256,17 @@ impl TemporalStore {
 
         match result {
             Ok(result) => {
-                tx.commit()
-                    .context("failed to commit Taria import transaction")?;
+                if owns_transaction {
+                    self.conn
+                        .execute_batch("COMMIT")
+                        .context("failed to commit Taria import transaction")?;
+                }
                 Ok(result)
             }
             Err(error) => {
-                let _ = tx.rollback();
+                if owns_transaction {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                }
                 Err(error)
             }
         }
