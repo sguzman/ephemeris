@@ -222,7 +222,7 @@ impl TimeSpec {
             } => {
                 let end = end_exclusive.unwrap_or_else(|| start.succ_opt().unwrap_or(*start));
                 day >= *start && day < end
-            },
+            }
             Self::AllDay {
                 start,
                 end_exclusive,

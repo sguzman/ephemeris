@@ -66,10 +66,7 @@ impl EphemerisApp {
             }
             Err(error) => {
                 self.last_message = None;
-                self.last_error = Some(format!(
-                    "Failed to import {}: {error:#}",
-                    path.display()
-                ));
+                self.last_error = Some(format!("Failed to import {}: {error:#}", path.display()));
             }
         }
     }
@@ -379,7 +376,11 @@ impl EphemerisApp {
         let event = events
             .iter()
             .find(|event| event.id == selected_id)
-            .or_else(|| self.unplaced_events.iter().find(|event| event.id == selected_id));
+            .or_else(|| {
+                self.unplaced_events
+                    .iter()
+                    .find(|event| event.id == selected_id)
+            });
         let Some(event) = event else {
             ui.label("The selected event is not in the current view.");
             return;

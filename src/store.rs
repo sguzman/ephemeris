@@ -992,8 +992,7 @@ impl EncodedTime {
                 end_utc: None,
                 source_timezone: None,
                 start_date: Some(start.format("%Y-%m-%d").to_string()),
-                end_date_exclusive: end_exclusive
-                    .map(|value| value.format("%Y-%m-%d").to_string()),
+                end_date_exclusive: end_exclusive.map(|value| value.format("%Y-%m-%d").to_string()),
                 start_local: None,
                 end_local: None,
                 original_value: None,
@@ -1007,8 +1006,7 @@ impl EncodedTime {
                 end_utc: None,
                 source_timezone: None,
                 start_date: Some(start.format("%Y-%m-%d").to_string()),
-                end_date_exclusive: end_exclusive
-                    .map(|value| value.format("%Y-%m-%d").to_string()),
+                end_date_exclusive: end_exclusive.map(|value| value.format("%Y-%m-%d").to_string()),
                 start_local: None,
                 end_local: None,
                 original_value: None,

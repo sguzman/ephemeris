@@ -127,7 +127,10 @@ pub fn import_reconciled_event_set_json(
         ));
     }
 
-    let imprecise = normalized.iter().filter(|event| event.time.is_imprecise()).count();
+    let imprecise = normalized
+        .iter()
+        .filter(|event| event.time.is_imprecise())
+        .count();
     let unplaced = normalized
         .iter()
         .filter(|event| matches!(event.time, TimeSpec::Unknown { .. }))
@@ -279,8 +282,8 @@ fn normalized_blocked_event(
     event.source_record_key = Some(record_key.to_string());
     event.upstream_event_ref = optional_string(raw, "event_ref");
     event.upstream_reconciled_key = optional_string(raw, "reconciled_event_key");
-    event.renderability = optional_string(raw, "renderability")
-        .or_else(|| Some("blocked".to_string()));
+    event.renderability =
+        optional_string(raw, "renderability").or_else(|| Some("blocked".to_string()));
     event.status = EventStatus::Unknown;
 
     let mut taria = Map::new();
@@ -294,10 +297,7 @@ fn normalized_blocked_event(
             Value::String(reconciled_set_ref.to_string()),
         );
     }
-    taria.insert(
-        "raw_blocked_event".to_string(),
-        Value::Object(raw.clone()),
-    );
+    taria.insert("raw_blocked_event".to_string(), Value::Object(raw.clone()));
     event.properties = json!({ "taria": Value::Object(taria) });
     event
 }
@@ -791,10 +791,7 @@ mod tests {
                 start,
                 end_exclusive,
             } => {
-                assert_eq!(
-                    start,
-                    NaiveDate::from_ymd_opt(2026, 7, 11).expect("start")
-                );
+                assert_eq!(start, NaiveDate::from_ymd_opt(2026, 7, 11).expect("start"));
                 assert_eq!(
                     end_exclusive,
                     Some(NaiveDate::from_ymd_opt(2026, 7, 13).expect("end"))
@@ -884,7 +881,8 @@ mod tests {
             .get_mut("events")
             .and_then(Value::as_array_mut)
             .expect("events");
-        events.retain(|event| event.get("event_ref").and_then(Value::as_str) != Some("event:month"));
+        events
+            .retain(|event| event.get("event_ref").and_then(Value::as_str) != Some("event:month"));
         let later = serde_json::to_string(&later).expect("encode later snapshot");
 
         let report =
