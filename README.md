@@ -25,6 +25,37 @@ The core design rule is therefore:
 
 > Changing how an event is viewed must not require duplicating or reorganizing the underlying event.
 
+## Current implementation
+
+Ephemeris now has a working native application foundation.
+
+Implemented:
+
+- Rust + `eframe`/`egui` desktop shell
+- embedded SQLite canonical store via `rusqlite`
+- explicit schema migrations
+- canonical `TemporalEvent` and `TemporalSource` types
+- event-native storage with no Taskwarrior mediation
+- distinct temporal semantics for date-only, all-day, exact instants, floating/local time, month precision, year precision, and unresolved time
+- Year, Quarter, Month, Week, and Day date ranges
+- Grid and Agenda as independent layouts
+- source visibility controls
+- text, domain, jurisdiction, and lifecycle-status filtering
+- durable named saved views stored in SQLite
+- saved views that retain query, source visibility, date range, layout, timezone, and week-start behavior
+- event inspector with Taria identity/provenance details
+- separate unplaced/conflicted event surface
+- native persisted transient UI state
+- direct ingestion of Taria Resourcearium reconciled temporal event sets
+- repeatable Taria re-import using stable source-record identity
+- transactional source import reconciliation
+- created / updated / unchanged / retained-missing accounting
+- drag-and-drop Taria JSON import in the GUI
+- standalone local import CLI
+- CI enforcing rustfmt, compile, strict Clippy, and tests
+
+The verified implementation milestone at 2026-10-04 passes the full CI gate.
+
 ## Product boundary
 
 Ephemeris owns the temporal problem:
@@ -83,69 +114,91 @@ An event exists once canonically. "US Politics", "California Elections", "Econom
 
 ## Taria
 
-Taria is expected to supply rich temporal resources. Ephemeris is the interactive desktop surface over those resources.
+Taria supplies rich temporal resources. Ephemeris is the interactive desktop surface over those resources.
 
-Ephemeris must preserve information such as:
+The first native integration consumes Resourcearium reconciled projection event sets directly and preserves upstream identity/provenance instead of degrading them into generic appointments.
 
-- stable identity
-- raw and normalized titles
-- source identity and authority
-- provenance and acquisition metadata
-- domain and category
+Ephemeris retains information such as:
+
+- projection and reconciled-set identity
+- event and reconciled-event identity
+- assertion references
+- upstream source references
+- provenance references
+- display fields and source contexts
+- domain/categories
 - geography and jurisdiction
-- institution and participants
-- event type
+- institution
 - lifecycle/status
-- confidence and uncertainty
-- original timezone and normalized instants
-- recurrence and occurrence identity
-- relations, collections, and sequences
-- snapshot/history membership
-- extensible/custom properties
+- renderability and blockers
+- exact or imprecise temporal semantics
+- extensible Taria properties
 
-Taria data must not be flattened to the lowest-common-denominator ICS event model.
+Taria data is not flattened to the lowest-common-denominator ICS event model.
 
 See [docs/TARIA_INTEGRATION.md](docs/TARIA_INTEGRATION.md).
 
-## Technology direction
+## Technology
 
-The intended implementation direction is:
+Current architecture:
 
-- Rust
-- native desktop UI with `eframe` / `egui`
-- local-first storage and query
+- Rust 2024
+- native `eframe` / `egui`
+- SQLite via bundled `rusqlite`
+- local-first storage/query/rendering
 - no Tauri
 - no React/WebView application shell
-- network access only for acquisition/synchronization paths, never required for ordinary rendering/querying
+- network access reserved for future acquisition/synchronization paths
 
-The exact storage engine and crate boundaries are intentionally documented as architectural decisions to be validated before implementation.
+## Run
+
+```bash
+cargo run
+```
+
+Ephemeris requires a graphical desktop session.
+
+## Import Taria temporal data
+
+A reconciled Resourcearium event-set JSON file can be dropped onto the running application.
+
+The same artifact can be imported from the command line:
+
+```bash
+cargo run --bin ephemeris-import -- path/to/reconciled-event-set.json
+```
+
+Re-import is identity-aware. Unchanged records remain unchanged, changed records update in place, and records missing from a later artifact are retained unless stronger source semantics explicitly justify deletion/cancellation.
+
+## Verify
+
+```bash
+cargo fmt --check
+cargo check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
 
 ## Documentation map
 
 Start here:
 
 - [docs/PRODUCT.md](docs/PRODUCT.md) - product definition, principles, anti-spec, and scope
+- [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) - current implementation state and immediate next boundary
+- [docs/ROADMAP.md](docs/ROADMAP.md) - staged implementation plan
 - [docs/LINEAGE.md](docs/LINEAGE.md) - Rivet → Rivetr → Ephemeris genealogy
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - proposed system boundaries and layering
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - system boundaries and layering
 - [docs/DATA_MODEL.md](docs/DATA_MODEL.md) - canonical temporal domain model
 - [docs/TIME_SEMANTICS.md](docs/TIME_SEMANTICS.md) - timezone, recurrence, all-day, interval, and lifecycle rules
 - [docs/QUERY_AND_VIEWS.md](docs/QUERY_AND_VIEWS.md) - filtering, saved views, overlays, grouping, sorting, and color
 - [docs/TARIA_INTEGRATION.md](docs/TARIA_INTEGRATION.md) - Taria ingestion contract and source preservation
 - [docs/INGESTION_AND_SYNC.md](docs/INGESTION_AND_SYNC.md) - imports, refresh, identity, snapshots, synchronization, and export
 - [docs/UX.md](docs/UX.md) - calendar surfaces, dense-data behavior, inspection, keyboard interaction
-- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) - latency and scale requirements
-- [docs/QUALITY.md](docs/QUALITY.md) - correctness, testing, migrations, and observability expectations
-- [docs/ROADMAP.md](docs/ROADMAP.md) - staged implementation plan
-- [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) - current concrete state and next implementation boundary
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) - scale and latency expectations
+- [docs/QUALITY.md](docs/QUALITY.md) - correctness, testing, migrations, and observability
+- [docs/RIVETR_INHERITANCE.md](docs/RIVETR_INHERITANCE.md) - selective inheritance from Rivetr
+- [docs/FUTURE_CAPABILITIES.md](docs/FUTURE_CAPABILITIES.md) - long-horizon capability ledger
 - [docs/adr/](docs/adr/) - durable architectural decisions
-
-## Current state
-
-**Documentation bootstrap only.**
-
-No production architecture should be inferred from repository emptiness. The first implementation phase will selectively inherit proven calendar code from Rivetr while establishing an Ephemeris-native temporal model and Taria ingestion boundary.
-
-See [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md).
 
 ## Development rule
 
