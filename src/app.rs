@@ -258,7 +258,11 @@ impl EphemerisApp {
                     "{} · {}{}",
                     source.kind.as_str(),
                     source.authority.as_str(),
-                    if source.read_only { " · read-only" } else { "" }
+                    if source.read_only {
+                        " · read-only"
+                    } else {
+                        ""
+                    }
                 ));
                 ui.add_space(6.0);
             }
@@ -524,10 +528,7 @@ fn render_quarter(
         for month in months {
             ui.group(|ui| {
                 ui.set_min_width(220.0);
-                if ui
-                    .button(month.format("%B %Y").to_string())
-                    .clicked()
-                {
+                if ui.button(month.format("%B %Y").to_string()).clicked() {
                     action = Some(CalendarAction::OpenMonth(month));
                 }
                 let count = events
@@ -621,10 +622,7 @@ fn render_month(
                         RichText::new(day.day().to_string()).weak()
                     };
 
-                    if ui
-                        .add(egui::Button::new(day_text).frame(false))
-                        .clicked()
-                    {
+                    if ui.add(egui::Button::new(day_text).frame(false)).clicked() {
                         action = Some(CalendarAction::OpenDay(*day));
                     }
 
@@ -663,10 +661,7 @@ fn render_week(
         for day in days {
             ui.group(|ui| {
                 ui.set_min_width(170.0);
-                if ui
-                    .button(day.format("%a %b %e").to_string())
-                    .clicked()
-                {
+                if ui.button(day.format("%a %b %e").to_string()).clicked() {
                     action = Some(CalendarAction::OpenDay(day));
                 }
                 ui.separator();
@@ -755,11 +750,7 @@ fn render_event_button<'a>(
     )
 }
 
-fn events_for_day(
-    events: &[TemporalEvent],
-    day: NaiveDate,
-    timezone: Tz,
-) -> Vec<&TemporalEvent> {
+fn events_for_day(events: &[TemporalEvent], day: NaiveDate, timezone: Tz) -> Vec<&TemporalEvent> {
     let mut out = events
         .iter()
         .filter(|event| event.time.occurs_on(day, timezone))

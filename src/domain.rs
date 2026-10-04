@@ -194,14 +194,12 @@ impl TimeSpec {
                 start,
                 end_exclusive,
             } => {
-                let end = end_exclusive.unwrap_or_else(|| {
-                    start
-                        .succ_opt()
-                        .unwrap_or(*start)
-                });
+                let end = end_exclusive.unwrap_or_else(|| start.succ_opt().unwrap_or(*start));
                 day >= *start && day < end
             }
-            Self::Instant { start_utc, .. } => start_utc.with_timezone(&timezone).date_naive() == day,
+            Self::Instant { start_utc, .. } => {
+                start_utc.with_timezone(&timezone).date_naive() == day
+            }
             Self::Floating { start, .. } => start.date() == day,
         }
     }
@@ -216,7 +214,9 @@ impl TimeSpec {
             } => {
                 let local = start_utc.with_timezone(&timezone);
                 match source_timezone {
-                    Some(source_timezone) => format!("{} · source {}", local.format("%H:%M"), source_timezone),
+                    Some(source_timezone) => {
+                        format!("{} · source {}", local.format("%H:%M"), source_timezone)
+                    }
                     None => local.format("%H:%M").to_string(),
                 }
             }

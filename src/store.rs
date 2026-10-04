@@ -70,8 +70,9 @@ impl TemporalStore {
     }
 
     pub fn upsert_source(&self, source: &TemporalSource) -> anyhow::Result<()> {
-        self.conn.execute(
-            r#"
+        self.conn
+            .execute(
+                r#"
             INSERT INTO temporal_sources (
                 id, name, publisher, authority, kind, locator,
                 enabled, read_only, created_at, updated_at
@@ -89,20 +90,20 @@ impl TemporalStore {
                 read_only = excluded.read_only,
                 updated_at = excluded.updated_at
             "#,
-            named_params! {
-                ":id": source.id.to_string(),
-                ":name": source.name,
-                ":publisher": source.publisher,
-                ":authority": source.authority.as_str(),
-                ":kind": source.kind.as_str(),
-                ":locator": source.locator,
-                ":enabled": source.enabled,
-                ":read_only": source.read_only,
-                ":created_at": source.created_at.to_rfc3339(),
-                ":updated_at": source.updated_at.to_rfc3339(),
-            },
-        )
-        .context("failed to upsert temporal source")?;
+                named_params! {
+                    ":id": source.id.to_string(),
+                    ":name": source.name,
+                    ":publisher": source.publisher,
+                    ":authority": source.authority.as_str(),
+                    ":kind": source.kind.as_str(),
+                    ":locator": source.locator,
+                    ":enabled": source.enabled,
+                    ":read_only": source.read_only,
+                    ":created_at": source.created_at.to_rfc3339(),
+                    ":updated_at": source.updated_at.to_rfc3339(),
+                },
+            )
+            .context("failed to upsert temporal source")?;
         Ok(())
     }
 
@@ -126,12 +127,14 @@ impl TemporalStore {
 
     pub fn upsert_event(&self, event: &TemporalEvent) -> anyhow::Result<()> {
         let encoded = EncodedTime::from_time_spec(&event.time);
-        let tags_json = serde_json::to_string(&event.tags).context("failed to encode event tags")?;
-        let properties_json =
-            serde_json::to_string(&event.properties).context("failed to encode event properties")?;
+        let tags_json =
+            serde_json::to_string(&event.tags).context("failed to encode event tags")?;
+        let properties_json = serde_json::to_string(&event.properties)
+            .context("failed to encode event properties")?;
 
-        self.conn.execute(
-            r#"
+        self.conn
+            .execute(
+                r#"
             INSERT INTO temporal_events (
                 id, source_id, source_record_key,
                 normalized_title, raw_title, description,
@@ -179,36 +182,36 @@ impl TemporalStore {
                 properties_json = excluded.properties_json,
                 updated_at = excluded.updated_at
             "#,
-            named_params! {
-                ":id": event.id.to_string(),
-                ":source_id": event.source_id.map(|value| value.to_string()),
-                ":source_record_key": event.source_record_key,
-                ":normalized_title": event.normalized_title,
-                ":raw_title": event.raw_title,
-                ":description": event.description,
-                ":event_type": event.event_type,
-                ":domain": event.domain,
-                ":jurisdiction": event.jurisdiction,
-                ":institution": event.institution,
-                ":status": event.status.as_str(),
-                ":confidence": event.confidence,
-                ":importance": event.importance,
-                ":personal_relevance": event.personal_relevance,
-                ":time_kind": encoded.kind,
-                ":start_utc": encoded.start_utc,
-                ":end_utc": encoded.end_utc,
-                ":source_timezone": encoded.source_timezone,
-                ":start_date": encoded.start_date,
-                ":end_date_exclusive": encoded.end_date_exclusive,
-                ":start_local": encoded.start_local,
-                ":end_local": encoded.end_local,
-                ":tags_json": tags_json,
-                ":properties_json": properties_json,
-                ":created_at": event.created_at.to_rfc3339(),
-                ":updated_at": event.updated_at.to_rfc3339(),
-            },
-        )
-        .context("failed to upsert temporal event")?;
+                named_params! {
+                    ":id": event.id.to_string(),
+                    ":source_id": event.source_id.map(|value| value.to_string()),
+                    ":source_record_key": event.source_record_key,
+                    ":normalized_title": event.normalized_title,
+                    ":raw_title": event.raw_title,
+                    ":description": event.description,
+                    ":event_type": event.event_type,
+                    ":domain": event.domain,
+                    ":jurisdiction": event.jurisdiction,
+                    ":institution": event.institution,
+                    ":status": event.status.as_str(),
+                    ":confidence": event.confidence,
+                    ":importance": event.importance,
+                    ":personal_relevance": event.personal_relevance,
+                    ":time_kind": encoded.kind,
+                    ":start_utc": encoded.start_utc,
+                    ":end_utc": encoded.end_utc,
+                    ":source_timezone": encoded.source_timezone,
+                    ":start_date": encoded.start_date,
+                    ":end_date_exclusive": encoded.end_date_exclusive,
+                    ":start_local": encoded.start_local,
+                    ":end_local": encoded.end_local,
+                    ":tags_json": tags_json,
+                    ":properties_json": properties_json,
+                    ":created_at": event.created_at.to_rfc3339(),
+                    ":updated_at": event.updated_at.to_rfc3339(),
+                },
+            )
+            .context("failed to upsert temporal event")?;
 
         Ok(())
     }
@@ -328,7 +331,9 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
     }
 
     if current < 1 {
-        let tx = conn.transaction().context("failed to start schema migration")?;
+        let tx = conn
+            .transaction()
+            .context("failed to start schema migration")?;
         tx.execute_batch(
             r#"
             CREATE TABLE temporal_sources (
@@ -481,7 +486,8 @@ fn decode_event(row: &Row<'_>) -> anyhow::Result<TemporalEvent> {
         .ok_or_else(|| anyhow!("unknown event status {status_raw}"))?;
 
     let tags_raw: String = row.get("tags_json")?;
-    let tags: Vec<String> = serde_json::from_str(&tags_raw).context("failed to decode event tags")?;
+    let tags: Vec<String> =
+        serde_json::from_str(&tags_raw).context("failed to decode event tags")?;
 
     let properties_raw: String = row.get("properties_json")?;
     let properties: Value =
@@ -531,8 +537,7 @@ fn parse_datetime(raw: &str) -> anyhow::Result<DateTime<Utc>> {
 }
 
 fn parse_date(raw: &str) -> anyhow::Result<NaiveDate> {
-    NaiveDate::parse_from_str(raw, "%Y-%m-%d")
-        .with_context(|| format!("invalid date {raw}"))
+    NaiveDate::parse_from_str(raw, "%Y-%m-%d").with_context(|| format!("invalid date {raw}"))
 }
 
 fn parse_naive_datetime(raw: &str) -> anyhow::Result<NaiveDateTime> {
@@ -589,8 +594,7 @@ impl EncodedTime {
                 end_utc: None,
                 source_timezone: None,
                 start_date: Some(start.format("%Y-%m-%d").to_string()),
-                end_date_exclusive: end_exclusive
-                    .map(|value| value.format("%Y-%m-%d").to_string()),
+                end_date_exclusive: end_exclusive.map(|value| value.format("%Y-%m-%d").to_string()),
                 start_local: None,
                 end_local: None,
             },
@@ -636,11 +640,8 @@ mod tests {
     #[test]
     fn window_query_preserves_three_time_kinds() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let source = TemporalSource::new(
-            "Test source",
-            SourceKind::Taria,
-            SourceAuthority::Official,
-        );
+        let source =
+            TemporalSource::new("Test source", SourceKind::Taria, SourceAuthority::Official);
         store.upsert_source(&source).expect("source");
 
         let day = NaiveDate::from_ymd_opt(2026, 10, 4).expect("date");
@@ -669,11 +670,9 @@ mod tests {
         instant.source_id = Some(source.id);
         store.upsert_event(&instant).expect("instant event");
 
-        let floating_start = NaiveDateTime::parse_from_str(
-            "2026-10-04T15:00:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("floating");
+        let floating_start =
+            NaiveDateTime::parse_from_str("2026-10-04T15:00:00", "%Y-%m-%dT%H:%M:%S")
+                .expect("floating");
         let mut floating = TemporalEvent::new(
             "Floating",
             TimeSpec::Floating {
@@ -695,11 +694,7 @@ mod tests {
     #[test]
     fn source_record_identity_is_unique_per_source() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let source = TemporalSource::new(
-            "Test source",
-            SourceKind::Ics,
-            SourceAuthority::Official,
-        );
+        let source = TemporalSource::new("Test source", SourceKind::Ics, SourceAuthority::Official);
         store.upsert_source(&source).expect("source");
 
         let day = NaiveDate::from_ymd_opt(2026, 10, 4).expect("date");

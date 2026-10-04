@@ -158,7 +158,11 @@ pub fn calendar_title(view: CalendarView, focus: NaiveDate, monday_start: bool) 
         CalendarView::Week => {
             let window = window_for_view(CalendarView::Week, focus, monday_start);
             let end = window.end_exclusive - Duration::days(1);
-            format!("{} - {}", window.start.format("%b %e"), end.format("%b %e, %Y"))
+            format!(
+                "{} - {}",
+                window.start.format("%b %e"),
+                end.format("%b %e, %Y")
+            )
         }
         CalendarView::Day => focus.format("%A, %B %e, %Y").to_string(),
     }
