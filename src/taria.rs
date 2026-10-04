@@ -24,7 +24,6 @@ pub struct TariaImportReport {
     pub imprecise: usize,
     pub unplaced: usize,
     pub blocked_or_undated: usize,
-    pub retained_missing: usize,
     pub suggested_focus: Option<NaiveDate>,
 }
 
@@ -94,11 +93,13 @@ pub fn import_reconciled_event_set_json(
     source.properties = source_properties(object);
 
     let mut normalized = Vec::with_capacity(events.len() + blocked_events.len());
+    let mut normalized_keys = std::collections::BTreeSet::new();
     for raw_event in events {
         let event_object = raw_event
             .as_object()
             .ok_or_else(|| anyhow!("Taria events[] contains a non-object value"))?;
         let record_key = reconciled_record_key(event_object)?;
+        normalized_keys.insert(record_key.clone());
         normalized.push(normalized_event(
             event_object,
             source.id,
@@ -113,6 +114,10 @@ pub fn import_reconciled_event_set_json(
             .as_object()
             .ok_or_else(|| anyhow!("Taria blocked_events[] contains a non-object value"))?;
         let record_key = reconciled_record_key(event_object)?;
+        if normalized_keys.contains(&record_key) {
+            continue;
+        }
+        normalized_keys.insert(record_key.clone());
         normalized.push(normalized_blocked_event(
             event_object,
             source.id,
@@ -245,11 +250,11 @@ fn normalized_event(
 }
 
 fn reconciled_record_key(raw: &Map<String, Value>) -> anyhow::Result<String> {
-    raw.get("reconciled_event_key")
+    raw.get("event_ref")
         .and_then(Value::as_str)
-        .or_else(|| raw.get("event_ref").and_then(Value::as_str))
+        .or_else(|| raw.get("reconciled_event_key").and_then(Value::as_str))
         .map(ToOwned::to_owned)
-        .ok_or_else(|| anyhow!("Taria event is missing reconciled_event_key/event_ref"))
+        .ok_or_else(|| anyhow!("Taria event is missing event_ref/reconciled_event_key"))
 }
 
 fn normalized_blocked_event(
