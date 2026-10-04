@@ -72,6 +72,17 @@ enum IntegrityMode {
     ContentFingerprint,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CalendarSetArtifactSpec<'a> {
+    release_id: &'a str,
+    bundle_ref: &'a str,
+    container: &'a Map<String, Value>,
+    path_field: &'a str,
+    hash_fields: &'a [&'a str],
+    integrity_mode: IntegrityMode,
+}
+
+
 #[derive(Debug, Deserialize)]
 struct ReleaseRegistry {
     channels: BTreeMap<String, ReleaseChannel>,
@@ -311,12 +322,14 @@ fn import_bootstrap_shard(
     import_calendar_set_from_container(
         store,
         root,
-        &release_id,
-        &bundle_ref,
-        shard,
-        "calendar_set_path",
-        &["calendar_set_content_sha256", "calendar_set_sha256"],
-        IntegrityMode::ContentFingerprint,
+        CalendarSetArtifactSpec {
+            release_id: &release_id,
+            bundle_ref: &bundle_ref,
+            container: shard,
+            path_field: "calendar_set_path",
+            hash_fields: &["calendar_set_content_sha256", "calendar_set_sha256"],
+            integrity_mode: IntegrityMode::ContentFingerprint,
+        },
         report,
     )?;
 
@@ -355,12 +368,14 @@ fn import_production_artifact(
     import_calendar_set_from_container(
         store,
         root,
-        &release_id,
-        &bundle_ref,
-        artifact,
-        "calendar_set_path",
-        &["calendar_set_sha256", "calendar_set_content_sha256"],
-        IntegrityMode::FileSha256,
+        CalendarSetArtifactSpec {
+            release_id: &release_id,
+            bundle_ref: &bundle_ref,
+            container: artifact,
+            path_field: "calendar_set_path",
+            hash_fields: &["calendar_set_sha256", "calendar_set_content_sha256"],
+            integrity_mode: IntegrityMode::FileSha256,
+        },
         report,
     )?;
 
@@ -370,23 +385,19 @@ fn import_production_artifact(
 fn import_calendar_set_from_container(
     store: &TemporalStore,
     root: &Path,
-    release_id: &str,
-    bundle_ref: &str,
-    container: &Map<String, Value>,
-    path_field: &str,
-    hash_fields: &[&str],
-    integrity_mode: IntegrityMode,
+    spec: CalendarSetArtifactSpec<'_>,
     report: &mut TariaWorkspaceUpdateReport,
 ) -> anyhow::Result<()> {
-    let Some(relative) = optional_string(container, path_field) else {
+    let Some(relative) = optional_string(spec.container, spec.path_field) else {
         return Ok(());
     };
-    let expected_hash = hash_fields
+    let expected_hash = spec
+        .hash_fields
         .iter()
-        .find_map(|field| optional_string(container, field))
+        .find_map(|field| optional_string(spec.container, field))
         .ok_or_else(|| anyhow!("CalendarSet {relative} has no declared content hash"))?;
     let path = resolve_relative_artifact(root, &relative)?;
-    validate_declared_integrity(&path, Some(&expected_hash), integrity_mode)?;
+    validate_declared_integrity(&path, Some(&expected_hash), spec.integrity_mode)?;
 
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read CalendarSet {}", path.display()))?;
@@ -458,8 +469,8 @@ fn import_calendar_set_from_container(
     let result = store.replace_taria_calendar_set(
         &TariaCalendarSetRecord {
             calendar_set_id,
-            release_id: release_id.to_string(),
-            bundle_ref: bundle_ref.to_string(),
+            release_id: spec.release_id.to_string(),
+            bundle_ref: spec.bundle_ref.to_string(),
             projection_ref,
             input_reconciled_event_set_ref,
             source_path: path.display().to_string(),
