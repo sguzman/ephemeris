@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the checkpoint, all **38** library tests pass. The verified code head is `c6782580870297b1735b752b7b6484851d4d858e`, with format, check, strict Clippy, and tests all green.
+At the checkpoint, all **40** library tests pass. The verified code head is `f83e2f0a7273a03b40f952e43377fe77518ebac5`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -37,7 +37,7 @@ At the checkpoint, all **38** library tests pass. The verified code head is `c67
 
 SQLite via bundled `rusqlite`.
 
-Current schema version: 7.
+Current schema version: 8.
 
 The database owns:
 
@@ -230,6 +230,7 @@ A saved view currently retains:
 - stable multi-key sort rules
 - semantic color fallback
 - ordered color rules
+- ordered composition layers
 - overlays
 - display timezone
 - week-start behavior
@@ -284,8 +285,8 @@ Not yet implemented:
 - CalendarSet membership persistence
 - release/channel/coverage metadata persistence
 - release integrity/hash validation as one atomic adoption
-- saved-view inheritance
-- full calendar algebra beyond the current overlay-union slice
+- composition-layer GUI editor
+- saved-view-reference composition / inheritance with cycle-safe semantics
 - event-occurrence/recurrence engine
 - dedicated provenance/snapshot/history tables
 - snapshot diffs
@@ -313,6 +314,37 @@ Implemented:
 - existing semantic ColorBy strategy remains the fallback
 - rules apply consistently across Grid, Agenda, Table, and unplaced records
 - rules persist in saved views
+
+### Calendar algebra foundation
+
+The ordered composition foundation is implemented and verified.
+
+A saved view can persist sequential logical composition layers with these operators:
+
+- union
+- intersection
+- subtraction
+
+Evaluation is deterministic and ordered:
+
+```text
+base query
+    -> composition layer 1
+    -> composition layer 2
+    -> ...
+    -> overlay union
+```
+
+Composition layers are currently wired through:
+
+- runtime event visibility
+- transient UI state
+- SavedView capture/apply
+- SQLite persistence/migration
+
+The composition model is intentionally event-native and does not copy membership.
+
+**Not implemented yet:** a GUI editor for composition layers. The model/runtime/persistence foundation exists before the interaction surface.
 
 ### Overlays
 
@@ -347,7 +379,7 @@ Implement the Taria **TemporalBundleRelease v1** consumer path before adding ano
 
 The direct ReconciledProjectionEventSet importer remains the low-level event adapter beneath this release importer.
 
-After that, resume programmable-view expansion with explicit intersection/subtraction composition, user-defined Table columns, and saved-view inheritance.
+After that, resume programmable-view expansion with the composition-layer GUI editor, user-defined Table columns, richer facets, and saved-view inheritance.
 
 ## Rule going forward
 
