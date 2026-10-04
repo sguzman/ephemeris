@@ -38,12 +38,12 @@ Implemented:
 - event-native storage with no Taskwarrior mediation
 - distinct temporal semantics for date-only, all-day, exact instants, floating/local time, month precision, year precision, and unresolved time
 - Year, Quarter, Month, Week, and Day date ranges
-- Grid and Agenda as independent layouts
+- Grid, Agenda, and dense Table as independent layouts
 - source visibility controls
 - text, domain, jurisdiction, and lifecycle-status filtering
 - nested AND / OR / NOT advanced queries with typed predicates and a recursive editor
 - timezone-aware temporal filters, including exact date overlap, precision classes, and relative day windows
-- independent grouping, stable multi-key sorting, and semantic coloring
+- independent true grouping, stable multi-key sorting, and semantic coloring
 - durable named saved views stored in SQLite
 - saved views that retain query, source visibility, date range, layout, grouping, sort rules, color strategy, timezone, and week-start behavior
 - event inspector with Taria identity/provenance details
