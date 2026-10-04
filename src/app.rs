@@ -11,9 +11,9 @@ use crate::calendar::{
 };
 use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
 use crate::query::{
-    ColorBy, GroupBy, IntegerField, IntegerOperator, PresenceField, QueryContext, QueryExpr,
-    QueryPredicate, SavedView, SortDirection, SortField, SortRule, TemporalKind, TextField,
-    TextOperator,
+    ColorBy, ColorRule, GroupBy, IntegerField, IntegerOperator, PresenceField, QueryContext,
+    QueryExpr, QueryPredicate, RgbColor, SavedView, SortDirection, SortField, SortRule,
+    TemporalKind, TextField, TextOperator,
 };
 use crate::state::PersistedUiState;
 use crate::store::TemporalStore;
@@ -763,7 +763,14 @@ impl EphemerisApp {
                     if ui
                         .selectable_label(
                             self.state.selected_event_id == Some(event.id),
-                            RichText::new(label).color(event_color(&event, self.state.color_by)),
+                            RichText::new(label).color(event_color(
+                                &event,
+                                ColorPresentation {
+                                    fallback: self.state.color_by,
+                                    rules: &self.state.color_rules,
+                                    query_context: QueryContext::for_timezone(self.timezone()),
+                                },
+                            )),
                         )
                         .clicked()
                     {
@@ -976,7 +983,11 @@ impl eframe::App for EphemerisApp {
                                 selected: self.state.selected_event_id,
                                 group_by: self.state.group_by,
                                 sort_rules: &self.state.sort_rules,
-                                color_by: self.state.color_by,
+                                colors: ColorPresentation {
+                                    fallback: self.state.color_by,
+                                    rules: &self.state.color_rules,
+                                    query_context: QueryContext::for_timezone(timezone),
+                                },
                             },
                         );
                     });
@@ -1518,7 +1529,14 @@ struct CalendarRenderContext<'a> {
     selected: Option<Uuid>,
     group_by: GroupBy,
     sort_rules: &'a [SortRule],
-    color_by: ColorBy,
+    colors: ColorPresentation<'a>,
+}
+
+#[derive(Clone, Copy)]
+struct ColorPresentation<'a> {
+    fallback: ColorBy,
+    rules: &'a [ColorRule],
+    query_context: QueryContext,
 }
 
 fn render_calendar(
@@ -1535,7 +1553,7 @@ fn render_calendar(
         selected,
         group_by,
         sort_rules,
-        color_by,
+        colors,
     } = context;
 
     if events.is_empty() {
@@ -1548,15 +1566,15 @@ fn render_calendar(
 
     match layout {
         CalendarLayout::Agenda => render_agenda(
-            ui, events, timezone, selected, group_by, sort_rules, color_by,
+            ui, events, timezone, selected, group_by, sort_rules, colors,
         ),
         CalendarLayout::Table => render_table(
-            ui, events, timezone, selected, group_by, sort_rules, color_by,
+            ui, events, timezone, selected, group_by, sort_rules, colors,
         ),
         CalendarLayout::Grid => match view {
-            CalendarView::Year => render_year(ui, events, focus, timezone, selected, color_by),
+            CalendarView::Year => render_year(ui, events, focus, timezone, selected, colors),
             CalendarView::Quarter => {
-                render_quarter(ui, events, focus, timezone, selected, color_by)
+                render_quarter(ui, events, focus, timezone, selected, colors)
             }
             CalendarView::Month => render_month(
                 ui,
@@ -1565,7 +1583,7 @@ fn render_calendar(
                 timezone,
                 monday_start,
                 selected,
-                color_by,
+                colors,
             ),
             CalendarView::Week => render_week(
                 ui,
@@ -1574,9 +1592,9 @@ fn render_calendar(
                 timezone,
                 monday_start,
                 selected,
-                color_by,
+                colors,
             ),
-            CalendarView::Day => render_day(ui, events, focus, timezone, selected, color_by),
+            CalendarView::Day => render_day(ui, events, focus, timezone, selected, colors),
         },
     }
 }
@@ -1588,7 +1606,7 @@ fn render_agenda(
     selected: Option<Uuid>,
     group_by: GroupBy,
     sort_rules: &[SortRule],
-    color_by: ColorBy,
+    colors: ColorPresentation<'_>,
 ) -> Option<CalendarAction> {
     let groups = grouped_events(events, timezone, group_by, sort_rules);
     let mut action = None;
@@ -1610,7 +1628,7 @@ fn render_agenda(
                     .selectable_label(
                         selected == Some(event.id),
                         RichText::new(&event.normalized_title)
-                            .color(event_color(event, color_by))
+                            .color(event_color(event, colors))
                             .strong(),
                     )
                     .clicked()
@@ -1643,7 +1661,7 @@ fn render_table(
     selected: Option<Uuid>,
     group_by: GroupBy,
     sort_rules: &[SortRule],
-    color_by: ColorBy,
+    colors: ColorPresentation<'_>,
 ) -> Option<CalendarAction> {
     let groups = grouped_events(events, timezone, group_by, sort_rules);
     let mut action = None;
@@ -1682,7 +1700,7 @@ fn render_table(
                         .selectable_label(
                             selected == Some(event.id),
                             RichText::new(&event.normalized_title)
-                                .color(event_color(event, color_by))
+                                .color(event_color(event, colors))
                                 .strong(),
                         )
                         .clicked()
@@ -1952,7 +1970,7 @@ fn render_year(
     focus: NaiveDate,
     timezone: Tz,
     selected: Option<Uuid>,
-    color_by: ColorBy,
+    colors: ColorPresentation<'_>,
 ) -> Option<CalendarAction> {
     let months = year_months(focus);
     let mut action = None;
@@ -1966,7 +1984,7 @@ fn render_year(
             ui.strong("Year-precision events");
             ui.small("Taria knows the year, but not a month or day. No fake date is assigned.");
             for event in year_precision {
-                if render_event_button(ui, event, timezone, selected, color_by).clicked() {
+                if render_event_button(ui, event, timezone, selected, colors).clicked() {
                     action = Some(CalendarAction::Select(event.id));
                 }
             }
@@ -1999,7 +2017,7 @@ fn render_year(
                             } if year == month.year() && event_month == month.month()
                         )
                     }) {
-                        if render_event_button(ui, event, timezone, selected, color_by).clicked() {
+                        if render_event_button(ui, event, timezone, selected, colors).clicked() {
                             action = Some(CalendarAction::Select(event.id));
                         }
                     }
@@ -2021,7 +2039,7 @@ fn render_quarter(
     focus: NaiveDate,
     timezone: Tz,
     selected: Option<Uuid>,
-    color_by: ColorBy,
+    colors: ColorPresentation<'_>,
 ) -> Option<CalendarAction> {
     let months = quarter_months(focus);
     let mut action = None;
@@ -2048,7 +2066,7 @@ fn render_quarter(
                         } if year == month.year() && event_month == month.month()
                     )
                 }) {
-                    if render_event_button(ui, event, timezone, selected, color_by).clicked() {
+                    if render_event_button(ui, event, timezone, selected, colors).clicked() {
                         action = Some(CalendarAction::Select(event.id));
                     }
                 }
@@ -2103,7 +2121,7 @@ fn render_month(
     timezone: Tz,
     monday_start: bool,
     selected: Option<Uuid>,
-    color_by: ColorBy,
+    colors: ColorPresentation<'_>,
 ) -> Option<CalendarAction> {
     let start = month_grid_start(focus, monday_start);
     let days = month_days(start);
@@ -2129,7 +2147,7 @@ fn render_month(
                 "The source does not support a specific day, so these stay above the day grid.",
             );
             for event in month_precision {
-                if render_event_button(ui, event, timezone, selected, color_by).clicked() {
+                if render_event_button(ui, event, timezone, selected, colors).clicked() {
                     action = Some(CalendarAction::Select(event.id));
                 }
             }
@@ -2171,7 +2189,7 @@ fn render_month(
 
                     let day_events = events_for_day(events, *day, timezone);
                     for event in day_events.iter().take(4) {
-                        if render_event_button(ui, event, timezone, selected, color_by).clicked() {
+                        if render_event_button(ui, event, timezone, selected, colors).clicked() {
                             action = Some(CalendarAction::Select(event.id));
                         }
                     }
@@ -2196,7 +2214,7 @@ fn render_week(
     timezone: Tz,
     monday_start: bool,
     selected: Option<Uuid>,
-    color_by: ColorBy,
+    colors: ColorPresentation<'_>,
 ) -> Option<CalendarAction> {
     let days = week_days(focus, monday_start);
     let mut action = None;
@@ -2215,7 +2233,7 @@ fn render_week(
                     ui.small("No events");
                 }
                 for event in day_events {
-                    if render_event_button(ui, event, timezone, selected, color_by).clicked() {
+                    if render_event_button(ui, event, timezone, selected, colors).clicked() {
                         action = Some(CalendarAction::Select(event.id));
                     }
                 }
@@ -2232,7 +2250,7 @@ fn render_day(
     focus: NaiveDate,
     timezone: Tz,
     selected: Option<Uuid>,
-    color_by: ColorBy,
+    colors: ColorPresentation<'_>,
 ) -> Option<CalendarAction> {
     let mut action = None;
     let day_events = events_for_day(events, focus, timezone);
@@ -2253,7 +2271,7 @@ fn render_day(
                 let response = ui.selectable_label(
                     selected == Some(event.id),
                     RichText::new(&event.normalized_title)
-                        .color(event_color(event, color_by))
+                        .color(event_color(event, colors))
                         .strong(),
                 );
                 if response.clicked() {
@@ -2286,13 +2304,13 @@ fn render_event_button(
     event: &TemporalEvent,
     timezone: Tz,
     selected: Option<Uuid>,
-    color_by: ColorBy,
+    colors: ColorPresentation<'_>,
 ) -> egui::Response {
     let time = event.display_time_label(timezone);
     let label = format!("{time}  {}", event.normalized_title);
     ui.selectable_label(
         selected == Some(event.id),
-        RichText::new(label).color(event_color(event, color_by)),
+        RichText::new(label).color(event_color(event, colors)),
     )
 }
 
