@@ -39,7 +39,7 @@ Preferred flow:
 ```text
 TemporalBundleRelease
     -> validate manifest + hashes
-    -> resolve ReconciledProjectionEventSet payloads
+    -> resolve ReconciledProjectionEventSet or accepted CompactReconciledEventIndex payloads
     -> reconcile/upsert local canonical events
     -> import CalendarSet memberships
     -> import coverage/release metadata
@@ -47,7 +47,7 @@ TemporalBundleRelease
     -> index
 ```
 
-The existing direct reconciled-event-set importer is the low-level payload adapter underneath this future release importer.
+The existing direct reconciled-event-set importer is one low-level payload adapter underneath this future release importer. Bootstrap r3 also defines a CompactReconciledEventIndex payload class for recovered shards; Ephemeris still needs that adapter.
 
 ### 2. Non-Taria source formats
 
@@ -152,6 +152,8 @@ The current direct importer accepts ReconciledProjectionEventSet JSON.
 
 That payload contains the rich resolved event state Ephemeris needs.
 
+Bootstrap r3 also pins CompactReconciledEventIndex objects for recovered Politics and Holidays shards. These are explicitly post-reconciliation compact materializations and are an accepted future payload adapter class when the manifest provides path + content hash.
+
 CalendarSet alone is not a complete event payload; it references reconciled events and carries membership/navigation metadata.
 
 The release importer therefore needs both:
@@ -167,9 +169,12 @@ Taria currently validates:
 
 `shards[]`
 
-The current bootstrap manifest contains normalized-snapshot and CalendarSet paths but no reconciled-event-set paths.
+Bootstrap r3 is mixed:
 
-Therefore the current Ephemeris importer cannot yet adopt that bootstrap manifest end-to-end without an additional resolver contract.
+- recovered Politics/Holidays shards provide CompactReconciledEventIndex paths/hashes;
+- European Elections/Sports specimen shards do not provide an explicit rich reconciled payload path.
+
+Therefore the current Ephemeris importer cannot yet adopt the full bootstrap r3 manifest end-to-end. It needs the compact-index adapter plus a rich-payload resolver for the remaining populated shards.
 
 ### Production
 
