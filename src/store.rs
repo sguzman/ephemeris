@@ -1273,7 +1273,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_bootstraps_at_version_two() {
+    fn schema_bootstraps_at_current_version() {
         let store = TemporalStore::open_in_memory().expect("store");
         assert_eq!(store.schema_version().expect("version"), 4);
     }
