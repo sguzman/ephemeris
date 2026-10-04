@@ -964,8 +964,15 @@ fn decode_json_value(row: &Row<'_>, column: &str) -> rusqlite::Result<Value> {
     serde_json::from_str(&raw).map_err(to_sql_decode_error)
 }
 
-fn to_sql_decode_error(error: impl std::error::Error + Send + Sync + 'static) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+fn to_sql_decode_error(error: impl std::fmt::Display) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        0,
+        rusqlite::types::Type::Text,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            error.to_string(),
+        )),
+    )
 }
 
 struct EncodedTime {
