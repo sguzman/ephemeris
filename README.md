@@ -46,7 +46,7 @@ Implemented:
 - independent true grouping and stable multi-key sorting
 - ordered query-driven color rules with first-match precedence and semantic fallback coloring
 - embedded overlays with independent query/styling rules
-- ordered union / intersection / subtraction composition layers over the base query
+- ordered union / intersection / subtraction composition layers over the base query with a full GUI editor
 - durable named saved views stored in SQLite
 - saved views that retain query, source visibility, date range, layout, grouping, sort rules, color rules, composition layers, overlays, timezone, and week-start behavior
 - event inspector with Taria identity/provenance details
@@ -69,6 +69,7 @@ Implemented:
 - projected CalendarSet membership predicates
 - membership-aware saved views, overlays, color rules, and calendar algebra without copying membership into events
 - adopted-release coverage/status and per-bundle population posture in the Sources panel
+- local adopted-release history with previous-release bundle/calendar/member-event diffs
 - release-backed bundle/projected-calendar selectors in the recursive query editor
 - repeatable Taria re-import using stable source-record and upstream event identity
 - transactional source import reconciliation
@@ -78,7 +79,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation milestone at 2026-10-04 passes the full CI gate at `9c55239ba1309dd5d15a13126d0188dc26be1076`: format, compile, strict Clippy, and **51 library tests**.
+The verified implementation milestone at 2026-10-04 passes the full CI gate at `9b4d8cde9b0c5c787ffe8935466abf455128228d`: format, compile, strict Clippy, and **52 library tests**.
 
 ## Product boundary
 
