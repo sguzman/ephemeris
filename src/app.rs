@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use chrono::{Datelike, Local, NaiveDate};
 use chrono_tz::Tz;
@@ -1546,34 +1546,42 @@ fn render_calendar(
         });
     }
 
-    if layout == CalendarLayout::Agenda {
-        return render_agenda(
-            ui, events, timezone, selected, group_by, sort_rules, color_by,
-        );
-    }
-
-    match view {
-        CalendarView::Year => render_year(ui, events, focus, timezone, selected, color_by),
-        CalendarView::Quarter => render_quarter(ui, events, focus, timezone, selected, color_by),
-        CalendarView::Month => render_month(
-            ui,
-            events,
-            focus,
-            timezone,
-            monday_start,
-            selected,
-            color_by,
-        ),
-        CalendarView::Week => render_week(
-            ui,
-            events,
-            focus,
-            timezone,
-            monday_start,
-            selected,
-            color_by,
-        ),
-        CalendarView::Day => render_day(ui, events, focus, timezone, selected, color_by),
+    match layout {
+        CalendarLayout::Agenda => {
+            render_agenda(
+                ui, events, timezone, selected, group_by, sort_rules, color_by,
+            )
+        }
+        CalendarLayout::Table => {
+            render_table(
+                ui, events, timezone, selected, group_by, sort_rules, color_by,
+            )
+        }
+        CalendarLayout::Grid => match view {
+            CalendarView::Year => render_year(ui, events, focus, timezone, selected, color_by),
+            CalendarView::Quarter => {
+                render_quarter(ui, events, focus, timezone, selected, color_by)
+            }
+            CalendarView::Month => render_month(
+                ui,
+                events,
+                focus,
+                timezone,
+                monday_start,
+                selected,
+                color_by,
+            ),
+            CalendarView::Week => render_week(
+                ui,
+                events,
+                focus,
+                timezone,
+                monday_start,
+                selected,
+                color_by,
+            ),
+            CalendarView::Day => render_day(ui, events, focus, timezone, selected, color_by),
+        },
     }
 }
 
@@ -1586,56 +1594,175 @@ fn render_agenda(
     sort_rules: &[SortRule],
     color_by: ColorBy,
 ) -> Option<CalendarAction> {
-    let mut ordered = events.iter().collect::<Vec<_>>();
-    ordered.sort_by(|left, right| compare_events(left, right, timezone, sort_rules));
-
+    let groups = grouped_events(events, timezone, group_by, sort_rules);
     let mut action = None;
-    let mut previous_group: Option<String> = None;
 
-    for event in ordered {
-        let group = agenda_group_label(event, timezone, group_by);
-        if group_by != GroupBy::None && previous_group.as_deref() != Some(group.as_str()) {
-            if previous_group.is_some() {
-                ui.add_space(8.0);
-            }
-            ui.heading(&group);
+    for (group, group_events) in groups {
+        if let Some(group) = group {
+            ui.heading(group);
             ui.separator();
-            previous_group = Some(group);
         }
 
-        ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new(event.display_time_label(timezone))
-                    .monospace()
-                    .color(Color32::GRAY),
-            );
-            if ui
-                .selectable_label(
-                    selected == Some(event.id),
-                    RichText::new(&event.normalized_title)
-                        .color(event_color(event, color_by))
-                        .strong(),
-                )
-                .clicked()
-            {
-                action = Some(CalendarAction::Select(event.id));
-            }
+        for event in group_events {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(event.display_time_label(timezone))
+                        .monospace()
+                        .color(Color32::GRAY),
+                );
+                if ui
+                    .selectable_label(
+                        selected == Some(event.id),
+                        RichText::new(&event.normalized_title)
+                            .color(event_color(event, color_by))
+                            .strong(),
+                    )
+                    .clicked()
+                {
+                    action = Some(CalendarAction::Select(event.id));
+                }
 
-            if let Some(domain) = event.domain.as_deref() {
-                ui.small(domain);
-            }
-            if let Some(jurisdiction) = event.jurisdiction.as_deref() {
-                ui.small(format!("· {jurisdiction}"));
-            }
-            if let Some(institution) = event.institution.as_deref() {
-                ui.small(format!("· {institution}"));
-            }
-        });
+                if let Some(domain) = event.domain.as_deref() {
+                    ui.small(domain);
+                }
+                if let Some(jurisdiction) = event.jurisdiction.as_deref() {
+                    ui.small(format!("· {jurisdiction}"));
+                }
+                if let Some(institution) = event.institution.as_deref() {
+                    ui.small(format!("· {institution}"));
+                }
+            });
+        }
+
+        ui.add_space(8.0);
     }
 
     action
 }
 
+fn render_table(
+    ui: &mut egui::Ui,
+    events: &[TemporalEvent],
+    timezone: Tz,
+    selected: Option<Uuid>,
+    group_by: GroupBy,
+    sort_rules: &[SortRule],
+    color_by: ColorBy,
+) -> Option<CalendarAction> {
+    let groups = grouped_events(events, timezone, group_by, sort_rules);
+    let mut action = None;
+
+    for (group_index, (group, group_events)) in groups.into_iter().enumerate() {
+        if let Some(group) = group {
+            ui.heading(group);
+        }
+
+        egui::Grid::new(("event-table", group_index))
+            .striped(true)
+            .spacing([12.0, 4.0])
+            .show(ui, |ui| {
+                for heading in [
+                    "Date",
+                    "Time / precision",
+                    "Title",
+                    "Type",
+                    "Domain",
+                    "Jurisdiction",
+                    "Institution",
+                    "Status",
+                    "Importance",
+                    "Relevance",
+                    "Source",
+                ] {
+                    ui.strong(heading);
+                }
+                ui.end_row();
+
+                for event in group_events {
+                    ui.monospace(table_date_label(event, timezone));
+                    ui.monospace(event.display_time_label(timezone));
+
+                    if ui
+                        .selectable_label(
+                            selected == Some(event.id),
+                            RichText::new(&event.normalized_title)
+                                .color(event_color(event, color_by))
+                                .strong(),
+                        )
+                        .clicked()
+                    {
+                        action = Some(CalendarAction::Select(event.id));
+                    }
+
+                    ui.label(event.event_type.as_deref().unwrap_or("—"));
+                    ui.label(event.domain.as_deref().unwrap_or("—"));
+                    ui.label(event.jurisdiction.as_deref().unwrap_or("—"));
+                    ui.label(event.institution.as_deref().unwrap_or("—"));
+                    ui.label(event.status.as_str());
+                    ui.label(
+                        event
+                            .importance
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "—".to_string()),
+                    );
+                    ui.label(
+                        event
+                            .personal_relevance
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "—".to_string()),
+                    );
+                    ui.label(event_source_key(event).unwrap_or_else(|| "—".to_string()));
+                    ui.end_row();
+                }
+            });
+
+        ui.add_space(10.0);
+    }
+
+    action
+}
+
+fn table_date_label(event: &TemporalEvent, timezone: Tz) -> String {
+    match event.time {
+        TimeSpec::Month { year, month } => format!("{year}-{month:02}"),
+        TimeSpec::Year { year } => year.to_string(),
+        TimeSpec::Unknown { .. } => "—".to_string(),
+        _ => event
+            .display_date(timezone)
+            .map(|date| date.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| "—".to_string()),
+    }
+}
+
+fn grouped_events<'a>(
+    events: &'a [TemporalEvent],
+    timezone: Tz,
+    group_by: GroupBy,
+    sort_rules: &[SortRule],
+) -> Vec<(Option<String>, Vec<&'a TemporalEvent>)> {
+    let mut ordered = events.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| compare_events(left, right, timezone, sort_rules));
+
+    if group_by == GroupBy::None {
+        return vec![(None, ordered)];
+    }
+
+    let mut groups: Vec<(Option<String>, Vec<&TemporalEvent>)> = Vec::new();
+    let mut indices = HashMap::<String, usize>::new();
+
+    for event in ordered {
+        let label = agenda_group_label(event, timezone, group_by);
+        if let Some(index) = indices.get(&label).copied() {
+            groups[index].1.push(event);
+        } else {
+            let index = groups.len();
+            indices.insert(label.clone(), index);
+            groups.push((Some(label), vec![event]));
+        }
+    }
+
+    groups
+}
 fn sort_events(events: &mut [TemporalEvent], timezone: Tz, sort_rules: &[SortRule]) {
     events.sort_by(|left, right| compare_events(left, right, timezone, sort_rules));
 }
