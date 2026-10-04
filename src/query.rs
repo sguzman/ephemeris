@@ -884,6 +884,38 @@ const fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Overlay {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub query: EventQuery,
+    #[serde(default)]
+    pub color_by: ColorBy,
+    #[serde(default)]
+    pub color_rules: Vec<ColorRule>,
+}
+
+impl Overlay {
+    pub fn matches(&self, event: &TemporalEvent, context: &QueryContext) -> bool {
+        self.enabled && self.query.matches(event, context)
+    }
+}
+
+pub fn matches_base_or_overlay(
+    base: &EventQuery,
+    overlays: &[Overlay],
+    event: &TemporalEvent,
+    context: &QueryContext,
+) -> bool {
+    base.matches(event, context)
+        || overlays
+            .iter()
+            .any(|overlay| overlay.matches(event, context))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedView {
     pub id: Uuid,
     pub name: String,
@@ -902,6 +934,8 @@ pub struct SavedView {
     pub color_by: ColorBy,
     #[serde(default)]
     pub color_rules: Vec<ColorRule>,
+    #[serde(default)]
+    pub overlays: Vec<Overlay>,
     pub display_timezone: String,
     pub week_start_monday: bool,
 }
@@ -1174,6 +1208,32 @@ mod tests {
     }
 
     #[test]
+    fn overlay_can_include_event_excluded_by_base_query() {
+        let base = EventQuery {
+            domain: Some("economics".to_string()),
+            ..EventQuery::default()
+        };
+        let overlays = vec![Overlay {
+            id: Uuid::new_v4(),
+            name: "California".to_string(),
+            enabled: true,
+            query: EventQuery {
+                jurisdiction: Some("US-CA".to_string()),
+                ..EventQuery::default()
+            },
+            color_by: ColorBy::Jurisdiction,
+            color_rules: Vec::new(),
+        }];
+
+        assert!(matches_base_or_overlay(
+            &base,
+            &overlays,
+            &event(),
+            &test_context()
+        ));
+    }
+
+    #[test]
     fn saved_view_keeps_independent_presentation_dimensions() {
         let view = SavedView {
             id: Uuid::new_v4(),
@@ -1203,6 +1263,17 @@ mod tests {
                 }),
                 color: RgbColor::new(255, 80, 80),
             }],
+            overlays: vec![Overlay {
+                id: Uuid::new_v4(),
+                name: "Federal".to_string(),
+                enabled: true,
+                query: EventQuery {
+                    jurisdiction: Some("US".to_string()),
+                    ..EventQuery::default()
+                },
+                color_by: ColorBy::Domain,
+                color_rules: Vec::new(),
+            }],
             display_timezone: "America/Mexico_City".to_string(),
             week_start_monday: false,
         };
@@ -1213,6 +1284,7 @@ mod tests {
         assert_eq!(view.color_by, ColorBy::EventType);
         assert_eq!(view.color_rules.len(), 1);
         assert!(view.color_rules[0].matches(&event(), &test_context()));
+        assert_eq!(view.overlays.len(), 1);
         assert_eq!(view.sort_rules.len(), 1);
         assert!(!view.id.is_nil());
     }
