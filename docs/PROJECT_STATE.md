@@ -135,8 +135,11 @@ Layouts are independent from date range:
 
 - Grid
 - Agenda
+- Table
 
-That separation is deliberate. A Month view can be rendered as a grid or agenda; presentation does not define the temporal query.
+That separation is deliberate. A Month view can be rendered as a grid, agenda, or dense table; presentation does not define the temporal query.
+
+Agenda and Table both use true group partitioning: grouping remains independent from the active stable sort rules rather than merely emitting repeated headings whenever the sort order changes group values.
 
 ### Querying and presentation
 
@@ -252,22 +255,24 @@ Not yet implemented:
 - annotations
 - relations and collections
 - duplicate/entity resolution
-- timeline/table/heatmap/pivot views
+- timeline/heatmap/pivot views
+- user-defined table columns
 - reminders
 - ICS/webcal/CalDAV ingestion/export
 - full personal event editing
 
 ## Immediate next implementation boundary
 
-Add richer dense-data views over the same query/presentation model:
+Expand semantic coloring into an ordered rule engine:
 
-1. event table layout
-2. stable row selection into the existing inspector
-3. reuse saved query, sort, and semantic color rules
-4. expose core Taria columns without flattening extensible properties
-5. prepare for later user-defined columns
+1. reusable query expressions as color-rule conditions
+2. ordered precedence with first-match-wins semantics
+3. explicit fallback to the existing semantic ColorBy strategy
+4. persist the rule list in saved views
+5. edit/reorder/enable/disable rules from the calendar UI
+6. apply rules consistently across Grid, Agenda, Table, and unplaced records
 
-After that, expand color strategy into an ordered rule engine and add view composition/overlays.
+After that, add view composition/overlays and user-defined table columns.
 
 ## Rule going forward
 
