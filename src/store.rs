@@ -13,7 +13,7 @@ use crate::domain::{
 };
 use crate::query::SavedView;
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -21,6 +21,52 @@ pub struct ImportBatchResult {
     pub updated: usize,
     pub unchanged: usize,
     pub retained_missing: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TariaReleaseRecord {
+    pub release_id: String,
+    pub channel: String,
+    pub status: String,
+    pub production_complete: bool,
+    pub manifest_path: String,
+    pub manifest_sha256: String,
+    pub generated_at: Option<String>,
+    pub coverage_json: String,
+    pub manifest_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TariaCalendarSetRecord {
+    pub calendar_set_id: String,
+    pub release_id: String,
+    pub bundle_ref: String,
+    pub projection_ref: String,
+    pub input_reconciled_event_set_ref: String,
+    pub source_path: String,
+    pub content_sha256: String,
+    pub raw_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TariaProjectedCalendarRecord {
+    pub calendar_id: String,
+    pub name: String,
+    pub kind: String,
+    pub metadata_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TariaCalendarMembershipRecord {
+    pub reconciled_event_ref: String,
+    pub calendar_ref: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TariaCalendarSetImportResult {
+    pub calendars: usize,
+    pub memberships: usize,
+    pub resolved_memberships: usize,
 }
 
 pub struct TemporalStore {
@@ -410,6 +456,280 @@ impl TemporalStore {
         .context("failed to query temporal event by source record")
     }
 
+    pub fn event_by_import_record(
+        &self,
+        source_id: Uuid,
+        source_record_key: &str,
+    ) -> anyhow::Result<Option<TemporalEvent>> {
+        let sql = event_select_sql(
+            "WHERE id = (
+                SELECT event_id
+                FROM temporal_event_import_records
+                WHERE source_id = ?1 AND source_record_key = ?2
+            )",
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        stmt.query_row(
+            params![source_id.to_string(), source_record_key],
+            decode_event,
+        )
+        .optional()
+        .context("failed to query temporal event by import record")
+    }
+
+    pub fn event_by_upstream_identity(
+        &self,
+        reconciled_ref: Option<&str>,
+        event_ref: Option<&str>,
+    ) -> anyhow::Result<Option<TemporalEvent>> {
+        if let Some(reconciled_ref) = reconciled_ref {
+            let sql = event_select_sql(
+                "WHERE upstream_reconciled_key = ?1
+                 ORDER BY created_at, id
+                 LIMIT 1",
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            if let Some(event) = stmt
+                .query_row(params![reconciled_ref], decode_event)
+                .optional()
+                .context("failed to query event by upstream reconciled identity")?
+            {
+                return Ok(Some(event));
+            }
+        }
+
+        if let Some(event_ref) = event_ref {
+            let sql = event_select_sql(
+                "WHERE upstream_event_ref = ?1
+                 ORDER BY created_at, id
+                 LIMIT 1",
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            return stmt
+                .query_row(params![event_ref], decode_event)
+                .optional()
+                .context("failed to query event by upstream event identity");
+        }
+
+        Ok(None)
+    }
+
+    pub fn upsert_taria_release(&self, release: &TariaReleaseRecord) -> anyhow::Result<()> {
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO taria_releases (
+                    release_id, channel, status, production_complete,
+                    manifest_path, manifest_sha256, generated_at,
+                    coverage_json, manifest_json, adopted_at
+                ) VALUES (
+                    :release_id, :channel, :status, :production_complete,
+                    :manifest_path, :manifest_sha256, :generated_at,
+                    :coverage_json, :manifest_json, :adopted_at
+                )
+                ON CONFLICT(release_id) DO UPDATE SET
+                    channel = excluded.channel,
+                    status = excluded.status,
+                    production_complete = excluded.production_complete,
+                    manifest_path = excluded.manifest_path,
+                    manifest_sha256 = excluded.manifest_sha256,
+                    generated_at = excluded.generated_at,
+                    coverage_json = excluded.coverage_json,
+                    manifest_json = excluded.manifest_json,
+                    adopted_at = excluded.adopted_at
+                "#,
+                named_params! {
+                    ":release_id": release.release_id,
+                    ":channel": release.channel,
+                    ":status": release.status,
+                    ":production_complete": release.production_complete,
+                    ":manifest_path": release.manifest_path,
+                    ":manifest_sha256": release.manifest_sha256,
+                    ":generated_at": release.generated_at,
+                    ":coverage_json": release.coverage_json,
+                    ":manifest_json": release.manifest_json,
+                    ":adopted_at": Utc::now().to_rfc3339(),
+                },
+            )
+            .context("failed to upsert Taria release metadata")?;
+        Ok(())
+    }
+
+    pub fn replace_taria_calendar_set(
+        &self,
+        set: &TariaCalendarSetRecord,
+        calendars: &[TariaProjectedCalendarRecord],
+        memberships: &[TariaCalendarMembershipRecord],
+    ) -> anyhow::Result<TariaCalendarSetImportResult> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .context("failed to begin CalendarSet transaction")?;
+
+        let result = (|| -> anyhow::Result<TariaCalendarSetImportResult> {
+            tx.execute(
+                r#"
+                INSERT INTO taria_calendar_sets (
+                    calendar_set_id, release_id, bundle_ref, projection_ref,
+                    input_reconciled_event_set_ref, source_path,
+                    content_sha256, raw_json
+                ) VALUES (
+                    :calendar_set_id, :release_id, :bundle_ref, :projection_ref,
+                    :input_reconciled_event_set_ref, :source_path,
+                    :content_sha256, :raw_json
+                )
+                ON CONFLICT(calendar_set_id) DO UPDATE SET
+                    release_id = excluded.release_id,
+                    bundle_ref = excluded.bundle_ref,
+                    projection_ref = excluded.projection_ref,
+                    input_reconciled_event_set_ref = excluded.input_reconciled_event_set_ref,
+                    source_path = excluded.source_path,
+                    content_sha256 = excluded.content_sha256,
+                    raw_json = excluded.raw_json
+                "#,
+                named_params! {
+                    ":calendar_set_id": set.calendar_set_id,
+                    ":release_id": set.release_id,
+                    ":bundle_ref": set.bundle_ref,
+                    ":projection_ref": set.projection_ref,
+                    ":input_reconciled_event_set_ref": set.input_reconciled_event_set_ref,
+                    ":source_path": set.source_path,
+                    ":content_sha256": set.content_sha256,
+                    ":raw_json": set.raw_json,
+                },
+            )
+            .context("failed to upsert Taria CalendarSet")?;
+
+            tx.execute(
+                "DELETE FROM taria_calendar_memberships WHERE calendar_set_id = ?1",
+                params![set.calendar_set_id],
+            )
+            .context("failed to clear prior CalendarSet memberships")?;
+            tx.execute(
+                "DELETE FROM taria_projected_calendars WHERE calendar_set_id = ?1",
+                params![set.calendar_set_id],
+            )
+            .context("failed to clear prior projected calendars")?;
+
+            for calendar in calendars {
+                tx.execute(
+                    r#"
+                    INSERT INTO taria_projected_calendars (
+                        calendar_set_id, calendar_id, name, kind, metadata_json
+                    ) VALUES (?1, ?2, ?3, ?4, ?5)
+                    "#,
+                    params![
+                        set.calendar_set_id,
+                        calendar.calendar_id,
+                        calendar.name,
+                        calendar.kind,
+                        calendar.metadata_json,
+                    ],
+                )
+                .context("failed to insert projected calendar")?;
+            }
+
+            let mut resolved_memberships = 0usize;
+            for membership in memberships {
+                let event_id: Option<String> = tx
+                    .query_row(
+                        r#"
+                        SELECT id
+                        FROM temporal_events
+                        WHERE upstream_reconciled_key = ?1
+                        ORDER BY created_at, id
+                        LIMIT 1
+                        "#,
+                        params![membership.reconciled_event_ref],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .context("failed to resolve CalendarSet event membership")?;
+
+                if event_id.is_some() {
+                    resolved_memberships += 1;
+                }
+
+                tx.execute(
+                    r#"
+                    INSERT OR REPLACE INTO taria_calendar_memberships (
+                        calendar_set_id, calendar_id, reconciled_event_ref, event_id
+                    ) VALUES (?1, ?2, ?3, ?4)
+                    "#,
+                    params![
+                        set.calendar_set_id,
+                        membership.calendar_ref,
+                        membership.reconciled_event_ref,
+                        event_id,
+                    ],
+                )
+                .context("failed to insert CalendarSet membership")?;
+            }
+
+            Ok(TariaCalendarSetImportResult {
+                calendars: calendars.len(),
+                memberships: memberships.len(),
+                resolved_memberships,
+            })
+        })();
+
+        match result {
+            Ok(result) => {
+                tx.commit()
+                    .context("failed to commit CalendarSet transaction")?;
+                Ok(result)
+            }
+            Err(error) => {
+                let _ = tx.rollback();
+                Err(error)
+            }
+        }
+    }
+
+    pub fn resolve_taria_calendar_memberships(&self) -> anyhow::Result<usize> {
+        let changed = self
+            .conn
+            .execute(
+                r#"
+                UPDATE taria_calendar_memberships
+                SET event_id = (
+                    SELECT id
+                    FROM temporal_events
+                    WHERE upstream_reconciled_key =
+                        taria_calendar_memberships.reconciled_event_ref
+                    ORDER BY created_at, id
+                    LIMIT 1
+                )
+                WHERE event_id IS NULL
+                  AND EXISTS (
+                    SELECT 1
+                    FROM temporal_events
+                    WHERE upstream_reconciled_key =
+                        taria_calendar_memberships.reconciled_event_ref
+                  )
+                "#,
+                [],
+            )
+            .context("failed to resolve Taria CalendarSet memberships")?;
+        Ok(changed)
+    }
+
+    pub fn taria_release_count(&self) -> anyhow::Result<u64> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM taria_releases", [], |row| row.get(0))
+            .context("failed to count Taria releases")?;
+        u64::try_from(count).context("Taria release count cannot be represented as u64")
+    }
+
+    pub fn taria_calendar_membership_count(&self) -> anyhow::Result<u64> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM taria_calendar_memberships", [], |row| row.get(0))
+            .context("failed to count Taria CalendarSet memberships")?;
+        u64::try_from(count).context("Taria membership count cannot be represented as u64")
+    }
+
     pub fn events_in_window(
         &self,
         start: NaiveDate,
@@ -554,14 +874,119 @@ impl TemporalStore {
         }
     }
 
+    pub fn import_taria_batch(
+        &self,
+        source: &TemporalSource,
+        events: &mut [TemporalEvent],
+    ) -> anyhow::Result<ImportBatchResult> {
+        let existing_keys = self.source_record_keys(source.id)?;
+        let incoming_keys = events
+            .iter()
+            .filter_map(|event| event.source_record_key.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .context("failed to begin Taria import transaction")?;
+
+        let result = (|| -> anyhow::Result<ImportBatchResult> {
+            self.upsert_source(source)?;
+
+            let mut created = 0usize;
+            let mut updated = 0usize;
+            let mut unchanged = 0usize;
+
+            for event in events {
+                event.source_id = Some(source.id);
+                let source_record_key = event
+                    .source_record_key
+                    .clone()
+                    .ok_or_else(|| anyhow!("Taria event is missing source-record identity"))?;
+
+                let mapped = self.event_by_import_record(source.id, &source_record_key)?;
+                let existing = match mapped {
+                    Some(existing) => Some((existing, true)),
+                    None => self
+                        .event_by_upstream_identity(
+                            event.upstream_reconciled_key.as_deref(),
+                            event.upstream_event_ref.as_deref(),
+                        )?
+                        .map(|existing| (existing, false)),
+                };
+
+                if let Some((existing, mapped_to_this_source)) = existing {
+                    let mut candidate = if mapped_to_this_source
+                        && existing.source_id == Some(source.id)
+                    {
+                        let mut candidate = event.clone();
+                        candidate.id = existing.id;
+                        candidate.created_at = existing.created_at;
+                        candidate.updated_at = existing.updated_at;
+                        candidate
+                    } else {
+                        merge_taria_projection_event(&existing, event)
+                    };
+
+                    if candidate == existing {
+                        unchanged += 1;
+                    } else {
+                        candidate.updated_at = Utc::now();
+                        self.upsert_event(&candidate)?;
+                        *event = candidate;
+                        updated += 1;
+                    }
+                } else {
+                    self.upsert_event(event)?;
+                    created += 1;
+                }
+
+                tx.execute(
+                    r#"
+                    INSERT INTO temporal_event_import_records (
+                        source_id, source_record_key, event_id
+                    ) VALUES (?1, ?2, ?3)
+                    ON CONFLICT(source_id, source_record_key) DO UPDATE SET
+                        event_id = excluded.event_id
+                    "#,
+                    params![
+                        source.id.to_string(),
+                        source_record_key,
+                        event.id.to_string(),
+                    ],
+                )
+                .context("failed to record Taria event import identity")?;
+            }
+
+            Ok(ImportBatchResult {
+                created,
+                updated,
+                unchanged,
+                retained_missing: existing_keys.difference(&incoming_keys).count(),
+            })
+        })();
+
+        match result {
+            Ok(result) => {
+                tx.commit()
+                    .context("failed to commit Taria import transaction")?;
+                Ok(result)
+            }
+            Err(error) => {
+                let _ = tx.rollback();
+                Err(error)
+            }
+        }
+    }
+
     pub fn source_record_keys(
         &self,
         source_id: Uuid,
     ) -> anyhow::Result<std::collections::BTreeSet<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT source_record_key
-             FROM temporal_events
-             WHERE source_id = ?1 AND source_record_key IS NOT NULL",
+             FROM temporal_event_import_records
+             WHERE source_id = ?1",
         )?;
         let mut rows = stmt.query(params![source_id.to_string()])?;
         let mut keys = std::collections::BTreeSet::new();
@@ -584,6 +1009,64 @@ impl TemporalStore {
         }
         Ok(events)
     }
+}
+
+fn merge_taria_projection_event(
+    existing: &TemporalEvent,
+    incoming: &TemporalEvent,
+) -> TemporalEvent {
+    let mut merged = incoming.clone();
+    merged.id = existing.id;
+    merged.source_id = existing.source_id;
+    merged.source_record_key.clone_from(&existing.source_record_key);
+    merged.created_at = existing.created_at;
+    merged.updated_at = existing.updated_at;
+
+    merged.assertion_refs = merge_unique_strings(&existing.assertion_refs, &incoming.assertion_refs);
+    merged.source_refs = merge_unique_strings(&existing.source_refs, &incoming.source_refs);
+    merged.provenance_refs =
+        merge_unique_strings(&existing.provenance_refs, &incoming.provenance_refs);
+    merged.tags = merge_unique_strings(&existing.tags, &incoming.tags);
+
+    if merged.description.is_none() {
+        merged.description.clone_from(&existing.description);
+    }
+    if merged.event_type.is_none() {
+        merged.event_type.clone_from(&existing.event_type);
+    }
+    if existing.domain.is_some() {
+        merged.domain.clone_from(&existing.domain);
+    }
+    if merged.jurisdiction.is_none() {
+        merged.jurisdiction.clone_from(&existing.jurisdiction);
+    }
+    if merged.institution.is_none() {
+        merged.institution.clone_from(&existing.institution);
+    }
+    if merged.confidence.is_none() {
+        merged.confidence = existing.confidence;
+    }
+    if merged.importance.is_none() {
+        merged.importance = existing.importance;
+    }
+    if merged.personal_relevance.is_none() {
+        merged.personal_relevance = existing.personal_relevance;
+    }
+
+    if !existing.properties.as_object().is_none_or(serde_json::Map::is_empty) {
+        merged.properties.clone_from(&existing.properties);
+    }
+
+    merged
+}
+
+fn merge_unique_strings(left: &[String], right: &[String]) -> Vec<String> {
+    left.iter()
+        .chain(right.iter())
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn configure_connection(conn: &Connection) -> anyhow::Result<()> {
@@ -611,6 +1094,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
             .context("failed to start schema migration")?;
         create_schema_v2(&tx)?;
         create_saved_views_schema_current(&tx)?;
+        create_taria_release_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -649,6 +1133,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 7 {
         migrate_v7_to_v8(conn)?;
+        current = 8;
+    }
+
+    if current == 8 {
+        migrate_v8_to_v9(conn)?;
     }
 
     Ok(())
@@ -763,6 +1252,99 @@ fn create_schema_v2(conn: &Connection) -> anyhow::Result<()> {
     .context("failed to create temporal schema")
 }
 
+fn create_taria_release_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE temporal_event_import_records (
+            source_id TEXT NOT NULL REFERENCES temporal_sources(id) ON DELETE CASCADE,
+            source_record_key TEXT NOT NULL,
+            event_id TEXT NOT NULL REFERENCES temporal_events(id) ON DELETE CASCADE,
+            PRIMARY KEY (source_id, source_record_key)
+        );
+
+        CREATE INDEX temporal_event_import_records_event
+            ON temporal_event_import_records(event_id);
+
+        CREATE INDEX temporal_events_upstream_reconciled_key
+            ON temporal_events(upstream_reconciled_key);
+
+        CREATE TABLE taria_releases (
+            release_id TEXT PRIMARY KEY,
+            channel TEXT NOT NULL,
+            status TEXT NOT NULL,
+            production_complete INTEGER NOT NULL DEFAULT 0,
+            manifest_path TEXT NOT NULL,
+            manifest_sha256 TEXT NOT NULL,
+            generated_at TEXT,
+            coverage_json TEXT NOT NULL DEFAULT '{}',
+            manifest_json TEXT NOT NULL,
+            adopted_at TEXT NOT NULL
+        );
+
+        CREATE INDEX taria_releases_channel
+            ON taria_releases(channel, adopted_at);
+
+        CREATE TABLE taria_calendar_sets (
+            calendar_set_id TEXT PRIMARY KEY,
+            release_id TEXT NOT NULL REFERENCES taria_releases(release_id) ON DELETE CASCADE,
+            bundle_ref TEXT NOT NULL,
+            projection_ref TEXT NOT NULL,
+            input_reconciled_event_set_ref TEXT NOT NULL,
+            source_path TEXT NOT NULL,
+            content_sha256 TEXT NOT NULL,
+            raw_json TEXT NOT NULL
+        );
+
+        CREATE INDEX taria_calendar_sets_release
+            ON taria_calendar_sets(release_id);
+
+        CREATE INDEX taria_calendar_sets_bundle
+            ON taria_calendar_sets(bundle_ref);
+
+        CREATE TABLE taria_projected_calendars (
+            calendar_set_id TEXT NOT NULL REFERENCES taria_calendar_sets(calendar_set_id)
+                ON DELETE CASCADE,
+            calendar_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (calendar_set_id, calendar_id)
+        );
+
+        CREATE TABLE taria_calendar_memberships (
+            calendar_set_id TEXT NOT NULL REFERENCES taria_calendar_sets(calendar_set_id)
+                ON DELETE CASCADE,
+            calendar_id TEXT NOT NULL,
+            reconciled_event_ref TEXT NOT NULL,
+            event_id TEXT REFERENCES temporal_events(id) ON DELETE SET NULL,
+            PRIMARY KEY (calendar_set_id, calendar_id, reconciled_event_ref)
+        );
+
+        CREATE INDEX taria_calendar_memberships_event
+            ON taria_calendar_memberships(event_id);
+
+        CREATE INDEX taria_calendar_memberships_reconciled
+            ON taria_calendar_memberships(reconciled_event_ref);
+        "#,
+    )
+    .context("failed to create Taria release/membership schema")?;
+
+    conn.execute(
+        r#"
+        INSERT OR IGNORE INTO temporal_event_import_records (
+            source_id, source_record_key, event_id
+        )
+        SELECT source_id, source_record_key, id
+        FROM temporal_events
+        WHERE source_id IS NOT NULL AND source_record_key IS NOT NULL
+        "#,
+        [],
+    )
+    .context("failed to backfill temporal import-record identities")?;
+
+    Ok(())
+}
+
 fn create_saved_views_schema_v3(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -819,6 +1401,17 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> anyhow::Result<()> {
         .context("failed to set schema version 3")?;
     tx.commit()
         .context("failed to commit v2 to v3 schema migration")
+}
+
+fn migrate_v8_to_v9(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v8 to v9 migration")?;
+    create_taria_release_schema_current(&tx)?;
+    tx.pragma_update(None, "user_version", 9)
+        .context("failed to set schema version 9")?;
+    tx.commit()
+        .context("failed to commit v8 to v9 schema migration")
 }
 
 fn migrate_v7_to_v8(conn: &mut Connection) -> anyhow::Result<()> {
