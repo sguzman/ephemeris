@@ -1,4 +1,5 @@
 name: Format Once
+# rerun: post-taria-import
 
 on:
   push:
