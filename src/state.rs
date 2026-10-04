@@ -29,8 +29,8 @@ pub struct PersistedUiState {
     pub jurisdiction_filter: Option<String>,
     #[serde(default)]
     pub status_filter: Option<EventStatus>,
-    #[serde(default)]
-    pub saved_views: Vec<SavedView>,
+    #[serde(default, rename = "saved_views", skip_serializing_if = "Vec::is_empty")]
+    pub legacy_saved_views: Vec<SavedView>,
     #[serde(default)]
     pub active_saved_view_id: Option<Uuid>,
     pub selected_event_id: Option<Uuid>,
@@ -39,7 +39,7 @@ pub struct PersistedUiState {
 impl Default for PersistedUiState {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 3,
             calendar_view: CalendarView::Month,
             focus_date: Local::now().date_naive().to_string(),
             display_timezone: "America/Mexico_City".to_string(),
@@ -51,7 +51,7 @@ impl Default for PersistedUiState {
             domain_filter: None,
             jurisdiction_filter: None,
             status_filter: None,
-            saved_views: Vec::new(),
+            legacy_saved_views: Vec::new(),
             active_saved_view_id: None,
             selected_event_id: None,
         }
@@ -80,8 +80,8 @@ impl PersistedUiState {
             .with_context(|| format!("failed to read {}", path.display()))?;
         let mut state: Self = serde_json::from_str(&raw)
             .with_context(|| format!("failed to decode {}", path.display()))?;
-        if state.version < 2 {
-            state.version = 2;
+        if state.version < 3 {
+            state.version = 3;
         }
         Ok(state)
     }
@@ -178,24 +178,20 @@ mod tests {
     fn state_roundtrips() {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("ui-state.json");
-        let mut state = PersistedUiState {
+        let state = PersistedUiState {
             calendar_view: CalendarView::Week,
             display_timezone: "UTC".to_string(),
             domain_filter: Some("elections".to_string()),
             ..PersistedUiState::default()
         };
-        let saved = state.capture_saved_view("Elections");
-        state.saved_views.push(saved.clone());
-        state.active_saved_view_id = Some(saved.id);
 
         state.save_to_path(&path).expect("save");
         let loaded = PersistedUiState::load_from_path(&path).expect("load");
 
         assert_eq!(loaded.calendar_view, CalendarView::Week);
         assert_eq!(loaded.display_timezone, "UTC");
-        assert_eq!(loaded.saved_views.len(), 1);
-        assert_eq!(loaded.saved_views[0].name, "Elections");
-        assert_eq!(loaded.active_saved_view_id, Some(saved.id));
+        assert_eq!(loaded.domain_filter.as_deref(), Some("elections"));
+        assert!(loaded.legacy_saved_views.is_empty());
     }
 
     #[test]
