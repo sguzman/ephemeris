@@ -16,6 +16,8 @@ This directory is the design and project-memory surface for Ephemeris.
 - [TIME_SEMANTICS.md](TIME_SEMANTICS.md) - recurrence, timezones, all-day, floating time, lifecycle
 - [QUERY_AND_VIEWS.md](QUERY_AND_VIEWS.md) - saved views, queries, overlays, color, grouping, sorting
 - [TARIA_INTEGRATION.md](TARIA_INTEGRATION.md) - native Taria temporal handoff
+- [TARIA_BUNDLE_CONTRACT.md](TARIA_BUNDLE_CONTRACT.md) - exact Resourcearium/Ephemeris release contract
+- [TARIA_FILESYSTEM_WORKFLOW.md](TARIA_FILESYSTEM_WORKFLOW.md) - local Resourcearium path and one-click update workflow
 - [INGESTION_AND_SYNC.md](INGESTION_AND_SYNC.md) - adapters, refresh, reconciliation, sync, export
 - [RIVETR_INHERITANCE.md](RIVETR_INHERITANCE.md) - what to reuse from the immediate ancestor
 
