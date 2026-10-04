@@ -929,6 +929,7 @@ impl TemporalStore {
                     };
 
                     if candidate == existing {
+                        *event = candidate;
                         unchanged += 1;
                     } else {
                         candidate.updated_at = Utc::now();
