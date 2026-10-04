@@ -265,35 +265,6 @@ pub struct SavedView {
     pub week_start_monday: bool,
 }
 
-impl SavedView {
-    pub fn new(
-        name: impl Into<String>,
-        query: EventQuery,
-        hidden_source_ids: BTreeSet<Uuid>,
-        calendar_view: CalendarView,
-        calendar_layout: CalendarLayout,
-        group_by: GroupBy,
-        sort_rules: Vec<SortRule>,
-        color_by: ColorBy,
-        display_timezone: impl Into<String>,
-        week_start_monday: bool,
-    ) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            name: name.into(),
-            query,
-            hidden_source_ids,
-            calendar_view,
-            calendar_layout,
-            group_by,
-            sort_rules,
-            color_by,
-            display_timezone: display_timezone.into(),
-            week_start_monday,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -342,25 +313,26 @@ mod tests {
 
     #[test]
     fn saved_view_keeps_independent_presentation_dimensions() {
-        let view = SavedView::new(
-            "California Elections",
-            EventQuery {
+        let view = SavedView {
+            id: Uuid::new_v4(),
+            name: "California Elections".to_string(),
+            query: EventQuery {
                 domain: Some("elections".to_string()),
                 jurisdiction: Some("US-CA".to_string()),
                 ..EventQuery::default()
             },
-            BTreeSet::new(),
-            CalendarView::Month,
-            CalendarLayout::Agenda,
-            GroupBy::Jurisdiction,
-            vec![SortRule {
+            hidden_source_ids: BTreeSet::new(),
+            calendar_view: CalendarView::Month,
+            calendar_layout: CalendarLayout::Agenda,
+            group_by: GroupBy::Jurisdiction,
+            sort_rules: vec![SortRule {
                 field: SortField::Importance,
                 direction: SortDirection::Descending,
             }],
-            ColorBy::EventType,
-            "America/Mexico_City",
-            false,
-        );
+            color_by: ColorBy::EventType,
+            display_timezone: "America/Mexico_City".to_string(),
+            week_start_monday: false,
+        };
 
         assert_eq!(view.name, "California Elections");
         assert_eq!(view.calendar_layout, CalendarLayout::Agenda);
