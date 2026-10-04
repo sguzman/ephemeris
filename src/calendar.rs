@@ -7,15 +7,17 @@ pub enum CalendarLayout {
     #[default]
     Grid,
     Agenda,
+    Table,
 }
 
 impl CalendarLayout {
-    pub const ALL: [Self; 2] = [Self::Grid, Self::Agenda];
+    pub const ALL: [Self; 3] = [Self::Grid, Self::Agenda, Self::Table];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Grid => "Grid",
             Self::Agenda => "Agenda",
+            Self::Table => "Table",
         }
     }
 
@@ -23,12 +25,14 @@ impl CalendarLayout {
         match self {
             Self::Grid => "grid",
             Self::Agenda => "agenda",
+            Self::Table => "table",
         }
     }
 
     pub fn parse(raw: &str) -> Self {
         match raw {
             "agenda" => Self::Agenda,
+            "table" => Self::Table,
             _ => Self::Grid,
         }
     }
@@ -203,6 +207,14 @@ pub fn calendar_title(view: CalendarView, focus: NaiveDate, monday_start: bool) 
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn calendar_layout_roundtrips_table_name() {
+        assert_eq!(CalendarLayout::parse(CalendarLayout::Table.as_str()), CalendarLayout::Table);
+    }
+
+
     #![allow(clippy::unwrap_used)]
 
     use super::*;
