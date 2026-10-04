@@ -203,10 +203,12 @@ mod tests {
 
     #[test]
     fn applying_saved_view_restores_query_and_presentation() {
-        let mut state = PersistedUiState::default();
-        state.domain_filter = Some("elections".to_string());
-        state.calendar_view = CalendarView::Year;
-        state.calendar_layout = CalendarLayout::Agenda;
+        let mut state = PersistedUiState {
+            domain_filter: Some("elections".to_string()),
+            calendar_view: CalendarView::Year,
+            calendar_layout: CalendarLayout::Agenda,
+            ..PersistedUiState::default()
+        };
         let view = state.capture_saved_view("Elections");
 
         state.clear_query();
