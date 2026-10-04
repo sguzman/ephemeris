@@ -559,7 +559,9 @@ impl TemporalStore {
 
     pub fn begin_taria_release_adoption(&self) -> anyhow::Result<()> {
         if !self.conn.is_autocommit() {
-            return Err(anyhow!("cannot begin Taria release adoption inside another transaction"));
+            return Err(anyhow!(
+                "cannot begin Taria release adoption inside another transaction"
+            ));
         }
         self.conn
             .execute_batch("BEGIN IMMEDIATE")
@@ -670,8 +672,9 @@ impl TemporalStore {
         }
 
         let result = (|| -> anyhow::Result<TariaCalendarSetImportResult> {
-            self.conn.execute(
-                r#"
+            self.conn
+                .execute(
+                    r#"
                 INSERT INTO taria_calendar_sets (
                     calendar_set_id, projection_ref,
                     input_reconciled_event_set_ref, source_path,
@@ -683,60 +686,65 @@ impl TemporalStore {
                 )
                 ON CONFLICT(calendar_set_id) DO NOTHING
                 "#,
-                named_params! {
-                    ":calendar_set_id": set.calendar_set_id,
-                    ":projection_ref": set.projection_ref,
-                    ":input_reconciled_event_set_ref": set.input_reconciled_event_set_ref,
-                    ":source_path": set.source_path,
-                    ":content_sha256": set.content_sha256,
-                    ":raw_json": set.raw_json,
-                },
-            )
-            .context("failed to insert immutable Taria CalendarSet")?;
+                    named_params! {
+                        ":calendar_set_id": set.calendar_set_id,
+                        ":projection_ref": set.projection_ref,
+                        ":input_reconciled_event_set_ref": set.input_reconciled_event_set_ref,
+                        ":source_path": set.source_path,
+                        ":content_sha256": set.content_sha256,
+                        ":raw_json": set.raw_json,
+                    },
+                )
+                .context("failed to insert immutable Taria CalendarSet")?;
 
-            self.conn.execute(
-                r#"
+            self.conn
+                .execute(
+                    r#"
                 INSERT INTO taria_release_calendar_sets (
                     release_id, calendar_set_id, bundle_ref
                 ) VALUES (?1, ?2, ?3)
                 ON CONFLICT(release_id, calendar_set_id, bundle_ref) DO NOTHING
                 "#,
-                params![set.release_id, set.calendar_set_id, set.bundle_ref],
-            )
-            .context("failed to associate CalendarSet with Taria release")?;
+                    params![set.release_id, set.calendar_set_id, set.bundle_ref],
+                )
+                .context("failed to associate CalendarSet with Taria release")?;
 
-            self.conn.execute(
-                "DELETE FROM taria_calendar_memberships WHERE calendar_set_id = ?1",
-                params![set.calendar_set_id],
-            )
-            .context("failed to clear prior CalendarSet memberships")?;
-            self.conn.execute(
-                "DELETE FROM taria_projected_calendars WHERE calendar_set_id = ?1",
-                params![set.calendar_set_id],
-            )
-            .context("failed to clear prior projected calendars")?;
+            self.conn
+                .execute(
+                    "DELETE FROM taria_calendar_memberships WHERE calendar_set_id = ?1",
+                    params![set.calendar_set_id],
+                )
+                .context("failed to clear prior CalendarSet memberships")?;
+            self.conn
+                .execute(
+                    "DELETE FROM taria_projected_calendars WHERE calendar_set_id = ?1",
+                    params![set.calendar_set_id],
+                )
+                .context("failed to clear prior projected calendars")?;
 
             for calendar in calendars {
-                self.conn.execute(
-                    r#"
+                self.conn
+                    .execute(
+                        r#"
                     INSERT INTO taria_projected_calendars (
                         calendar_set_id, calendar_id, name, kind, metadata_json
                     ) VALUES (?1, ?2, ?3, ?4, ?5)
                     "#,
-                    params![
-                        set.calendar_set_id,
-                        calendar.calendar_id,
-                        calendar.name,
-                        calendar.kind,
-                        calendar.metadata_json,
-                    ],
-                )
-                .context("failed to insert projected calendar")?;
+                        params![
+                            set.calendar_set_id,
+                            calendar.calendar_id,
+                            calendar.name,
+                            calendar.kind,
+                            calendar.metadata_json,
+                        ],
+                    )
+                    .context("failed to insert projected calendar")?;
             }
 
             let mut resolved_memberships = 0usize;
             for membership in memberships {
-                let event_id: Option<String> = self.conn
+                let event_id: Option<String> = self
+                    .conn
                     .query_row(
                         r#"
                         SELECT event_id
@@ -754,20 +762,21 @@ impl TemporalStore {
                     resolved_memberships += 1;
                 }
 
-                self.conn.execute(
-                    r#"
+                self.conn
+                    .execute(
+                        r#"
                     INSERT OR REPLACE INTO taria_calendar_memberships (
                         calendar_set_id, calendar_id, reconciled_event_ref, event_id
                     ) VALUES (?1, ?2, ?3, ?4)
                     "#,
-                    params![
-                        set.calendar_set_id,
-                        membership.calendar_ref,
-                        membership.reconciled_event_ref,
-                        event_id,
-                    ],
-                )
-                .context("failed to insert CalendarSet membership")?;
+                        params![
+                            set.calendar_set_id,
+                            membership.calendar_ref,
+                            membership.reconciled_event_ref,
+                            event_id,
+                        ],
+                    )
+                    .context("failed to insert CalendarSet membership")?;
             }
 
             Ok(TariaCalendarSetImportResult {
@@ -1194,7 +1203,8 @@ impl TemporalStore {
                     let Some(identity_value) = identity_value else {
                         continue;
                     };
-                    let existing_event_id: Option<String> = self.conn
+                    let existing_event_id: Option<String> = self
+                        .conn
                         .query_row(
                             r#"
                             SELECT event_id
