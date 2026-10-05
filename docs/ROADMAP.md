@@ -134,11 +134,11 @@ Now established upstream:
 
 Next Ephemeris implementation:
 
-- richer per-field event-diff presentation and drill-down on top of the snapshot model
-- persistent refresh-failure history and explicit stale/health policy
+- broader non-Taria source refresh/history integration when those adapters exist
 
 Still later:
 
+- general-purpose provenance/history beyond the implemented Taria release snapshot model
 - additional Taria artifact families as Resourcearium evolves
 
 ## Immediate program priority
@@ -321,17 +321,20 @@ Implemented:
 - cross-projection deduplication before snapshot capture
 - snapshot capture inside the whole-release atomic transaction
 - canonical event add/remove diffs
-- moved-event detection from temporal-state changes
-- lifecycle-status change detection
+- rename detection with before/after titles
+- moved-event detection with before/after temporal values
+- lifecycle-status change detection with before/after status
 - newly-cancelled event detection
-- release-history UI summary for source and canonical-event changes
-- regression coverage for overlapping-source counts, snapshot deduplication, replay stability, and rollback
+- expandable release-history drill-down over canonical event changes
+- generic persistent refresh-attempt history in schema v13
+- success/failure/incomplete refresh records that survive release rollback
+- running versus interrupted refresh distinction
+- explicit Taria refresh-health states
+- visible 7-day Taria stale threshold
+- regression coverage for overlapping-source counts, snapshot deduplication, replay stability, rollback, refresh history, and health policy
 
 Remaining Phase 6 work:
 
-- richer changed-event drill-down beyond counts/IDs
-- persistent refresh failure/attempt history
-- explicit stale/health policy and thresholds
 - broader non-Taria source refresh/history integration
 
 ## Phase 7 - Rich temporal visualization
