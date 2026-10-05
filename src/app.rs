@@ -3348,10 +3348,7 @@ fn timeline_ticks(view: CalendarView, window: crate::calendar::DateWindow) -> Ve
             let mut year = window.start.year();
             let mut month = window.start.month();
 
-            loop {
-                let Some(date) = NaiveDate::from_ymd_opt(year, month, 1) else {
-                    break;
-                };
+            while let Some(date) = NaiveDate::from_ymd_opt(year, month, 1) {
                 if date >= window.end_exclusive {
                     break;
                 }
