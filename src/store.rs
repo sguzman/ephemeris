@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow};
@@ -263,6 +264,31 @@ impl TemporalStore {
             sources.push(decode_source(row)?);
         }
         Ok(sources)
+    }
+
+
+    pub fn source_event_counts(&self) -> anyhow::Result<HashMap<Uuid, u64>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT source_id, COUNT(*)
+            FROM temporal_events
+            WHERE source_id IS NOT NULL
+            GROUP BY source_id
+            "#,
+        )?;
+
+        let mut rows = stmt.query([])?;
+        let mut counts = HashMap::new();
+        while let Some(row) = rows.next()? {
+            let raw_source_id: String = row.get(0)?;
+            let count: i64 = row.get(1)?;
+            let source_id = Uuid::parse_str(&raw_source_id)
+                .with_context(|| format!("invalid source id in temporal_events: {raw_source_id}"))?;
+            let count =
+                u64::try_from(count).context("source event count cannot be represented as u64")?;
+            counts.insert(source_id, count);
+        }
+        Ok(counts)
     }
 
     pub fn list_saved_views(&self) -> anyhow::Result<Vec<SavedView>> {
@@ -3063,6 +3089,34 @@ mod tests {
             .events_in_window(month_start, month_end, chrono_tz::UTC, true)
             .expect("broad query");
         assert_eq!(broad.len(), 2);
+    }
+
+    #[test]
+    fn source_event_counts_cover_all_canonical_events() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let first =
+            TemporalSource::new("First source", SourceKind::Ics, SourceAuthority::Official);
+        let second =
+            TemporalSource::new("Second source", SourceKind::Taria, SourceAuthority::Derived);
+        store.upsert_source(&first).expect("first source");
+        store.upsert_source(&second).expect("second source");
+
+        let day = NaiveDate::from_ymd_opt(2026, 10, 4).expect("date");
+        for (index, source_id) in [first.id, first.id, second.id].into_iter().enumerate() {
+            let mut event = TemporalEvent::new(
+                format!("Event {index}"),
+                TimeSpec::DateOnly {
+                    start: day,
+                    end_exclusive: None,
+                },
+            );
+            event.source_id = Some(source_id);
+            store.upsert_event(&event).expect("event");
+        }
+
+        let counts = store.source_event_counts().expect("source event counts");
+        assert_eq!(counts.get(&first.id), Some(&2));
+        assert_eq!(counts.get(&second.id), Some(&1));
     }
 
     #[test]
