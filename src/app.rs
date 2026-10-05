@@ -16,7 +16,8 @@ use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
     RgbColor, SavedView, SortDirection, SortField, SortRule, TableColumn, TemporalKind, TextField,
-    TextOperator, matches_composed_or_overlay_with_membership,
+    TextOperator, matches_composed_or_overlay_with_saved_views_and_membership,
+    saved_view_reference_cycle,
 };
 use crate::state::PersistedUiState;
 use crate::store::{
@@ -603,6 +604,31 @@ impl EphemerisApp {
         self.mark_state_dirty();
     }
 
+    fn saved_view_cycle_error(&self, candidate: &SavedView) -> Option<String> {
+        let mut prospective = self.saved_views.clone();
+        if let Some(index) = prospective.iter().position(|view| view.id == candidate.id) {
+            prospective[index] = candidate.clone();
+        } else {
+            prospective.push(candidate.clone());
+        }
+
+        let cycle = saved_view_reference_cycle(&prospective, candidate.id)?;
+        let names = cycle
+            .into_iter()
+            .map(|id| {
+                prospective
+                    .iter()
+                    .find(|view| view.id == id)
+                    .map_or_else(|| id.to_string(), |view| view.name.clone())
+            })
+            .collect::<Vec<_>>();
+
+        Some(format!(
+            "Saved-view composition cycle rejected: {}",
+            names.join(" -> ")
+        ))
+    }
+
     fn save_current_view(&mut self) {
         let name = self.saved_view_name.trim();
         if name.is_empty() {
@@ -610,6 +636,12 @@ impl EphemerisApp {
         }
 
         let view = self.state.capture_saved_view(name);
+        if let Some(error) = self.saved_view_cycle_error(&view) {
+            self.last_message = None;
+            self.last_error = Some(error);
+            return;
+        }
+
         match self.store.upsert_saved_view(&view) {
             Ok(()) => {
                 self.state.active_saved_view_id = Some(view.id);
@@ -652,6 +684,12 @@ impl EphemerisApp {
         let mut replacement = self.state.capture_saved_view(name);
         replacement.id = id;
 
+        if let Some(error) = self.saved_view_cycle_error(&replacement) {
+            self.last_message = None;
+            self.last_error = Some(error);
+            return;
+        }
+
         match self.store.upsert_saved_view(&replacement) {
             Ok(()) => {
                 self.saved_views[index] = replacement;
@@ -693,10 +731,11 @@ impl EphemerisApp {
                 event
                     .source_id
                     .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-                    && matches_composed_or_overlay_with_membership(
+                    && matches_composed_or_overlay_with_saved_views_and_membership(
                         &query,
                         &self.state.composition_layers,
                         &self.state.overlays,
+                        &self.saved_views,
                         event,
                         &context,
                         self.taria_memberships.get(&event.id),
@@ -718,10 +757,11 @@ impl EphemerisApp {
                 event
                     .source_id
                     .is_none_or(|source_id| !self.state.hidden_source_ids.contains(&source_id))
-                    && matches_composed_or_overlay_with_membership(
+                    && matches_composed_or_overlay_with_saved_views_and_membership(
                         &query,
                         &self.state.composition_layers,
                         &self.state.overlays,
+                        &self.saved_views,
                         event,
                         &context,
                         self.taria_memberships.get(&event.id),
@@ -1250,6 +1290,12 @@ impl EphemerisApp {
         let mut remove_composition_layer = None;
         let mut swap_composition_layer = None;
         let composition_layer_count = self.state.composition_layers.len();
+        let active_saved_view_id = self.state.active_saved_view_id;
+        let saved_view_options = self
+            .saved_views
+            .iter()
+            .map(|view| (view.id, view.name.clone()))
+            .collect::<Vec<_>>();
 
         for (index, layer) in self.state.composition_layers.iter_mut().enumerate() {
             ui.group(|ui| {
@@ -1305,7 +1351,65 @@ impl EphemerisApp {
                     }
                 });
 
-                if layer.query.expression.is_none() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Operand");
+                    let selected_operand = layer
+                        .saved_view_id
+                        .and_then(|id| {
+                            saved_view_options
+                                .iter()
+                                .find(|(candidate_id, _)| *candidate_id == id)
+                                .map(|(_, name)| name.clone())
+                        })
+                        .unwrap_or_else(|| {
+                            if layer.saved_view_id.is_some() {
+                                "Missing saved view".to_string()
+                            } else {
+                                "Embedded query".to_string()
+                            }
+                        });
+
+                    egui::ComboBox::from_id_salt(("composition-operand", layer.id))
+                        .selected_text(selected_operand)
+                        .show_ui(ui, |ui| {
+                            presentation_changed |= ui
+                                .selectable_value(
+                                    &mut layer.saved_view_id,
+                                    None,
+                                    "Embedded query",
+                                )
+                                .changed();
+
+                            for (saved_view_id, name) in &saved_view_options {
+                                if Some(*saved_view_id) == active_saved_view_id {
+                                    continue;
+                                }
+                                presentation_changed |= ui
+                                    .selectable_value(
+                                        &mut layer.saved_view_id,
+                                        Some(*saved_view_id),
+                                        name,
+                                    )
+                                    .changed();
+                            }
+                        });
+                });
+
+                if let Some(saved_view_id) = layer.saved_view_id {
+                    if let Some((_, name)) = saved_view_options
+                        .iter()
+                        .find(|(candidate_id, _)| *candidate_id == saved_view_id)
+                    {
+                        ui.small(format!(
+                            "Uses the logical event set of saved view '{name}'. Its query, source visibility, composition, and overlays participate; presentation does not."
+                        ));
+                    } else {
+                        ui.colored_label(
+                            Color32::LIGHT_RED,
+                            "Referenced saved view is missing. This layer is a no-op until the reference resolves or is changed.",
+                        );
+                    }
+                } else if layer.query.expression.is_none() {
                     if layer.query.is_empty() {
                         ui.small("Empty query matches every visible-source event.");
                     } else {
@@ -1344,6 +1448,7 @@ impl EphemerisApp {
                 name: format!("Layer {}", self.state.composition_layers.len() + 1),
                 enabled: false,
                 operator: CompositionOperator::Union,
+                saved_view_id: None,
                 query: crate::query::EventQuery {
                     expression: Some(default_query_expr(QueryExprKind::Predicate)),
                     ..crate::query::EventQuery::default()
