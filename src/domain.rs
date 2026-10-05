@@ -622,7 +622,7 @@ impl TemporalEvent {
             return Ok(());
         };
 
-        self.validate_recurrence()?;
+        rule.validate()?;
 
         if let TimeSpec::Instant {
             source_timezone: Some(raw),
