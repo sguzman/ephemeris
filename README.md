@@ -40,7 +40,7 @@ Implemented:
 - Year, Quarter, Month, Week, and Day date ranges
 - Grid, Agenda, and dense Table as independent layouts
 - ordered user-defined Table columns with add, hide, reorder, and reset controls
-- source visibility controls
+- source visibility controls plus a source inspector with identity, authority, locator, refresh metadata, properties, and canonical event counts
 - text, domain, jurisdiction, event-type, institution, renderability, tag, and lifecycle-status filtering
 - nested AND / OR / NOT advanced queries with typed predicates and a recursive editor
 - timezone-aware temporal filters, including exact date overlap, precision classes, and relative day windows
@@ -63,6 +63,8 @@ Implemented:
 - background/nonblocking Taria release adoption using a dedicated SQLite worker connection
 - Resourcearium-compatible integrity validation: bootstrap content fingerprints and production file SHA-256
 - immutable Taria release metadata in SQLite
+- release-to-source projection associations and current/historical source posture
+- immutable per-release canonical event snapshots
 - immutable CalendarSet storage plus release-to-CalendarSet associations
 - CalendarSet projected-calendar and event-membership persistence
 - many-to-one upstream identity aliases across overlapping Taria projections
@@ -71,7 +73,8 @@ Implemented:
 - projected CalendarSet membership predicates
 - membership-aware saved views, overlays, color rules, and calendar algebra without copying membership into events
 - adopted-release coverage/status and per-bundle population posture in the Sources panel
-- local adopted-release history with previous-release bundle/calendar/member-event diffs
+- local adopted-release history with source/bundle/calendar/member-event diffs
+- canonical release-event diffs for added, removed, moved, status-changed, and newly-cancelled events
 - release-backed bundle/projected-calendar selectors in the recursive query editor
 - repeatable Taria re-import using stable source-record and upstream event identity
 - transactional source import reconciliation
@@ -81,7 +84,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation code checkpoint at 2026-10-05 is `0de0c447f0742de6d3ce8c0955b42d8a2a1d090d`: format, compile, strict Clippy, and **58 library tests** all pass. Documentation synchronization follows that green code checkpoint.
+The verified implementation code checkpoint at 2026-10-05 is `6f5612c7a6314deaf81a1ce06137abe61288b8c4`: format, compile, strict Clippy, and **60 library tests** all pass. Documentation synchronization and later source-history correctness refinements follow that green checkpoint.
 
 ## Product boundary
 
