@@ -23,9 +23,9 @@ cargo test
 
 At the hardened Phase 8 recurrence-selector checkpoint, all **141** library tests pass. Verified implementation code checkpoint: `732354bf5b0457c99093b7c1e118fce895682d22`, with format, check, strict Clippy, and tests all green.
 
-`main` is verified through DAILY BYMONTH at `fda7172a65917a74aca6eb30ab5dd93ac24d7c5a`: format, check, strict Clippy, and all **205** library tests pass in GitHub Actions. The preceding DAILY BYDAY checkpoint is independently verified at `69a32937c224649587c53d56c1d4b2af36fc272a` with **200** tests.
+`main` is verified through MONTHLY BYMONTH at `63f29dc8be3ab47ac05381afb416fc750a62ad80`: format, check, strict Clippy, and all **211** library tests pass in GitHub Actions. The preceding DAILY BYMONTH checkpoint is independently verified at `fda7172a65917a74aca6eb30ab5dd93ac24d7c5a` with **205** tests.
 
-A child staging slice at code/persistence checkpoint `2d6e2f39a35f904215eb17bfcd1761b0fe20c644` adds MONTHLY BYMONTH limiting and general monthly selector reachability, targeting **211** library tests. The reachability pass spans the finite 400-year / 4,800-month Gregorian cycle and accounts for BYMONTH, plain/ordinal BYDAY, BYMONTHDAY, and BYSETPOS candidate cardinality, closing permanently empty monthly-rule hangs. It is pending fresh CI verification before promotion.
+Monthly selector reachability spans the finite 400-year / 4,800-month Gregorian cycle and accounts for BYMONTH, plain/ordinal BYDAY, BYMONTHDAY, and BYSETPOS candidate cardinality, closing permanently empty monthly-rule hangs.
 
 ## Implemented architecture
 
