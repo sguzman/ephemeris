@@ -322,7 +322,7 @@ The Taria UI distinguishes:
 - interrupted;
 - unknown/malformed history.
 
-Current local Taria policy marks the refresh posture stale after **7 days without a successful refresh**. The threshold is displayed in the UI rather than hidden in implementation details.
+Current local Taria policy marks the refresh posture stale after **7 days without a successful refresh**. The threshold is displayed in the UI rather than hidden in implementation details. An upgraded pre-v13 database that already has an adopted release but no attempt history is treated as unknown/legacy history, not falsely as never refreshed.
 
 This health state describes Ephemeris's local release-consumption freshness. It does not replace Resourcearium/Taria's own upstream acquisition diagnostics or bundle coverage posture.
 
