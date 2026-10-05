@@ -21,7 +21,7 @@ use crate::query::{
 };
 use crate::state::PersistedUiState;
 use crate::store::{
-    TariaProjectedCalendarChoice, TariaReleaseDiff, TariaReleaseHistoryEntry,
+    SourceRefreshAttempt, TariaProjectedCalendarChoice, TariaReleaseDiff, TariaReleaseHistoryEntry,
     TariaReleaseStatusRecord, TemporalStore,
 };
 use crate::taria::import_reconciled_event_set_file;
@@ -45,7 +45,8 @@ pub struct EphemerisApp {
     taria_previous_release_diff: Option<TariaReleaseDiff>,
     taria_bundle_refs: Vec<String>,
     taria_calendar_choices: Vec<TariaProjectedCalendarChoice>,
-    taria_update_receiver: Option<Receiver<Result<TariaWorkspaceUpdateReport, String>>>,
+    source_refresh_attempts: Vec<SourceRefreshAttempt>,
+    taria_update_receiver: Option<(Uuid, Receiver<Result<TariaWorkspaceUpdateReport, String>>)>,
     last_message: Option<String>,
     last_error: Option<String>,
     dirty_state: bool,
@@ -89,6 +90,7 @@ impl EphemerisApp {
             taria_previous_release_diff: None,
             taria_bundle_refs: Vec::new(),
             taria_calendar_choices: Vec::new(),
+            source_refresh_attempts: Vec::new(),
             taria_update_receiver: None,
             last_message: None,
             last_error: None,
@@ -173,8 +175,22 @@ impl EphemerisApp {
 
         let configured = std::path::PathBuf::from(&self.state.taria_resourcearium_root);
         let channel = self.state.taria_channel.clone();
+        let refresh_target = format!("{channel} · {}", configured.display());
+        let attempt_id = match self
+            .store
+            .begin_refresh_attempt("taria_workspace", &refresh_target)
+        {
+            Ok(attempt_id) => attempt_id,
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to record Taria refresh attempt: {error:#}"));
+                return;
+            }
+        };
+
         let (sender, receiver) = mpsc::channel();
-        self.taria_update_receiver = Some(receiver);
+        self.taria_update_receiver = Some((attempt_id, receiver));
+        self.source_refresh_attempts = self.store.source_refresh_attempts(20).unwrap_or_default();
         self.last_message = Some(format!(
             "Updating Taria sources from local {channel} release..."
         ));
@@ -194,28 +210,41 @@ impl EphemerisApp {
 
     fn poll_taria_workspace_update(&mut self) {
         let result = match self.taria_update_receiver.as_ref() {
-            Some(receiver) => match receiver.try_recv() {
-                Ok(result) => Some(result),
+            Some((attempt_id, receiver)) => match receiver.try_recv() {
+                Ok(result) => Some((*attempt_id, result)),
                 Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => Some(Err(
-                    "Taria update worker exited without returning a result.".to_string(),
+                Err(TryRecvError::Disconnected) => Some((
+                    *attempt_id,
+                    Err("Taria update worker exited without returning a result.".to_string()),
                 )),
             },
             None => None,
         };
 
-        let Some(result) = result else {
+        let Some((attempt_id, result)) = result else {
             return;
         };
         self.taria_update_receiver = None;
 
         match result {
             Ok(report) => {
+                let summary = report.summary();
+                let history_error = self
+                    .store
+                    .finish_refresh_attempt(
+                        attempt_id,
+                        true,
+                        Some(&report.release_id),
+                        Some(&summary),
+                        None,
+                    )
+                    .err();
+
                 self.state.taria_resourcearium_root =
                     report.resourcearium_root.display().to_string();
                 self.state.taria_last_release_id = Some(report.release_id.clone());
                 self.state.taria_last_update_at = Some(Utc::now().to_rfc3339());
-                self.state.taria_last_update_summary = Some(report.summary());
+                self.state.taria_last_update_summary = Some(summary.clone());
 
                 let skipped = if report.skipped.is_empty() {
                     String::new()
@@ -224,16 +253,34 @@ impl EphemerisApp {
                 };
                 self.last_message = Some(format!(
                     "Updated Taria sources: {}{}",
-                    report.summary(),
+                    summary,
                     skipped
                 ));
-                self.last_error = None;
+                let history_error = history_error.map(|error| {
+                    format!(
+                        "Taria update succeeded, but refresh history could not be completed: {error:#}"
+                    )
+                });
                 self.mark_state_dirty();
                 self.reload_or_report();
+                if history_error.is_some() {
+                    self.last_error = history_error;
+                }
             }
             Err(error) => {
+                let history_error = self
+                    .store
+                    .finish_refresh_attempt(attempt_id, false, None, None, Some(&error))
+                    .err();
+                self.source_refresh_attempts =
+                    self.store.source_refresh_attempts(20).unwrap_or_default();
                 self.last_message = None;
-                self.last_error = Some(format!("Failed to update local Taria sources: {error}"));
+                self.last_error = Some(match history_error {
+                    Some(history_error) => format!(
+                        "Failed to update local Taria sources: {error}; refresh history also failed: {history_error:#}"
+                    ),
+                    None => format!("Failed to update local Taria sources: {error}"),
+                });
             }
         }
     }
@@ -309,6 +356,41 @@ impl EphemerisApp {
         if let Some(summary) = self.state.taria_last_update_summary.as_deref() {
             ui.small(summary);
         }
+
+        ui.collapsing(
+            format!("Refresh history ({})", self.source_refresh_attempts.len()),
+            |ui| {
+                if self.source_refresh_attempts.is_empty() {
+                    ui.small("No persisted refresh attempts yet.");
+                }
+
+                for attempt in &self.source_refresh_attempts {
+                    let status = match attempt.success {
+                        Some(true) => "success",
+                        Some(false) => "failed",
+                        None => "incomplete",
+                    };
+                    ui.strong(format!(
+                        "{} · {} · {}",
+                        status, attempt.refresh_kind, attempt.target
+                    ));
+                    ui.small(format!("Started {}", attempt.started_at));
+                    if let Some(completed_at) = attempt.completed_at.as_deref() {
+                        ui.small(format!("Completed {completed_at}"));
+                    }
+                    if let Some(release_id) = attempt.release_id.as_deref() {
+                        ui.small(format!("Release {release_id}"));
+                    }
+                    if let Some(summary) = attempt.summary.as_deref() {
+                        ui.small(summary);
+                    }
+                    if let Some(error) = attempt.error.as_deref() {
+                        ui.colored_label(Color32::LIGHT_RED, error);
+                    }
+                    ui.add_space(6.0);
+                }
+            },
+        );
 
         self.render_taria_release_status(ui);
     }
@@ -688,6 +770,7 @@ impl EphemerisApp {
         self.taria_calendar_choices = self.store.taria_projected_calendar_choices_for_release(
             self.state.taria_last_release_id.as_deref(),
         )?;
+        self.source_refresh_attempts = self.store.source_refresh_attempts(20)?;
         Ok(())
     }
 
