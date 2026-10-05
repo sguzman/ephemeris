@@ -25,7 +25,7 @@ At the hardened Phase 8 recurrence-selector checkpoint, all **141** library test
 
 The prepared Phase 8 selector stack through BYSETPOS, BYWEEKNO, and monthly plain BYDAY is attached to `main` at `86cc3dbf15548bfb41427f79d5c06e535a80b595` and targets **176** library tests. Fresh CI verification is pending; the 141-test checkpoint above remains the last verified gate until that run completes.
 
-A further staging slice at code checkpoint `3f356b7c745b0fc6ba8de6cb8e30041c6678454b` adds yearly plain BYDAY and targets **182** library tests. It remains unverified while GitHub-hosted Actions runners are degraded.
+A further staging slice at code checkpoint `a9a6c82077198171509e3021e26294bbbd097b53` adds yearly plain BYDAY, including plain+ordinal BYDAY union semantics when filtering BYYEARDAY candidates, and targets **183** library tests. It remains unverified while GitHub-hosted Actions runners are degraded.
 
 ## Implemented architecture
 
