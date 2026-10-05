@@ -233,10 +233,13 @@ Implemented temporal query predicates:
 Implemented dense table foundation:
 
 - reusable Table layout over the same event corpus
-- Taria-oriented core columns
+- configurable ordered visible-column schema over 16 event/presentation fields
+- add/hide/reorder/reset Table-column controls
 - direct row selection into the existing inspector
-- reuse of saved query, sort, grouping, and semantic color state
+- reuse of saved query, sort, grouping, semantic color, and Table-column state
 - true grouping partitions independent from sorting
+- transient UI-state persistence with backward-compatible defaults
+- SavedView + SQLite persistence through schema v10
 
 Implemented color-rule engine:
 
@@ -269,11 +272,10 @@ Implemented calendar-algebra foundation:
 - SQLite schema v8 persistence and migration
 - tests for ordering and disabled layers
 
-The composition-layer GUI editor is not implemented yet.
+The composition-layer GUI editor is implemented: layers can be enabled/disabled, renamed, assigned Union/Intersect/Subtract, reordered, deleted, and edited through the recursive query editor.
 
 Next programmable-view work:
 
-- user-defined Table columns
 - richer facets
 - saved-view inheritance with cycle-safe semantics
 
@@ -303,6 +305,7 @@ Implemented:
 - dense Table layout
 - true group partitioning in dense views
 - direct selection into the event inspector
+- ordered configurable Table columns with UI-state and SavedView persistence
 
 Goals:
 
@@ -310,7 +313,6 @@ Goals:
 - chronological stream
 - timeline
 - heatmap/density
-- user-defined Table columns
 - pivot/summary foundation
 
 ## Phase 8 - Advanced temporal semantics
