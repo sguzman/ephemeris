@@ -2295,9 +2295,10 @@ impl EphemerisApp {
                         .map_or_else(|| "unbounded".to_string(), |until| until.to_string()),
                 );
                 if !rule.by_weekday.is_empty() {
-                    let weekdays = rule
-                        .by_weekday
-                        .iter()
+                    let mut weekdays = rule.by_weekday.clone();
+                    weekdays.sort_by_key(|weekday| weekday.offset_from_monday());
+                    let weekdays = weekdays
+                        .into_iter()
                         .map(|weekday| weekday.short_label())
                         .collect::<Vec<_>>()
                         .join(", ");

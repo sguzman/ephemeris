@@ -3910,6 +3910,41 @@ mod tests {
     }
 
     #[test]
+    fn store_rejects_byday_on_non_weekly_recurrence() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule, RecurrenceWeekday};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Invalid BYDAY",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: None,
+            until: None,
+            by_weekday: vec![RecurrenceWeekday::Monday],
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let error = store
+            .upsert_event(&event)
+            .expect_err("non-weekly BYDAY must not persist");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event recurrence definition")
+        );
+        assert_eq!(store.event_count().expect("event count"), 0);
+    }
+
+    #[test]
     fn store_rejects_conflicting_recurrence_exception() {
         use crate::domain::{RecurrenceFrequency, RecurrenceOverride, RecurrenceRule};
 

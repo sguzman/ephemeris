@@ -1962,6 +1962,70 @@ mod tests {
     }
 
     #[test]
+    fn weekly_byday_integrates_with_exdate_and_moved_override() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let excluded = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("wed"),
+            end_exclusive: None,
+        };
+        let original = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 9).expect("fri"),
+            end_exclusive: None,
+        };
+        let replacement = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 10).expect("sat"),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Weekday exceptions",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            count: Some(4),
+            until: None,
+            by_weekday: vec![
+                RecurrenceWeekday::Monday,
+                RecurrenceWeekday::Wednesday,
+                RecurrenceWeekday::Friday,
+            ],
+            rdates: Vec::new(),
+            exdates: vec![excluded],
+            overrides: vec![RecurrenceOverride {
+                original: original.clone(),
+                replacement: Some(replacement.clone()),
+                cancelled: false,
+            }],
+        });
+
+        let occurrences = event
+            .occurrences_in_window(start, start + Duration::days(10), chrono_tz::UTC)
+            .expect("expand");
+
+        assert_eq!(
+            occurrences
+                .iter()
+                .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+                .collect::<Vec<_>>(),
+            vec![
+                NaiveDate::from_ymd_opt(2026, 10, 5).expect("mon1"),
+                NaiveDate::from_ymd_opt(2026, 10, 10).expect("moved"),
+                NaiveDate::from_ymd_opt(2026, 10, 12).expect("mon2"),
+            ]
+        );
+        let moved = occurrences
+            .iter()
+            .find(|occurrence| occurrence.original_time == original)
+            .expect("moved occurrence");
+        assert_eq!(moved.time, replacement);
+        assert!(moved.override_applied);
+    }
+
+    #[test]
     fn monthly_recurrence_skips_invalid_calendar_dates() {
         let start = NaiveDate::from_ymd_opt(2026, 1, 31).expect("start");
         let mut event = TemporalEvent::new(
