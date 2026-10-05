@@ -305,7 +305,7 @@ A saved view may contain ordered `CompositionLayer` objects. Each layer has:
 - name;
 - enabled state;
 - operator;
-- embedded `EventQuery`.
+- either an embedded `EventQuery` or a stable saved-view reference.
 
 Implemented operators:
 
@@ -352,9 +352,25 @@ Each layer can be:
 - assigned Union / Intersect / Subtract;
 - reordered;
 - deleted;
-- edited with the recursive query editor, including Taria bundle/calendar membership predicates.
+- switched between an embedded query and a referenced SavedView;
+- edited with the recursive query editor when using an embedded query, including Taria bundle/calendar membership predicates.
 
-Saved-view-reference composition/inheritance is also still future work and must be cycle-safe.
+### Saved-view references
+
+A saved-view reference means "reuse this saved view's logical event set as the operand." Evaluation recursively includes the referenced view's:
+
+- base `EventQuery`;
+- hidden-source selection;
+- ordered composition layers;
+- overlays.
+
+It intentionally does **not** inherit presentation state such as date-range navigation, layout, grouping, sorting, colors, Table columns, timezone display, or week-start behavior. Those remain owned by the outer/current view.
+
+References use stable SavedView UUIDs rather than names. Renaming a referenced view therefore does not break the relationship.
+
+Missing/deleted references are safe no-ops. The editor renders them explicitly as missing rather than silently falling back to the layer's embedded query.
+
+Cycles are forbidden as persisted structure. Save/update validation rejects direct and indirect cycles such as `A -> A` and `A -> B -> A`, and the SQLite persistence boundary enforces the same invariant for non-GUI callers. Runtime evaluation is defensive as well: if corrupted/external data nevertheless contains a cycle, the cyclic edge is skipped instead of recurring indefinitely.
 
 Overlays remain a distinct ergonomic feature for simultaneously rendering independently styled query layers.
 
