@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the hardened Phase 8 recurrence/BYDAY checkpoint, all **97** library tests pass. Verified implementation code checkpoint: `5fd4e719b06a5747462aae257e0c7e47a876affe`, with format, check, strict Clippy, and tests all green.
+At the hardened Phase 8 recurrence-selector checkpoint, all **107** library tests pass. Verified implementation code checkpoint: `7784abb738f015d46e103f9908e316aff01e9613`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
