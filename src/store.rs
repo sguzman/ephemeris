@@ -3230,6 +3230,7 @@ mod tests {
                 name: "Exclude cancelled".to_string(),
                 enabled: true,
                 operator: CompositionOperator::Subtract,
+                saved_view_id: Some(Uuid::new_v4()),
                 query: EventQuery {
                     status: Some(EventStatus::Cancelled),
                     ..EventQuery::default()
