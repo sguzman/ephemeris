@@ -23,6 +23,8 @@ cargo test
 
 At the hardened Phase 8 recurrence-selector checkpoint, all **141** library tests pass. Verified implementation code checkpoint: `732354bf5b0457c99093b7c1e118fce895682d22`, with format, check, strict Clippy, and tests all green.
 
+The prepared Phase 8 selector stack through BYSETPOS, BYWEEKNO, and monthly plain BYDAY is attached to `main` at `86cc3dbf15548bfb41427f79d5c06e535a80b595` and targets **176** library tests. Fresh CI verification is pending; the 141-test checkpoint above remains the last verified gate until that run completes.
+
 ## Implemented architecture
 
 ### Native application
