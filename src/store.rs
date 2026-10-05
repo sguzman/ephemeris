@@ -2175,6 +2175,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
             .transaction()
             .context("failed to start schema migration")?;
         create_schema_v2(&tx)?;
+        add_event_recurrence_column(&tx)?;
         create_saved_views_schema_current(&tx)?;
         create_taria_release_schema_current(&tx)?;
         create_refresh_history_schema_current(&tx)?;
@@ -2308,7 +2309,6 @@ fn create_schema_v2(conn: &Connection) -> anyhow::Result<()> {
             start_local TEXT,
             end_local TEXT,
             time_original_value TEXT,
-            recurrence_json TEXT,
 
             tags_json TEXT NOT NULL DEFAULT '[]',
             properties_json TEXT NOT NULL DEFAULT '{}',
@@ -2597,15 +2597,20 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> anyhow::Result<()> {
         .context("failed to commit v2 to v3 schema migration")
 }
 
-fn migrate_v13_to_v14(conn: &mut Connection) -> anyhow::Result<()> {
-    let tx = conn
-        .transaction()
-        .context("failed to start v13 to v14 migration")?;
-    tx.execute(
+fn add_event_recurrence_column(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute(
         "ALTER TABLE temporal_events ADD COLUMN recurrence_json TEXT",
         [],
     )
     .context("failed to add event recurrence definition")?;
+    Ok(())
+}
+
+fn migrate_v13_to_v14(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v13 to v14 migration")?;
+    add_event_recurrence_column(&tx)?;
     tx.pragma_update(None, "user_version", 14)
         .context("failed to set schema version 14")?;
     tx.commit()
