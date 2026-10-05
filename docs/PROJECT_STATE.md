@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the completed Phase 7 visualization-foundation checkpoint, all **72** library tests pass. Verified implementation code checkpoint: `c8d4f4917a0707a8bfd3de65b9ea4ddee4b1d88a`, with format, check, strict Clippy, and tests all green.
+At the first hardened Phase 8 recurrence-foundation checkpoint, all **82** library tests pass. Verified implementation code checkpoint: `92037a4f4ef385fe974d5bc50e3b242090436855`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
