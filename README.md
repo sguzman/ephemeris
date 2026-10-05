@@ -41,7 +41,7 @@ Implemented:
 - Grid, Agenda, and dense Table as independent layouts
 - ordered user-defined Table columns with add, hide, reorder, and reset controls
 - source visibility controls
-- text, domain, jurisdiction, and lifecycle-status filtering
+- text, domain, jurisdiction, event-type, institution, renderability, tag, and lifecycle-status filtering
 - nested AND / OR / NOT advanced queries with typed predicates and a recursive editor
 - timezone-aware temporal filters, including exact date overlap, precision classes, and relative day windows
 - independent true grouping and stable multi-key sorting
@@ -80,7 +80,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation code checkpoint at 2026-10-05 is `0535afb3047007c9c9f7f07eb574d5df3e1788e0`: format, compile, strict Clippy, and **52 library tests** all pass. Documentation synchronization follows that green code checkpoint.
+The verified implementation code checkpoint at 2026-10-05 is `29f79fcf6a040f9d5700bafd7b254d1eb65dcee4`: format, compile, strict Clippy, and **53 library tests** all pass. Documentation synchronization follows that green code checkpoint.
 
 ## Product boundary
 
