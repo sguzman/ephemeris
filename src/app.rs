@@ -3090,6 +3090,16 @@ struct ColorPresentation<'a> {
 }
 
 #[derive(Clone, Copy)]
+struct TimelineRenderContext<'a> {
+    view: CalendarView,
+    focus: NaiveDate,
+    timezone: Tz,
+    monday_start: bool,
+    selected: Option<Uuid>,
+    colors: ColorPresentation<'a>,
+}
+
+#[derive(Clone, Copy)]
 struct TableRenderContext<'a> {
     selected: Option<Uuid>,
     group_by: GroupBy,
@@ -3132,12 +3142,14 @@ fn render_calendar(
         CalendarLayout::Timeline => render_timeline(
             ui,
             events,
-            view,
-            focus,
-            timezone,
-            monday_start,
-            selected,
-            colors,
+            TimelineRenderContext {
+                view,
+                focus,
+                timezone,
+                monday_start,
+                selected,
+                colors,
+            },
         ),
         CalendarLayout::Table => render_table(
             ui,
@@ -3175,13 +3187,16 @@ struct TimelineSpan {
 fn render_timeline(
     ui: &mut egui::Ui,
     events: &[TemporalEvent],
-    view: CalendarView,
-    focus: NaiveDate,
-    timezone: Tz,
-    monday_start: bool,
-    selected: Option<Uuid>,
-    colors: ColorPresentation<'_>,
+    context: TimelineRenderContext<'_>,
 ) -> Option<CalendarAction> {
+    let TimelineRenderContext {
+        view,
+        focus,
+        timezone,
+        monday_start,
+        selected,
+        colors,
+    } = context;
     let window = window_for_view(view, focus, monday_start);
     let mut positioned = events
         .iter()
