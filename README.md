@@ -39,6 +39,7 @@ Implemented:
 - distinct temporal semantics for date-only, all-day, exact instants, floating/local time, month precision, year precision, and unresolved time
 - Year, Quarter, Month, Week, and Day date ranges
 - Grid, Agenda, and dense Table as independent layouts
+- ordered user-defined Table columns with add, hide, reorder, and reset controls
 - source visibility controls
 - text, domain, jurisdiction, and lifecycle-status filtering
 - nested AND / OR / NOT advanced queries with typed predicates and a recursive editor
@@ -48,7 +49,7 @@ Implemented:
 - embedded overlays with independent query/styling rules
 - ordered union / intersection / subtraction composition layers over the base query with a full GUI editor
 - durable named saved views stored in SQLite
-- saved views that retain query, source visibility, date range, layout, grouping, sort rules, color rules, composition layers, overlays, timezone, and week-start behavior
+- saved views that retain query, source visibility, date range, layout, grouping, sort rules, color rules, composition layers, overlays, ordered Table columns, timezone, and week-start behavior
 - event inspector with Taria identity/provenance details
 - separate unplaced/conflicted event surface
 - native persisted transient UI state
@@ -79,7 +80,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation milestone at 2026-10-04 passes the full CI gate at `9b4d8cde9b0c5c787ffe8935466abf455128228d`: format, compile, strict Clippy, and **52 library tests**.
+The verified implementation code checkpoint at 2026-10-05 is `0535afb3047007c9c9f7f07eb574d5df3e1788e0`: format, compile, strict Clippy, and **52 library tests** all pass. Documentation synchronization follows that green code checkpoint.
 
 ## Product boundary
 
