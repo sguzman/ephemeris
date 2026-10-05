@@ -3887,6 +3887,25 @@ mod tests {
     }
 
     #[test]
+    fn store_rejects_recurrence_on_unsupported_time_precision() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let mut event = TemporalEvent::new("Too coarse", TimeSpec::Year { year: 2026 });
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Yearly));
+
+        let error = store
+            .upsert_event(&event)
+            .expect_err("unsupported recurrence must not persist");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event recurrence definition")
+        );
+        assert_eq!(store.event_count().expect("event count"), 0);
+    }
+
+    #[test]
     fn recurring_events_are_retrievable_outside_base_window() {
         use crate::domain::{RecurrenceFrequency, RecurrenceRule};
 
