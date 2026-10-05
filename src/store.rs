@@ -3878,7 +3878,11 @@ mod tests {
         let error = store
             .upsert_event(&event)
             .expect_err("invalid recurrence must not persist");
-        assert!(error.to_string().contains("invalid event recurrence definition"));
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event recurrence definition")
+        );
         assert_eq!(store.event_count().expect("event count"), 0);
     }
 
