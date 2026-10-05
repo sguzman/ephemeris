@@ -3022,7 +3022,7 @@ fn recurrence_period_lower_bound_date(
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
 
     match rule.frequency {
-        RecurrenceFrequency::Daily => Ok(base_date.checked_add_days(Days::new(u64::from(steps))))
+        RecurrenceFrequency::Daily => Ok(base_date.checked_add_days(Days::new(u64::from(steps)))),
         RecurrenceFrequency::Weekly => {
             let base_weekday = u64::from(base_date.weekday().num_days_from_monday());
             let days_since_week_start =
