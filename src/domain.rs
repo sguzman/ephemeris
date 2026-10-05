@@ -2660,7 +2660,7 @@ mod tests {
             by_month: Vec::new(),
             by_month_day: vec![-1],
             rdates: Vec::new(),
-            exdates: vec![excluded],
+            exdates: vec![excluded.clone()],
             overrides: vec![RecurrenceOverride {
                 original: original.clone(),
                 replacement: Some(replacement.clone()),
