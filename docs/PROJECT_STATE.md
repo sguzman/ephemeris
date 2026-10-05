@@ -23,9 +23,9 @@ cargo test
 
 At the hardened Phase 8 recurrence-selector checkpoint, all **141** library tests pass. Verified implementation code checkpoint: `732354bf5b0457c99093b7c1e118fce895682d22`, with format, check, strict Clippy, and tests all green.
 
-`main` is verified through WEEKLY BYMONTH at `c0918d9fb23fae27c4c3dc769954158f37b6ae1e`: format, check, strict Clippy, and all **218** library tests pass in GitHub Actions. The preceding MONTHLY BYMONTH checkpoint is independently verified at `63f29dc8be3ab47ac05381afb416fc750a62ad80` with **211** tests.
+`main` is verified through finite YEARLY selector reachability at `65ec4329f43dec9234c709683ce211e911998197`: format, check, strict Clippy, and all **223** library tests pass in GitHub Actions. The preceding WEEKLY BYMONTH checkpoint is independently verified at `c0918d9fb23fae27c4c3dc769954158f37b6ae1e` with **218** tests.
 
-A child staging slice at code checkpoint `93d55264192b543893c962a37bea08783389131c` adds finite YEARLY selector reachability and targets **223** library tests. It scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives. The 223-test slice is pending fresh CI verification before promotion.
+YEARLY reachability scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
 ## Implemented architecture
 
