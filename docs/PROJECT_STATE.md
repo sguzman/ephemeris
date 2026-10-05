@@ -316,7 +316,6 @@ The current milestone is a foundation, not the finished calendar.
 Not yet implemented:
 
 - richer field-level release/event snapshot diffs beyond membership-level release history
-- saved-view-reference composition / inheritance with cycle-safe semantics
 - event-occurrence/recurrence engine
 - dedicated provenance/snapshot/history tables
 - snapshot diffs
@@ -325,6 +324,7 @@ Not yet implemented:
 - relations and collections
 - duplicate/entity resolution
 - timeline/heatmap/pivot views
+- responsive shell/layout hardening for constrained widths and side-panel collapse
 - reminders
 - ICS/webcal/CalDAV ingestion/export
 - full personal event editing
@@ -374,6 +374,16 @@ Composition layers are currently wired through:
 The composition model is intentionally event-native and does not copy membership.
 
 The GUI editor is now implemented: layers can be enabled/disabled, named, assigned Union/Intersect/Subtract, reordered, deleted, and edited with the same recursive query editor used elsewhere.
+
+Saved-view-reference composition is also implemented:
+
+- each composition layer may use either its embedded query or a stable SavedView UUID as its operand;
+- referenced views recursively contribute their query, hidden-source selection, composition layers, and overlays;
+- presentation state is intentionally not inherited;
+- renames do not break references because identity is UUID-based;
+- missing/deleted references are explicit safe no-ops;
+- direct and indirect cycles are rejected both by the application save/update path and at SQLite persistence;
+- runtime traversal also guards against cyclic external/corrupt data by skipping the cyclic edge.
 
 ### Overlays
 
@@ -444,7 +454,7 @@ Implemented:
 - SavedView capture/apply persistence;
 - SQLite saved-view persistence through schema v10 and the v9 -> v10 migration.
 
-The next programmable-view slice is saved-view inheritance/composition with cycle-safe semantics.
+The programmable-view inheritance/composition slice is complete. The next major implementation boundary is Phase 6 source-management/history hardening, while the severe constrained-width UI/layout failure remains explicitly deferred layout debt.
 
 ## Rule going forward
 
