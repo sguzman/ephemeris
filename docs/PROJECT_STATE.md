@@ -86,14 +86,14 @@ Implemented:
 - optional occurrence count;
 - optional inclusive civil-date `until` bound;
 - daily BYDAY filtering over active interval dates, with skipped weekdays not consuming COUNT and unreachable interval/weekday cycles terminating without hanging;
-- weekly multi-day BYDAY selection with duplicate/non-weekly validation;
+- weekly multi-day BYDAY selection with duplicate weekday validation;
 - explicit WKST recurrence-week anchoring for weekly BYDAY, independent from the user's display-week preference;
 - chronological weekday generation within each WKST-anchored active recurrence week, with first-week candidates before DTSTART omitted;
 - plain monthly BYDAY selection, expanding every matching weekday inside each active month while leaving WKST semantically inactive for monthly rules;
-- signed monthly BYMONTHDAY selection for civil days `-31..=-1` and `1..=31`, with zero/duplicate/range/non-monthly validation;
+- signed monthly BYMONTHDAY selection for civil days `-31..=-1` and `1..=31`, with zero/duplicate/range validation;
 - positive BYMONTHDAY values count from month start, negative values count backward from month end (`-1` = last day), and selector aliases resolving to the same civil date are deduplicated;
 - chronological resolved-date generation within each active month, with first-month candidates before DTSTART omitted and impossible civil dates skipped;
-- monthly ordinal BYDAY selection for first-through-fifth or last-through-fifth-from-last weekdays (`±1..±5`), with zero/out-of-range/non-monthly/duplicate validation;
+- monthly ordinal BYDAY selection for first-through-fifth or last-through-fifth-from-last weekdays (`±1..±5`), with zero/out-of-range/duplicate validation;
 - yearly ordinal BYDAY is context-aware: with BYMONTH it remains month-scoped at `±1..±5`; without BYMONTH it resolves the nth weekday of the whole recurrence year at `±1..±53`; numeric BYDAY remains invalid with BYWEEKNO;
 - ordinal weekday candidates resolved chronologically inside each active month, with missing fifth weekdays skipped and first-month candidates before DTSTART omitted;
 - plain and ordinal monthly BYDAY selectors form one resolved BYDAY civil-date union; when BYMONTHDAY is present it filters that union before BYSETPOS/COUNT/EXDATE/override processing;
