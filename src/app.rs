@@ -2370,6 +2370,16 @@ impl EphemerisApp {
                     };
                     inspector_row(ui, label, &selectors);
                 }
+                if !rule.by_hour.is_empty() {
+                    let mut hours = rule.by_hour.clone();
+                    hours.sort_unstable();
+                    let hours = hours
+                        .into_iter()
+                        .map(|hour| format!("{hour:02}:00"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    inspector_row(ui, "Hours", &hours);
+                }
                 if !rule.by_set_pos.is_empty() {
                     let mut positions = rule.by_set_pos.clone();
                     positions.sort_unstable();
