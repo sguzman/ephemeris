@@ -1092,6 +1092,9 @@ impl EphemerisApp {
             if input.key_pressed(egui::Key::A) {
                 target_layout = Some(CalendarLayout::Agenda);
             }
+            if input.key_pressed(egui::Key::C) {
+                target_layout = Some(CalendarLayout::CompactAgenda);
+            }
             if input.key_pressed(egui::Key::S) {
                 target_layout = Some(CalendarLayout::Stream);
             }
@@ -3138,6 +3141,9 @@ fn render_calendar(
         CalendarLayout::Agenda => {
             render_agenda(ui, events, timezone, selected, group_by, sort_rules, colors)
         }
+        CalendarLayout::CompactAgenda => {
+            render_compact_agenda(ui, events, timezone, selected, group_by, sort_rules, colors)
+        }
         CalendarLayout::Stream => render_stream(ui, events, timezone, selected, colors),
         CalendarLayout::Timeline => render_timeline(
             ui,
@@ -3538,6 +3544,72 @@ fn render_stream(
             });
         });
     }
+
+    action
+}
+
+fn render_compact_agenda(
+    ui: &mut egui::Ui,
+    events: &[TemporalEvent],
+    timezone: Tz,
+    selected: Option<Uuid>,
+    group_by: GroupBy,
+    sort_rules: &[SortRule],
+    colors: ColorPresentation<'_>,
+) -> Option<CalendarAction> {
+    let groups = grouped_events(events, timezone, group_by, sort_rules);
+    let mut action = None;
+
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 1.0;
+
+        for (group, group_events) in groups {
+            if let Some(group) = group {
+                ui.add_space(3.0);
+                ui.small(RichText::new(group).strong());
+            }
+
+            for event in group_events {
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        [82.0, 18.0],
+                        egui::Label::new(
+                            RichText::new(table_date_label(event, timezone))
+                                .monospace()
+                                .color(Color32::GRAY),
+                        ),
+                    );
+                    ui.add_sized(
+                        [72.0, 18.0],
+                        egui::Label::new(
+                            RichText::new(event.display_time_label(timezone))
+                                .monospace()
+                                .color(Color32::GRAY),
+                        ),
+                    );
+
+                    if ui
+                        .selectable_label(
+                            selected == Some(event.id),
+                            RichText::new(&event.normalized_title)
+                                .color(event_color(event, colors))
+                                .strong(),
+                        )
+                        .clicked()
+                    {
+                        action = Some(CalendarAction::Select(event.id));
+                    }
+
+                    if let Some(domain) = event.domain.as_deref() {
+                        ui.small(domain);
+                    }
+                    if let Some(jurisdiction) = event.jurisdiction.as_deref() {
+                        ui.small(format!("· {jurisdiction}"));
+                    }
+                });
+            }
+        }
+    });
 
     action
 }
