@@ -31,10 +31,14 @@ Implemented convenience controls:
 - free-text search;
 - domain;
 - jurisdiction;
+- event type;
+- institution;
+- renderability;
+- exact tag membership;
 - lifecycle status;
 - source visibility.
 
-Simple facets are ANDed with the advanced expression tree.
+Simple facets are ANDed with the advanced expression tree. Their selectable values are derived from the loaded canonical event corpus. Event type, institution, renderability, and tag were added without a schema migration because `EventQuery` is serialized inside existing UI-state and SavedView JSON; serde defaults keep older state/query payloads compatible.
 
 ### Advanced expression tree
 
