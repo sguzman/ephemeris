@@ -82,8 +82,10 @@ Implemented:
 - optional occurrence count;
 - optional inclusive civil-date `until` bound;
 - weekly multi-day BYDAY selection with duplicate/non-weekly validation;
-- Monday-anchored recurrence weeks for the current BYDAY implementation, independent from the user's display-week preference;
-- chronological weekday generation within each active recurrence week, with first-week candidates before DTSTART omitted;
+- explicit WKST recurrence-week anchoring for weekly BYDAY, independent from the user's display-week preference;
+- chronological weekday generation within each WKST-anchored active recurrence week, with first-week candidates before DTSTART omitted;
+- positive monthly BYMONTHDAY selection for civil days 1-31, with duplicate/range/non-monthly validation;
+- chronological day-of-month generation within each active month, with first-month candidates before DTSTART omitted and impossible civil dates skipped;
 - deterministic occurrence UUID derived from the canonical event and original recurrence slot;
 - RDATE additions and EXDATE exclusions stored inside the existing schema-v14 recurrence JSON;
 - moved occurrence overrides that retain the original occurrence UUID/lineage while rendering at the replacement time;
@@ -95,11 +97,11 @@ Implemented:
 - preservation of all-day/range duration;
 - exact/source-timezone recurrence by source wall clock across DST;
 - invalid calendar dates in monthly/yearly series are skipped rather than coerced;
-- recurrence definitions, BYDAY frequency/duplicate constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
+- recurrence definitions, BYDAY/WKST/BYMONTHDAY selector constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: broader RRULE dimensions, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence exception payloads.
+Still ahead in this recurrence layer: broader RRULE dimensions (for example BYMONTH, negative BYMONTHDAY, and ordinal/month-oriented BYDAY), richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 

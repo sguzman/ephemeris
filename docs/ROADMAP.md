@@ -362,14 +362,15 @@ The roadmap can now move to Phase 8 temporal semantics. Future visual variants (
 
 ## Phase 8 - Advanced temporal semantics
 
-Status: **active - recurrence exceptions implemented**
+Status: **active - recurrence selectors and exceptions implemented**
 
 Implemented recurrence foundation:
 
 - recurrence definitions persisted on canonical events in schema v14
 - daily / weekly / monthly / yearly frequency
 - interval, count, and inclusive-until bounds
-- weekly multi-day BYDAY selection with Monday-anchored recurrence weeks
+- weekly multi-day BYDAY selection with explicit WKST recurrence-week anchoring
+- positive monthly BYMONTHDAY selection for days 1-31, skipping impossible civil dates
 - active-window occurrence expansion rather than eager infinite materialization
 - deterministic occurrence identity and canonical-event lineage
 - date-only / all-day / floating / exact-time recurrence
@@ -385,7 +386,7 @@ Implemented recurrence foundation:
 
 Next Phase 8 work:
 
-- broader RRULE dimensions (including explicit WKST/month selectors) and recurrence-exception interoperability
+- broader RRULE dimensions (including BYMONTH, negative BYMONTHDAY, ordinal/month-oriented BYDAY, and selector combinations) plus recurrence-exception interoperability
 - richer recurrence/exception authoring and editing
 - relations
 - collections/sequences
