@@ -337,6 +337,10 @@ mod tests {
     fn applying_saved_view_restores_query_and_presentation() {
         let mut state = PersistedUiState {
             domain_filter: Some("elections".to_string()),
+            event_type_filter: Some("election".to_string()),
+            institution_filter: Some("California Secretary of State".to_string()),
+            renderability_filter: Some("ready".to_string()),
+            tag_filter: Some("general".to_string()),
             calendar_view: CalendarView::Year,
             calendar_layout: CalendarLayout::Agenda,
             query_expression: Some(QueryExpr::Predicate(crate::query::QueryPredicate::Exists {
@@ -355,6 +359,13 @@ mod tests {
         state.apply_saved_view(&view);
 
         assert_eq!(state.domain_filter.as_deref(), Some("elections"));
+        assert_eq!(state.event_type_filter.as_deref(), Some("election"));
+        assert_eq!(
+            state.institution_filter.as_deref(),
+            Some("California Secretary of State")
+        );
+        assert_eq!(state.renderability_filter.as_deref(), Some("ready"));
+        assert_eq!(state.tag_filter.as_deref(), Some("general"));
         assert_eq!(state.calendar_view, CalendarView::Year);
         assert_eq!(state.calendar_layout, CalendarLayout::Agenda);
         assert_eq!(state.group_by, GroupBy::Domain);
