@@ -1035,11 +1035,7 @@ impl EphemerisApp {
             )
             .show_ui(ui, |ui| {
                 filters_changed |= ui
-                    .selectable_value(
-                        &mut self.state.event_type_filter,
-                        None,
-                        "All event types",
-                    )
+                    .selectable_value(&mut self.state.event_type_filter, None, "All event types")
                     .changed();
                 for event_type in event_types {
                     filters_changed |= ui
@@ -1067,11 +1063,7 @@ impl EphemerisApp {
             )
             .show_ui(ui, |ui| {
                 filters_changed |= ui
-                    .selectable_value(
-                        &mut self.state.institution_filter,
-                        None,
-                        "All institutions",
-                    )
+                    .selectable_value(&mut self.state.institution_filter, None, "All institutions")
                     .changed();
                 for institution in institutions {
                     filters_changed |= ui
@@ -1130,11 +1122,7 @@ impl EphemerisApp {
                     .changed();
                 for tag in tags {
                     filters_changed |= ui
-                        .selectable_value(
-                            &mut self.state.tag_filter,
-                            Some(tag.clone()),
-                            tag,
-                        )
+                        .selectable_value(&mut self.state.tag_filter, Some(tag.clone()), tag)
                         .changed();
                 }
             });
