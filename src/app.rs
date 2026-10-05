@@ -16,8 +16,7 @@ use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
     RgbColor, SavedView, SortDirection, SortField, SortRule, TableColumn, TemporalKind, TextField,
-    TextOperator,
-    matches_composed_or_overlay_with_membership,
+    TextOperator, matches_composed_or_overlay_with_membership,
 };
 use crate::state::PersistedUiState;
 use crate::store::{
@@ -1376,7 +1375,8 @@ impl EphemerisApp {
                 for (index, column) in self.state.table_columns.iter().copied().enumerate() {
                     ui.horizontal(|ui| {
                         ui.label(column.label());
-                        if index > 0 && ui.small_button("↑").on_hover_text("Move left").clicked() {
+                        if index > 0 && ui.small_button("↑").on_hover_text("Move left").clicked()
+                        {
                             swap_column = Some((index, index - 1));
                         }
                         if index + 1 < column_count
@@ -2644,7 +2644,9 @@ fn render_table(
                             TableColumn::Title => RichText::new(text)
                                 .color(event_color(event, colors))
                                 .strong(),
-                            TableColumn::Date | TableColumn::Time => RichText::new(text).monospace(),
+                            TableColumn::Date | TableColumn::Time => {
+                                RichText::new(text).monospace()
+                            }
                             _ => RichText::new(text),
                         };
 
@@ -2676,10 +2678,7 @@ fn table_cell_text(event: &TemporalEvent, timezone: Tz, column: TableColumn) -> 
             .jurisdiction
             .clone()
             .unwrap_or_else(|| "—".to_string()),
-        TableColumn::Institution => event
-            .institution
-            .clone()
-            .unwrap_or_else(|| "—".to_string()),
+        TableColumn::Institution => event.institution.clone().unwrap_or_else(|| "—".to_string()),
         TableColumn::Status => event.status.as_str().to_string(),
         TableColumn::Importance => event
             .importance
