@@ -2325,6 +2325,20 @@ impl EphemerisApp {
                         .join(", ");
                     inspector_row(ui, "Month days", &month_days);
                 }
+                if !rule.by_month_weekday.is_empty() {
+                    let mut selectors = rule.by_month_weekday.clone();
+                    selectors.sort_by_key(|selector| {
+                        (selector.ordinal, selector.weekday.offset_from_monday())
+                    });
+                    let selectors = selectors
+                        .into_iter()
+                        .map(|selector| {
+                            format!("{} {}", selector.ordinal, selector.weekday.short_label())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    inspector_row(ui, "Month weekdays", &selectors);
+                }
                 inspector_row(ui, "RDATE additions", &rule.rdates.len().to_string());
                 inspector_row(ui, "EXDATE exclusions", &rule.exdates.len().to_string());
                 inspector_row(
