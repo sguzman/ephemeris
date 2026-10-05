@@ -7,15 +7,17 @@ pub enum CalendarLayout {
     #[default]
     Grid,
     Agenda,
+    CompactAgenda,
     Stream,
     Timeline,
     Table,
 }
 
 impl CalendarLayout {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Grid,
         Self::Agenda,
+        Self::CompactAgenda,
         Self::Stream,
         Self::Timeline,
         Self::Table,
@@ -25,6 +27,7 @@ impl CalendarLayout {
         match self {
             Self::Grid => "Grid",
             Self::Agenda => "Agenda",
+            Self::CompactAgenda => "Compact",
             Self::Stream => "Stream",
             Self::Timeline => "Timeline",
             Self::Table => "Table",
@@ -35,6 +38,7 @@ impl CalendarLayout {
         match self {
             Self::Grid => "grid",
             Self::Agenda => "agenda",
+            Self::CompactAgenda => "compact_agenda",
             Self::Stream => "stream",
             Self::Timeline => "timeline",
             Self::Table => "table",
@@ -44,6 +48,7 @@ impl CalendarLayout {
     pub fn parse(raw: &str) -> Self {
         match raw {
             "agenda" => Self::Agenda,
+            "compact_agenda" => Self::CompactAgenda,
             "stream" => Self::Stream,
             "timeline" => Self::Timeline,
             "table" => Self::Table,
