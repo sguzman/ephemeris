@@ -25,7 +25,7 @@ At the hardened Phase 8 recurrence-selector checkpoint, all **141** library test
 
 `main` is verified through MONTHLY BYMONTH at `63f29dc8be3ab47ac05381afb416fc750a62ad80`: format, check, strict Clippy, and all **211** library tests pass in GitHub Actions. The preceding DAILY BYMONTH checkpoint is independently verified at `fda7172a65917a74aca6eb30ab5dd93ac24d7c5a` with **205** tests.
 
-Monthly selector reachability spans the finite 400-year / 4,800-month Gregorian cycle and accounts for BYMONTH, plain/ordinal BYDAY, BYMONTHDAY, and BYSETPOS candidate cardinality, closing permanently empty monthly-rule hangs.
+A child staging slice at code/persistence checkpoint `47e319bf800508fbb038b69c73e31c56cde2ab9f` adds WEEKLY BYMONTH and targets **218** library tests. Weekly reachability spans the finite 400-year / 20,871-week Gregorian cycle and accounts for BYMONTH, BYDAY, and BYSETPOS candidate cardinality; DAILY reachability now also rejects permanently impossible BYSETPOS cardinalities. The 218-test slice is pending fresh CI verification before promotion.
 
 ## Implemented architecture
 
@@ -88,6 +88,7 @@ Implemented:
 - daily BYDAY filtering over active interval dates, with skipped weekdays not consuming COUNT and unreachable interval/weekday cycles terminating without hanging;
 - daily BYMONTH limiting over active interval dates, intersecting with daily BYDAY when both are present and using a 400-year Gregorian-cycle reachability guard for permanently empty selector/interval combinations;
 - monthly BYMONTH limiting over active recurrence months, with a 4,800-month Gregorian-cycle reachability guard that also detects permanently empty monthly BYDAY/BYMONTHDAY/ordinal-BYDAY/BYSETPOS combinations;
+- weekly BYMONTH limiting over generated weekly dates, applied after BYDAY expansion and before BYSETPOS, with a 20,871-week Gregorian-cycle reachability guard;
 - weekly multi-day BYDAY selection with duplicate weekday validation;
 - explicit WKST recurrence-week anchoring for weekly BYDAY, independent from the user's display-week preference;
 - chronological weekday generation within each WKST-anchored active recurrence week, with first-week candidates before DTSTART omitted;
@@ -100,7 +101,7 @@ Implemented:
 - ordinal weekday candidates resolved chronologically inside each active month, with missing fifth weekdays skipped and first-month candidates before DTSTART omitted;
 - plain and ordinal monthly BYDAY selectors form one resolved BYDAY civil-date union; when BYMONTHDAY is present it filters that union before BYSETPOS/COUNT/EXDATE/override processing;
 - the canonical last-weekday rule (`MO,TU,WE,TH,FR` + `BYSETPOS=-1`) is therefore representable directly;
-- positive BYMONTH selection for months 1-12 in DAILY, MONTHLY, and YEARLY recurrence: DAILY/MONTHLY limit the active cadence, while YEARLY expands the active month set; duplicate/range/unsupported-frequency validation remains explicit;
+- positive BYMONTH selection for months 1-12 in all supported frequencies: DAILY/WEEKLY/MONTHLY limit generated cadence candidates, while YEARLY expands the active month set; duplicate and range validation remains explicit;
 - yearly plain BYDAY expansion for every selected weekday across the active recurrence year, or only inside selected BYMONTH months when BYMONTH is present;
 - signed yearly BYMONTHDAY expansion across every month when BYMONTH is absent, or across selected months when BYMONTH is present, with positive or month-end-relative day selectors;
 - yearly BYMONTH + ordinal BYDAY composition, where ordinal weekdays are resolved inside each selected month; without BYMONTH, the same persisted ordinal selector resolves against the whole recurrence year;
@@ -114,7 +115,7 @@ Implemented:
 - signed yearly BYYEARDAY selection for `-366..=-1` and `1..=366`, with zero/out-of-range/duplicate/non-yearly validation;
 - positive BYYEARDAY values count from January 1 and negative values count backward from year-end (`-1` = December 31); day 366 is skipped in non-leap years rather than coerced;
 - when BYYEARDAY is combined with BYMONTH, plain/ordinal BYDAY, and existing month-scoped selectors, those selectors filter the resolved year-day set before COUNT/EXDATE/override processing; plain and ordinal BYDAY forms remain one unioned BYDAY family;
-- generic signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied to each recurrence interval's fully resolved BY-selector candidate set before COUNT is consumed;
+- generic signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied to each recurrence interval's fully resolved BY-selector candidate set before COUNT is consumed; DAILY/WEEKLY/MONTHLY reachability checks account for candidate-set cardinality so permanently impossible positions terminate;
 - BYSETPOS requires at least one supported BY selector, rejects zero/out-of-range/duplicate positions, ignores positions outside the current candidate-set size, and deduplicates alias positions that resolve to the same slot;
 - BYSETPOS is shared by visible expansion and override-target validation, preserving original-slot identity and exception semantics;
 - first-year candidates before DTSTART are omitted, impossible civil dates/missing fifth weekdays are skipped, and BYMONTH alone continues to preserve DTSTART's civil day where valid;
@@ -133,7 +134,7 @@ Implemented:
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond daily/weekly/monthly/yearly plain BYDAY, daily/monthly/yearly BYMONTH, month/year-scoped ordinal BYDAY, monthly/yearly BYMONTHDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond daily/weekly/monthly/yearly plain BYDAY, all-frequency BYMONTH, month/year-scoped ordinal BYDAY, monthly/yearly BYMONTHDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
