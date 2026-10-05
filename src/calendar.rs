@@ -8,17 +8,25 @@ pub enum CalendarLayout {
     Grid,
     Agenda,
     Stream,
+    Timeline,
     Table,
 }
 
 impl CalendarLayout {
-    pub const ALL: [Self; 4] = [Self::Grid, Self::Agenda, Self::Stream, Self::Table];
+    pub const ALL: [Self; 5] = [
+        Self::Grid,
+        Self::Agenda,
+        Self::Stream,
+        Self::Timeline,
+        Self::Table,
+    ];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Grid => "Grid",
             Self::Agenda => "Agenda",
             Self::Stream => "Stream",
+            Self::Timeline => "Timeline",
             Self::Table => "Table",
         }
     }
@@ -28,6 +36,7 @@ impl CalendarLayout {
             Self::Grid => "grid",
             Self::Agenda => "agenda",
             Self::Stream => "stream",
+            Self::Timeline => "timeline",
             Self::Table => "table",
         }
     }
@@ -36,6 +45,7 @@ impl CalendarLayout {
         match raw {
             "agenda" => Self::Agenda,
             "stream" => Self::Stream,
+            "timeline" => Self::Timeline,
             "table" => Self::Table,
             _ => Self::Grid,
         }
