@@ -316,6 +316,11 @@ fn import_bootstrap_shard(
             IntegrityMode::ContentFingerprint,
         )?;
         let imported = import_compact_reconciled_event_index_file(store, &path, Some(&bundle_ref))?;
+        store.link_taria_release_source(
+            &report.release_id,
+            imported.source_id,
+            &imported.projection_ref,
+        )?;
         merge_import_report(report, &imported);
         report.imported_artifacts += 1;
         true
@@ -329,6 +334,11 @@ fn import_bootstrap_shard(
             IntegrityMode::ContentFingerprint,
         )?;
         let imported = import_reconciled_event_set_file(store, &path)?;
+        store.link_taria_release_source(
+            &report.release_id,
+            imported.source_id,
+            &imported.projection_ref,
+        )?;
         merge_import_report(report, &imported);
         report.imported_artifacts += 1;
         true
@@ -379,6 +389,11 @@ fn import_production_artifact(
 
     let imported = import_reconciled_event_set_file(store, &path)
         .with_context(|| format!("failed to import production artifact {artifact_id}"))?;
+    store.link_taria_release_source(
+        &report.release_id,
+        imported.source_id,
+        &imported.projection_ref,
+    )?;
     merge_import_report(report, &imported);
     report.imported_artifacts += 1;
 
