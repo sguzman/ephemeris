@@ -9175,4 +9175,372 @@ mod tests {
             occurrence_identity(event.id, &original).expect("stable identity")
         );
     }
+
+    #[test]
+    fn byhour_validation_rejects_invalid_and_duplicate_hours() {
+        let mut valid = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        valid.by_hour = vec![9, 17];
+        valid.validate().expect("valid BYHOUR");
+
+        let mut invalid = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        invalid.by_hour = vec![24];
+        assert!(matches!(
+            invalid.validate(),
+            Err(RecurrenceError::InvalidByHour(24))
+        ));
+
+        let mut duplicate = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        duplicate.by_hour = vec![9, 9];
+        assert!(matches!(
+            duplicate.validate(),
+            Err(RecurrenceError::DuplicateByHour(9))
+        ));
+    }
+
+    #[test]
+    fn byhour_rejects_date_only_recurrence_base() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Date-only BYHOUR",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.by_hour = vec![9];
+        event.recurrence = Some(rule);
+
+        assert!(matches!(
+            event.validate_recurrence(),
+            Err(RecurrenceError::ByHourRequiresDateTime("date_only"))
+        ));
+    }
+
+    #[test]
+    fn floating_daily_byhour_expands_and_filters_first_period() {
+        let start = NaiveDateTime::parse_from_str(
+            "2026-10-05T14:30:00",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        .expect("start");
+        let mut event = TemporalEvent::new(
+            "Morning and evening",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: Some(3),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            by_hour: vec![9, 17],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            starts,
+            vec![
+                "2026-10-05 17:30",
+                "2026-10-06 09:30",
+                "2026-10-06 17:30",
+            ]
+        );
+    }
+
+    #[test]
+    fn exact_daily_byhour_preserves_duration_and_wall_clock_across_dst() {
+        let start_utc = DateTime::parse_from_rfc3339("2026-03-07T14:30:00Z")
+            .expect("start")
+            .with_timezone(&Utc);
+        let end_utc = DateTime::parse_from_rfc3339("2026-03-07T15:45:00Z")
+            .expect("end")
+            .with_timezone(&Utc);
+        let mut event = TemporalEvent::new(
+            "Timed BYHOUR",
+            TimeSpec::Instant {
+                start_utc,
+                end_utc: Some(end_utc),
+                source_timezone: Some("America/New_York".to_string()),
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: Some(4),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            by_hour: vec![9, 17],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let zone = chrono_tz::America::New_York;
+        let occurrences = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 3, 7).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 3, 9).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        let local_starts = occurrences
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Instant { start_utc, .. } => {
+                    start_utc.with_timezone(&zone).format("%Y-%m-%d %H:%M").to_string()
+                }
+                other => panic!("expected instant, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            local_starts,
+            vec![
+                "2026-03-07 14:30",
+                "2026-03-07 17:30",
+                "2026-03-08 09:30",
+                "2026-03-08 17:30",
+            ]
+        );
+
+        for occurrence in &occurrences {
+            match &occurrence.time {
+                TimeSpec::Instant {
+                    start_utc,
+                    end_utc: Some(end_utc),
+                    ..
+                } => assert_eq!(*end_utc - *start_utc, Duration::minutes(75)),
+                other => panic!("expected bounded instant, got {other:?}"),
+            }
+        }
+        match &occurrences[2].time {
+            TimeSpec::Instant { start_utc, .. } => {
+                assert_eq!(start_utc.format("%H:%M").to_string(), "13:30");
+            }
+            other => panic!("expected instant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn byhour_expands_before_bysetpos() {
+        let start = NaiveDateTime::parse_from_str(
+            "2026-10-05T08:15:00",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        .expect("start");
+        let mut event = TemporalEvent::new(
+            "Second hour each day",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: Some(2),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            by_hour: vec![9, 17],
+            by_set_pos: vec![2],
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(starts, vec!["2026-10-05 17:15", "2026-10-06 17:15"]);
+    }
+
+    #[test]
+    fn byhour_override_targeting_distinguishes_same_day_hours() {
+        let start = NaiveDateTime::parse_from_str(
+            "2026-10-05T08:00:00",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        .expect("start");
+        let original = TimeSpec::Floating {
+            start: NaiveDateTime::parse_from_str(
+                "2026-10-05T17:00:00",
+                "%Y-%m-%dT%H:%M:%S",
+            )
+            .unwrap(),
+            end: None,
+            source_timezone: None,
+        };
+        let replacement = TimeSpec::Floating {
+            start: NaiveDateTime::parse_from_str(
+                "2026-10-05T18:00:00",
+                "%Y-%m-%dT%H:%M:%S",
+            )
+            .unwrap(),
+            end: None,
+            source_timezone: None,
+        };
+        let excluded = TimeSpec::Floating {
+            start: NaiveDateTime::parse_from_str(
+                "2026-10-06T09:00:00",
+                "%Y-%m-%dT%H:%M:%S",
+            )
+            .unwrap(),
+            end: None,
+            source_timezone: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Exact-hour exceptions",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: Some(4),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            by_hour: vec![9, 17],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: vec![excluded.clone()],
+            overrides: vec![RecurrenceOverride {
+                original: original.clone(),
+                replacement: Some(replacement.clone()),
+                cancelled: false,
+            }],
+        });
+
+        event.validate_recurrence().expect("valid exact-hour override");
+        let occurrences = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        assert!(
+            occurrences
+                .iter()
+                .all(|occurrence| occurrence.original_time != excluded)
+        );
+        let moved = occurrences
+            .iter()
+            .find(|occurrence| occurrence.original_time == original)
+            .expect("moved hour");
+        assert_eq!(moved.time, replacement);
+        assert_eq!(
+            moved.id,
+            occurrence_identity(event.id, &original).expect("stable identity")
+        );
+    }
+
+    #[test]
+    fn byhour_permanent_dst_gap_terminates_at_window_horizon() {
+        let start_utc = DateTime::parse_from_rfc3339("2026-01-01T07:30:00Z")
+            .expect("start")
+            .with_timezone(&Utc);
+        let mut event = TemporalEvent::new(
+            "DST gap",
+            TimeSpec::Instant {
+                start_utc,
+                end_utc: None,
+                source_timezone: Some("America/New_York".to_string()),
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: None,
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: vec![3],
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
+                2,
+                RecurrenceWeekday::Sunday,
+            )],
+            by_hour: vec![2],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2030, 1, 1).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("finite empty expansion");
+
+        assert!(occurrences.is_empty());
+    }
+
 }
