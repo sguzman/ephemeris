@@ -183,7 +183,8 @@ impl EphemerisApp {
             Ok(attempt_id) => attempt_id,
             Err(error) => {
                 self.last_message = None;
-                self.last_error = Some(format!("Failed to record Taria refresh attempt: {error:#}"));
+                self.last_error =
+                    Some(format!("Failed to record Taria refresh attempt: {error:#}"));
                 return;
             }
         };
@@ -251,11 +252,7 @@ impl EphemerisApp {
                 } else {
                     format!("; skipped: {}", report.skipped.join(" | "))
                 };
-                self.last_message = Some(format!(
-                    "Updated Taria sources: {}{}",
-                    summary,
-                    skipped
-                ));
+                self.last_message = Some(format!("Updated Taria sources: {}{}", summary, skipped));
                 let history_error = history_error.map(|error| {
                     format!(
                         "Taria update succeeded, but refresh history could not be completed: {error:#}"
