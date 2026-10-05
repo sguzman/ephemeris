@@ -8748,7 +8748,11 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(local.len(), 3);
-        assert!(local.iter().all(|date| date.format("%H:%M").to_string() == "09:00"));
+        assert!(
+            local
+                .iter()
+                .all(|date| date.format("%H:%M").to_string() == "09:00")
+        );
         assert_eq!(
             local[0].with_timezone(&Utc).format("%H:%M").to_string(),
             "14:00"
@@ -8826,5 +8830,4 @@ mod tests {
             occurrence_identity(event.id, &original).expect("stable identity")
         );
     }
-
 }
