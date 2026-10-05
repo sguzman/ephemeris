@@ -841,9 +841,10 @@ fn add_months_preserving_day(
     value: NaiveDate,
     months: u32,
 ) -> Result<Option<NaiveDate>, RecurrenceError> {
+    let month_zero = i64::from(value.month0());
     let base = i64::from(value.year())
         .checked_mul(12)
-        .and_then(|value| value.checked_add(i64::from(value_month_zero(value))))
+        .and_then(|year_months| year_months.checked_add(month_zero))
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
     let target = base
         .checked_add(i64::from(months))
@@ -853,10 +854,6 @@ fn add_months_preserving_day(
     let month = u32::try_from(target.rem_euclid(12) + 1)
         .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
     Ok(NaiveDate::from_ymd_opt(year, month, value.day()))
-}
-
-const fn value_month_zero(value: NaiveDate) -> u32 {
-    value.month() - 1
 }
 
 fn next_month_start(value: NaiveDate) -> Option<NaiveDate> {
