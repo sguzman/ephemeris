@@ -816,12 +816,7 @@ impl TemporalStore {
                 .optional()
                 .context("failed to check release event snapshot immutability")?;
 
-            if let Some(existing) = existing {
-                if existing != snapshot_json {
-                    return Err(anyhow!(
-                        "Taria release {release_id} event snapshot changed for {event_id}"
-                    ));
-                }
+            if existing.is_some() {
                 continue;
             }
 
@@ -3448,13 +3443,15 @@ mod tests {
             )
             .expect("new snapshots");
 
-        let immutability_error = store
-            .capture_taria_release_event_snapshots(
-                "release:snapshot-old",
-                &BTreeSet::from([changing.id]),
-            )
-            .expect_err("old release snapshot must be immutable");
-        assert!(immutability_error.to_string().contains("snapshot changed"));
+        assert_eq!(
+            store
+                .capture_taria_release_event_snapshots(
+                    "release:snapshot-old",
+                    &BTreeSet::from([changing.id]),
+                )
+                .expect("existing release snapshots remain immutable"),
+            0
+        );
 
         assert_eq!(
             store
