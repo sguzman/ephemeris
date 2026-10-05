@@ -1400,8 +1400,7 @@ impl TemporalStore {
             let title_changed = from.normalized_title != to.normalized_title;
             let moved = from.time_json != to.time_json;
             let status_changed = from.status != to.status;
-            let newly_cancelled =
-                status_changed && to.status == EventStatus::Cancelled.as_str();
+            let newly_cancelled = status_changed && to.status == EventStatus::Cancelled.as_str();
 
             if moved {
                 moved_event_ids.push(*event_id);
