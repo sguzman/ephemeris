@@ -10427,4 +10427,14 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn byminute_defaults_when_missing_from_legacy_recurrence_json() {
+        let rule: RecurrenceRule =
+            serde_json::from_str(r#"{"frequency":"daily"}"#).expect("legacy recurrence JSON");
+
+        assert!(rule.by_minute.is_empty());
+        assert_eq!(rule.interval, 1);
+    }
+
 }
