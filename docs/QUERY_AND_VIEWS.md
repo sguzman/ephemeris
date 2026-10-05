@@ -109,6 +109,7 @@ color_by
 color_rules[]
 composition_layers[]
 overlays[]
+table_columns[]
 display_timezone
 week_start_monday
 ```
@@ -148,6 +149,25 @@ Month + Agenda
 Year + Table
 Week + Agenda
 ```
+
+
+## Table columns are presentation state
+
+The dense Table layout does not own a fixed schema. Its visible columns are an ordered presentation dimension, independent from filtering, grouping, sorting, and event membership.
+
+The available column set currently includes:
+
+- date and time/precision;
+- title, event type, domain, jurisdiction, institution, and lifecycle status;
+- importance and personal relevance;
+- source;
+- renderability and confidence;
+- tags;
+- upstream event ref and reconciled event ref.
+
+The presentation editor can add hidden columns, hide visible columns, reorder them left/right, and restore the default schema. It keeps at least one visible column.
+
+Column order/visibility persists in transient UI state and in each SavedView. SQLite schema v10 stores the ordered list in `saved_views.table_columns_json`; the v9 -> v10 migration gives older saved views the standard default column set. Older serialized SavedViews likewise use the default through serde compatibility.
 
 A layout does not define the underlying query.
 
