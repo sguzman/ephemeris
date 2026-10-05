@@ -1364,14 +1364,12 @@ fn daily_rule_has_reachable_candidate(
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
     let cycle_start =
         NaiveDate::from_ymd_opt(2000, 1, 1).ok_or(RecurrenceError::ArithmeticOverflow)?;
-    let equivalent_base =
-        NaiveDate::from_ymd_opt(cycle_year, base_date.month(), base_date.day())
-            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let equivalent_base = NaiveDate::from_ymd_opt(cycle_year, base_date.month(), base_date.day())
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
     let mut offset = u64::try_from((equivalent_base - cycle_start).num_days())
         .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
     let step = u64::from(rule.interval) % GREGORIAN_CYCLE_DAYS;
-    let cycle_len =
-        GREGORIAN_CYCLE_DAYS / greatest_common_divisor(GREGORIAN_CYCLE_DAYS, step);
+    let cycle_len = GREGORIAN_CYCLE_DAYS / greatest_common_divisor(GREGORIAN_CYCLE_DAYS, step);
 
     for _ in 0..cycle_len {
         let candidate_date = cycle_start
@@ -7360,7 +7358,6 @@ mod tests {
             occurrence_identity(event.id, &original).expect("stable identity")
         );
     }
-
     #[test]
     fn daily_bymonth_limits_occurrences_to_selected_months() {
         let start = NaiveDate::from_ymd_opt(2026, 1, 30).expect("start");
@@ -7556,5 +7553,4 @@ mod tests {
             occurrence_identity(event.id, &original).expect("stable identity")
         );
     }
-
 }
