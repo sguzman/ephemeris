@@ -44,21 +44,21 @@ Not every field is mandatory. Stable semantics should become typed fields; evolv
 
 Recurring events need a distinction between the recurring conceptual event and a particular occurrence.
 
-Representative fields:
+The implemented materialized occurrence foundation now carries:
 
 ```text
 id
 event_id
-recurrence_id?
-start
-end?
-all_day
-occurrence_status
-original_start?
-override_kind?
+recurrence_index?
+origin
+original_time
+time
+status
+override_applied
+cancelled_by_override
 ```
 
-A moved occurrence should retain identity/lineage to the recurrence series.
+The persisted recurrence definition also carries RDATE additions, EXDATE exclusions, and occurrence overrides keyed by original occurrence time. A moved occurrence retains identity/lineage to the original recurrence slot; its replacement time is presentation/effective state, not a new identity. A cancelled override remains an occurrence with cancelled status, while EXDATE removes the slot from materialization.
 
 ### TemporalSource
 

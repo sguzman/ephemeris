@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the first hardened Phase 8 recurrence-foundation checkpoint, all **82** library tests pass. Verified implementation code checkpoint: `92037a4f4ef385fe974d5bc50e3b242090436855`, with format, check, strict Clippy, and tests all green.
+At the hardened Phase 8 recurrence-exception checkpoint, all **88** library tests pass. Verified implementation code checkpoint: `08d4d66c7e85d8368ab6f29671a0807537c646d0`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -81,18 +81,22 @@ Implemented:
 - positive interval;
 - optional occurrence count;
 - optional inclusive civil-date `until` bound;
-- deterministic occurrence UUID derived from the canonical event and original occurrence time;
+- deterministic occurrence UUID derived from the canonical event and original recurrence slot;
+- RDATE additions and EXDATE exclusions stored inside the existing schema-v14 recurrence JSON;
+- moved occurrence overrides that retain the original occurrence UUID/lineage while rendering at the replacement time;
+- cancelled occurrence overrides that remain materialized and queryable with `cancelled` lifecycle status rather than disappearing;
+- detached moved overrides are considered even when their original slot is outside the active horizon, so an instance moved into the visible window is not lost;
 - expansion only inside the active query/view horizon rather than eager infinite materialization;
 - recurrence candidates are retrieved independently from the base date-window query so a long-lived series can appear years after DTSTART;
 - date-only, all-day, floating, and exact instant bases;
 - preservation of all-day/range duration;
 - exact/source-timezone recurrence by source wall clock across DST;
 - invalid calendar dates in monthly/yearly series are skipped rather than coerced;
-- recurrence definitions are validated at the SQLite persistence boundary;
+- recurrence definitions and exception time kinds/conflicts are validated at the SQLite persistence boundary;
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
-- materialized occurrences retain canonical event lineage and recurrence index in the inspector.
+- materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Not yet implemented in this recurrence layer: RDATE, EXDATE, moved/cancelled occurrence overrides, or general recurrence-exception editing.
+Still ahead in this recurrence layer: broader RRULE dimensions, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence exception payloads.
 
 Implemented event metadata includes:
 

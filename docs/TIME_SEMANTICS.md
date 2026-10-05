@@ -71,7 +71,7 @@ Tests should cover:
 
 ## Recurrence
 
-The first recurrence engine slice is implemented.
+The recurrence engine now includes the first exception-aware slice.
 
 Current canonical recurrence definitions support:
 
@@ -79,22 +79,24 @@ Current canonical recurrence definitions support:
 - positive interval;
 - optional count;
 - optional inclusive civil-date `until`;
+- RDATE additions;
+- EXDATE exclusions;
+- per-occurrence moved and cancelled overrides;
 - date-only, all-day, floating, and exact/source-timezone base events.
 
-Month/year/unresolved precision cannot be a recurrence base and is rejected before persistence.
+Month/year/unresolved precision cannot be a recurrence base and is rejected before persistence. Exception timestamps must use the same temporal kind as the series, duplicate overrides are rejected, and one original occurrence slot cannot simultaneously be EXDATE-excluded and overridden.
 
 Exact recurrence with a retained source timezone advances in source-local wall-clock time, then resolves each occurrence back to UTC. This preserves a series such as 09:00 America/New_York across DST rather than preserving a fixed UTC hour. Nonexistent local times are skipped; ambiguous local times resolve deterministically to the earlier instant.
 
-Monthly/yearly recurrence preserves the original calendar day. An invalid target date is skipped rather than coerced to month-end. Count applies to valid generated rule occurrences.
+Monthly/yearly recurrence preserves the original calendar day. An invalid target date is skipped rather than coerced to month-end. Count applies to valid RRULE-generated occurrences; RDATE additions do not consume the RRULE count, and EXDATE is applied after candidate generation.
+
+Conceptually, the visible occurrence set is built from RRULE candidates plus RDATE additions, with EXDATE removing matching original slots and occurrence overrides transforming matching slots. A moved override changes the rendered time without changing the identity of the original slot. A cancelled override remains materialized with cancelled lifecycle status; cancellation is therefore not equivalent to EXDATE disappearance.
 
 Still required for fuller interoperable recurrence semantics:
 
-- RDATE;
-- EXDATE;
-- recurrence exceptions;
-- moved occurrences;
-- cancelled occurrences;
-- broader RRULE dimensions beyond the current frequency/interval/count/until subset.
+- broader RRULE dimensions beyond the current frequency/interval/count/until subset;
+- richer recurrence/exception authoring and editing;
+- source-adapter mapping for external recurrence-exception representations.
 
 The system distinguishes the persisted recurrence definition from materialized view occurrences.
 
@@ -102,12 +104,16 @@ The system distinguishes the persisted recurrence definition from materialized v
 
 Infinite recurrence is not eagerly materialized.
 
-Ephemeris retrieves recurring canonical events independently of the base date-window query, then expands each series only inside the active Year/Quarter/Month/Week/Day horizon. Materialized occurrences carry deterministic occurrence UUIDs, canonical event lineage, and recurrence index.
+Ephemeris retrieves recurring canonical events independently of the base date-window query, then expands each series only inside the active Year/Quarter/Month/Week/Day horizon. Materialized occurrences carry deterministic occurrence UUIDs, canonical event lineage, recurrence origin/index, original occurrence time, effective time/status, and override posture.
 
-Identity is derived from canonical event identity plus the original occurrence time. It is therefore stable across repeated expansion and is intended to support future:
+Occurrence identity is derived from canonical event identity plus the original recurrence slot: civil start date for date-only/all-day events, UTC start instant for exact events, and local start date-time for floating events. Replacement time is deliberately excluded from identity, so moving an occurrence preserves its identity and lineage.
+
+Moved overrides are also considered when their original slot lies outside the currently scanned horizon. This allows an occurrence moved into the active window to appear even though its original date would not otherwise have been materialized.
+
+Stable original-slot identity is intended to support:
 
 - annotations;
-- exceptions;
+- richer exceptions;
 - moved instances;
 - source refresh;
 - diffing.
@@ -128,7 +134,7 @@ Do not silently turn every move into an unrelated new event.
 
 Cancellation is a lifecycle state, not necessarily deletion.
 
-Cancelled events may still be valuable historical facts and should remain queryable.
+For recurrence, an EXDATE means the original slot is excluded from the materialized set. A cancelled occurrence override instead preserves the occurrence and marks its effective lifecycle status as cancelled. Cancelled events and occurrences may still be valuable historical facts and remain queryable.
 
 ## Due dates and deadlines
 

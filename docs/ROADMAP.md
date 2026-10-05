@@ -362,7 +362,7 @@ The roadmap can now move to Phase 8 temporal semantics. Future visual variants (
 
 ## Phase 8 - Advanced temporal semantics
 
-Status: **active - recurrence foundation implemented**
+Status: **active - recurrence exceptions implemented**
 
 Implemented recurrence foundation:
 
@@ -375,13 +375,16 @@ Implemented recurrence foundation:
 - source-wall-clock preservation for zoned exact recurrence across DST
 - invalid monthly/yearly calendar dates skipped without inventing replacement dates
 - persistence-boundary recurrence validation
-- recurrence definition + occurrence index/identity inspection in the GUI
+- RDATE additions and EXDATE exclusions
+- moved occurrence overrides with identity anchored to the original recurrence slot
+- cancelled occurrence overrides retained as queryable cancelled facts
+- moved-in exception materialization when the original slot lies outside the active view horizon
+- recurrence definition + occurrence origin/index/identity/override inspection in the GUI
 
 Next Phase 8 work:
 
-- RDATE / EXDATE
-- moved and cancelled occurrence overrides
-- broader recurrence-exception model
+- broader RRULE dimensions and recurrence-exception interoperability
+- richer recurrence/exception authoring and editing
 - relations
 - collections/sequences
 - uncertainty
