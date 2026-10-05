@@ -3235,11 +3235,7 @@ mod tests {
                     ..EventQuery::default()
                 },
             }],
-            table_columns: vec![
-                TableColumn::Title,
-                TableColumn::Date,
-                TableColumn::Status,
-            ],
+            table_columns: vec![TableColumn::Title, TableColumn::Date, TableColumn::Status],
             overlays: vec![Overlay {
                 id: Uuid::new_v4(),
                 name: "California".to_string(),
@@ -3267,11 +3263,7 @@ mod tests {
         assert_eq!(loaded[0].overlays.len(), 1);
         assert_eq!(
             loaded[0].table_columns,
-            vec![
-                TableColumn::Title,
-                TableColumn::Date,
-                TableColumn::Status,
-            ]
+            vec![TableColumn::Title, TableColumn::Date, TableColumn::Status,]
         );
         assert_eq!(loaded[0].sort_rules.len(), 1);
         store.delete_saved_view(view.id).expect("delete");
