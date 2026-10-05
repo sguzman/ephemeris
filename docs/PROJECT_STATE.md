@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the Phase 6 refresh-history/health checkpoint, all **62** library tests pass. Verified implementation code checkpoint: `f9aeb12c33ace2707e220694c0aa15d3e27febb9`, with format, check, strict Clippy, and tests all green.
+At the first Phase 7 chronological-Stream checkpoint, all **64** library tests pass. Verified implementation code checkpoint: `55deaa26056f57172b12f536befe1e74f44d421b`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
