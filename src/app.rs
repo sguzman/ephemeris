@@ -4295,7 +4295,7 @@ mod tests {
             },
         );
 
-        let mut events = vec![later, date_only, earlier, month];
+        let mut events = [later, date_only, earlier, month];
         events.sort_by(|left, right| compare_stream_events(left, right, chrono_tz::UTC));
 
         assert_eq!(
