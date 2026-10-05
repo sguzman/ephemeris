@@ -95,9 +95,9 @@ Ephemeris now does most of this baseline contract. It must continue to:
 - persist CalendarSet membership separately from event identity;
 - preserve local annotations;
 - record release metadata;
-- ultimately commit the entire multi-artifact release atomically.
+- commit the entire multi-artifact release atomically.
 
-Current payload/source and CalendarSet writes are transactional individually; whole-release rollback is still future work.
+Whole-release atomicity is implemented. Release metadata, source/event imports, upstream identity aliases, release/source links, canonical event snapshots, CalendarSets, projected calendars, and memberships participate in one adoption transaction. A failure in any later artifact rolls back all mutations from that release.
 
 ### Accepted release states
 
@@ -251,11 +251,18 @@ Ephemeris now retains immutable release identity, channel, manifest hash/path, g
 
 CalendarSets are stored as immutable objects with separate release associations.
 
+Implemented release history now includes:
+
+- release-to-source projection associations;
+- immutable per-release canonical event snapshots;
+- source/bundle/projected-calendar/member-event add/remove diffs;
+- canonical event add/remove, rename, temporal-move, lifecycle-status, and newly-cancelled diffs;
+- expandable before/after canonical event change details.
+
 Still future:
 
-- richer normalized snapshot/artifact lineage tables;
-- explicit prior/next release links;
-- release-to-release diff materialization and inspection.
+- broader normalized provenance/artifact-lineage tables beyond the current Taria release snapshot model;
+- explicit persisted prior/next release links.
 
 ## Raw source retention
 
@@ -299,22 +306,27 @@ Future network-assisted release discovery may be added as a convenience only. It
 
 Rendering/querying never requires live Taria/GitHub access.
 
-The current filesystem update action is synchronous; large release adoption should move to a worker boundary so the egui frame loop remains responsive.
+The filesystem update action runs on a background worker with its own SQLite connection. Release adoption remains atomic on that worker connection, while egui polls completion without blocking the frame loop.
 
 ## Source health
 
-For directly managed external sources, the UI may eventually show:
+Schema v13 persists generic refresh-attempt records independently from release adoption so failed attempts survive release rollback. Records retain refresh kind/target, start/completion timestamps, success/failure, adopted release ID when available, summary, and error. An app interruption can therefore leave an explicit incomplete attempt.
 
-- last successful update
-- last attempt
-- failure state
-- last source change
-- expected next check
-- stale state
-- rollover state
-- HTTP/cache metadata where useful
+The Taria UI distinguishes:
 
-For Taria sources, Ephemeris should prefer Taria's own release/coverage/source-health state rather than reproducing its acquisition diagnostics.
+- never refreshed;
+- running;
+- healthy;
+- stale;
+- failed;
+- interrupted;
+- unknown/malformed history.
+
+Current local Taria policy marks the refresh posture stale after **7 days without a successful refresh**. The threshold is displayed in the UI rather than hidden in implementation details.
+
+This health state describes Ephemeris's local release-consumption freshness. It does not replace Resourcearium/Taria's own upstream acquisition diagnostics or bundle coverage posture.
+
+For future directly managed non-Taria sources, the same generic attempt-history foundation can be reused, with source-class-specific freshness/HTTP/cache policy where appropriate.
 
 ## External synchronization
 
