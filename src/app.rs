@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
@@ -1104,6 +1104,9 @@ impl EphemerisApp {
             if input.key_pressed(egui::Key::H) {
                 target_layout = Some(CalendarLayout::Density);
             }
+            if input.key_pressed(egui::Key::P) {
+                target_layout = Some(CalendarLayout::Summary);
+            }
         });
 
         if navigate != 0 {
@@ -1538,22 +1541,42 @@ impl EphemerisApp {
 
         let mut presentation_changed = false;
 
-        let ordering_locked = matches!(
+        let grouping_locked = matches!(
             self.state.calendar_layout,
             CalendarLayout::Stream | CalendarLayout::Timeline | CalendarLayout::Density
         );
-        let density_layout = self.state.calendar_layout == CalendarLayout::Density;
-        if ordering_locked {
-            ui.small(match self.state.calendar_layout {
-                CalendarLayout::Density => {
-                    "Density aggregates by day. Saved grouping and sort rules are preserved but do not alter this aggregate layout."
-                }
-                _ => {
-                    "Stream/Timeline own temporal ordering. Saved grouping and sort rules are preserved for Agenda/Compact/Table but do not alter these chronological layouts."
-                }
-            });
+        let sorting_locked = matches!(
+            self.state.calendar_layout,
+            CalendarLayout::Stream
+                | CalendarLayout::Timeline
+                | CalendarLayout::Density
+                | CalendarLayout::Summary
+        );
+        let aggregate_layout = matches!(
+            self.state.calendar_layout,
+            CalendarLayout::Density | CalendarLayout::Summary
+        );
+
+        match self.state.calendar_layout {
+            CalendarLayout::Density => {
+                ui.small(
+                    "Density aggregates by day. Saved grouping, sort, and color settings are preserved but do not alter this aggregate layout.",
+                );
+            }
+            CalendarLayout::Summary => {
+                ui.small(
+                    "Summary uses Group by as its pivot dimension. Saved sort and color settings are preserved but do not alter aggregate rows.",
+                );
+            }
+            CalendarLayout::Stream | CalendarLayout::Timeline => {
+                ui.small(
+                    "Stream/Timeline own temporal ordering. Saved grouping and sort rules are preserved for Agenda/Compact/Table but do not alter these chronological layouts.",
+                );
+            }
+            _ => {}
         }
-        ui.add_enabled_ui(!ordering_locked, |ui| {
+
+        ui.add_enabled_ui(!grouping_locked, |ui| {
             egui::ComboBox::from_id_salt("presentation.group")
                 .selected_text(self.state.group_by.label())
                 .show_ui(ui, |ui| {
@@ -1565,7 +1588,7 @@ impl EphemerisApp {
                 });
         });
 
-        ui.add_enabled_ui(!density_layout, |ui| {
+        ui.add_enabled_ui(!aggregate_layout, |ui| {
             ui.strong("Color rules");
             ui.small("Rules are evaluated top to bottom; the first enabled match wins.");
 
@@ -1593,9 +1616,9 @@ impl EphemerisApp {
                     });
             });
         });
-        if density_layout {
+        if aggregate_layout {
             ui.small(
-                "Density uses aggregate intensity rather than per-event color rules. Saved color settings are preserved for other layouts.",
+                "Aggregate layouts do not apply per-event color rules. Saved color settings are preserved for other layouts.",
             );
         }
 
@@ -1952,7 +1975,7 @@ impl EphemerisApp {
 
         ui.separator();
         ui.strong("Sort rules");
-        ui.add_enabled_ui(!ordering_locked, |ui| {
+        ui.add_enabled_ui(!sorting_locked, |ui| {
             let mut remove_sort = None;
             let can_remove_sort = self.state.sort_rules.len() > 1;
             for (index, rule) in self.state.sort_rules.iter_mut().enumerate() {
@@ -3181,6 +3204,7 @@ fn render_calendar(
             },
         ),
         CalendarLayout::Density => render_density(ui, events, view, focus, timezone, monday_start),
+        CalendarLayout::Summary => render_summary(ui, events, timezone, group_by),
         CalendarLayout::Table => render_table(
             ui,
             events,
@@ -3205,6 +3229,130 @@ fn render_calendar(
             CalendarView::Day => render_day(ui, events, focus, timezone, selected, colors),
         },
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SummaryRow {
+    label: String,
+    count: usize,
+    first_date: Option<NaiveDate>,
+    last_date: Option<NaiveDate>,
+}
+
+fn render_summary(
+    ui: &mut egui::Ui,
+    events: &[TemporalEvent],
+    timezone: Tz,
+    group_by: GroupBy,
+) -> Option<CalendarAction> {
+    let rows = summary_rows(events, timezone, group_by);
+    let total = events.len();
+
+    ui.horizontal_wrapped(|ui| {
+        ui.strong("Summary");
+        ui.small(format!("{total} visible event(s)"));
+        if group_by == GroupBy::None {
+            ui.small("· no pivot grouping");
+        } else {
+            ui.small(format!("· pivot: {}", group_by.label()));
+        }
+    });
+    ui.separator();
+
+    egui::Grid::new("summary-grid")
+        .striped(true)
+        .spacing([16.0, 5.0])
+        .show(ui, |ui| {
+            ui.strong(if group_by == GroupBy::None {
+                "Scope"
+            } else {
+                group_by.label()
+            });
+            ui.strong("Events");
+            ui.strong("Share");
+            ui.strong("First");
+            ui.strong("Last");
+            ui.end_row();
+
+            for row in &rows {
+                ui.label(&row.label);
+                ui.monospace(row.count.to_string());
+                let share = if total == 0 {
+                    0.0
+                } else {
+                    row.count as f64 / total as f64 * 100.0
+                };
+                ui.monospace(format!("{share:.1}%"));
+                ui.monospace(
+                    row.first_date
+                        .map(|date| date.to_string())
+                        .unwrap_or_else(|| "—".to_string()),
+                );
+                ui.monospace(
+                    row.last_date
+                        .map(|date| date.to_string())
+                        .unwrap_or_else(|| "—".to_string()),
+                );
+                ui.end_row();
+            }
+        });
+
+    ui.add_space(8.0);
+    ui.strong("Precision breakdown");
+    let mut precision_counts = BTreeMap::<&'static str, usize>::new();
+    for event in events {
+        *precision_counts.entry(event.time.kind_name()).or_default() += 1;
+    }
+    ui.horizontal_wrapped(|ui| {
+        for (kind, count) in precision_counts {
+            ui.small(format!("{kind}: {count}"));
+        }
+    });
+
+    None
+}
+
+fn summary_rows(
+    events: &[TemporalEvent],
+    timezone: Tz,
+    group_by: GroupBy,
+) -> Vec<SummaryRow> {
+    if group_by == GroupBy::None {
+        let dates = events
+            .iter()
+            .filter_map(|event| agenda_sort_date(event, timezone))
+            .collect::<Vec<_>>();
+        return vec![SummaryRow {
+            label: "All visible events".to_string(),
+            count: events.len(),
+            first_date: dates.iter().min().copied(),
+            last_date: dates.iter().max().copied(),
+        }];
+    }
+
+    let mut buckets = BTreeMap::<String, Vec<&TemporalEvent>>::new();
+    for event in events {
+        buckets
+            .entry(agenda_group_label(event, timezone, group_by))
+            .or_default()
+            .push(event);
+    }
+
+    buckets
+        .into_iter()
+        .map(|(label, grouped)| {
+            let dates = grouped
+                .iter()
+                .filter_map(|event| agenda_sort_date(event, timezone))
+                .collect::<Vec<_>>();
+            SummaryRow {
+                label,
+                count: grouped.len(),
+                first_date: dates.iter().min().copied(),
+                last_date: dates.iter().max().copied(),
+            }
+        })
+        .collect()
 }
 
 fn render_density(
@@ -4776,6 +4924,55 @@ mod tests {
             summary: None,
             error: None,
         }
+    }
+
+    #[test]
+    fn summary_rows_use_existing_grouping_dimension() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut politics = TemporalEvent::new(
+            "Politics",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        politics.domain = Some("politics".to_string());
+
+        let mut finance = TemporalEvent::new(
+            "Finance",
+            TimeSpec::DateOnly {
+                start: day + chrono::Duration::days(1),
+                end_exclusive: None,
+            },
+        );
+        finance.domain = Some("finance".to_string());
+
+        let mut politics_two = TemporalEvent::new(
+            "Politics 2",
+            TimeSpec::DateOnly {
+                start: day + chrono::Duration::days(2),
+                end_exclusive: None,
+            },
+        );
+        politics_two.domain = Some("politics".to_string());
+
+        let rows = summary_rows(
+            &[politics, finance, politics_two],
+            chrono_tz::UTC,
+            GroupBy::Domain,
+        );
+
+        assert_eq!(rows.len(), 2);
+        let politics = rows
+            .iter()
+            .find(|row| row.label == "politics")
+            .expect("politics row");
+        assert_eq!(politics.count, 2);
+        assert_eq!(politics.first_date, Some(day));
+        assert_eq!(
+            politics.last_date,
+            Some(day + chrono::Duration::days(2))
+        );
     }
 
     #[test]
