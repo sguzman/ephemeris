@@ -1,6 +1,6 @@
 # Project State
 
-Last verified implementation milestone: 2026-10-04.
+Last verified implementation milestone: 2026-10-05.
 
 ## Current status
 
@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the editable-calendar-algebra checkpoint, all **52** library tests pass. Verified implementation head: `9b4d8cde9b0c5c787ffe8935466abf455128228d`, with format, check, strict Clippy, and tests all green.
+At the configurable-Table checkpoint, all **52** library tests pass. Verified implementation code checkpoint: `0535afb3047007c9c9f7f07eb574d5df3e1788e0`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -37,7 +37,7 @@ At the editable-calendar-algebra checkpoint, all **52** library tests pass. Veri
 
 SQLite via bundled `rusqlite`.
 
-Current schema version: 9.
+Current schema version: 10.
 
 The database owns:
 
@@ -218,6 +218,7 @@ Current presentation dimensions are also independent:
 - semantic fallback coloring by source, domain, jurisdiction, institution, event type, or status
 - ordered query-driven color rules with first-match precedence
 - Grid, Agenda, and Table layouts
+- ordered visible Table-column configuration independent from filtering/grouping/sorting
 
 These dimensions persist in saved views and do not reorganize or duplicate canonical events.
 
@@ -260,6 +261,7 @@ A saved view currently retains:
 - ordered color rules
 - ordered composition layers
 - overlays
+- ordered visible Table columns
 - display timezone
 - week-start behavior
 
@@ -319,7 +321,6 @@ Not yet implemented:
 - relations and collections
 - duplicate/entity resolution
 - timeline/heatmap/pivot views
-- user-defined table columns
 - reminders
 - ICS/webcal/CalDAV ingestion/export
 - full personal event editing
@@ -425,7 +426,21 @@ Release-history/diff inspection is now implemented from persisted SQLite state:
 
 Calendar algebra is also now editable in the GUI.
 
-The next slice is user-defined Table columns with per-saved-view ordering/visibility, followed by richer facets and saved-view inheritance.
+### Configurable Table columns
+
+The dense Table layout now has a first-class ordered visible-column schema.
+
+Implemented:
+
+- 16 available columns spanning temporal display, core event facets, quality/renderability, tags, source, and upstream identity;
+- add/hide/reorder/reset controls in the presentation editor;
+- at least one visible column is retained by the editor;
+- Table rendering is driven by the configured order rather than a hard-coded schema;
+- transient UI-state persistence with backward-compatible defaults;
+- SavedView capture/apply persistence;
+- SQLite saved-view persistence through schema v10 and the v9 -> v10 migration.
+
+The next programmable-view slice is richer facets, followed by saved-view inheritance/composition with cycle-safe semantics.
 
 ## Rule going forward
 
