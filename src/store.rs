@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow};
@@ -14,7 +14,7 @@ use crate::domain::{
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -102,6 +102,7 @@ pub struct TariaReleaseHistoryEntry {
     pub bundle_count: u64,
     pub calendar_set_count: u64,
     pub projected_calendar_count: u64,
+    pub source_count: u64,
     pub resolved_member_event_count: u64,
 }
 
@@ -717,6 +718,55 @@ impl TemporalStore {
         Ok(())
     }
 
+    pub fn link_taria_release_source(
+        &self,
+        release_id: &str,
+        source_id: Uuid,
+        projection_ref: &str,
+    ) -> anyhow::Result<()> {
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO taria_release_sources (
+                    release_id, source_id, projection_ref
+                ) VALUES (?1, ?2, ?3)
+                ON CONFLICT(release_id, source_id) DO UPDATE SET
+                    projection_ref = excluded.projection_ref
+                "#,
+                params![release_id, source_id.to_string(), projection_ref],
+            )
+            .context("failed to associate source with Taria release")?;
+        Ok(())
+    }
+
+    pub fn taria_source_ids_for_release(
+        &self,
+        release_id: Option<&str>,
+    ) -> anyhow::Result<BTreeSet<Uuid>> {
+        let Some(release_id) = release_id else {
+            return Ok(BTreeSet::new());
+        };
+
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT source_id
+            FROM taria_release_sources
+            WHERE release_id = ?1
+            ORDER BY source_id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![release_id])?;
+        let mut source_ids = BTreeSet::new();
+        while let Some(row) = rows.next()? {
+            let raw: String = row.get(0)?;
+            source_ids.insert(
+                Uuid::parse_str(&raw)
+                    .with_context(|| format!("invalid Taria release source id: {raw}"))?,
+            );
+        }
+        Ok(source_ids)
+    }
+
     pub fn replace_taria_calendar_set(
         &self,
         set: &TariaCalendarSetRecord,
@@ -982,6 +1032,11 @@ impl TemporalStore {
                     WHERE link.release_id = release.release_id
                 ),
                 (
+                    SELECT COUNT(DISTINCT source_link.source_id)
+                    FROM taria_release_sources AS source_link
+                    WHERE source_link.release_id = release.release_id
+                ),
+                (
                     SELECT COUNT(DISTINCT membership.event_id)
                     FROM taria_calendar_memberships AS membership
                     JOIN taria_release_calendar_sets AS link
@@ -1006,8 +1061,9 @@ impl TemporalStore {
                 bundle_count: i64_to_u64(row.get(6)?, "bundle count")?,
                 calendar_set_count: i64_to_u64(row.get(7)?, "CalendarSet count")?,
                 projected_calendar_count: i64_to_u64(row.get(8)?, "projected calendar count")?,
+                source_count: i64_to_u64(row.get(9)?, "source count")?,
                 resolved_member_event_count: i64_to_u64(
-                    row.get(9)?,
+                    row.get(10)?,
                     "resolved member event count",
                 )?,
             });
@@ -1751,6 +1807,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 9 {
         migrate_v9_to_v10(conn)?;
+        current = 10;
+    }
+
+    if current == 10 {
+        migrate_v10_to_v11(conn)?;
     }
 
     Ok(())
@@ -1907,6 +1968,16 @@ fn create_taria_release_schema_current(conn: &Connection) -> anyhow::Result<()> 
         CREATE INDEX taria_releases_channel
             ON taria_releases(channel, adopted_at);
 
+        CREATE TABLE IF NOT EXISTS taria_release_sources (
+            release_id TEXT NOT NULL REFERENCES taria_releases(release_id) ON DELETE CASCADE,
+            source_id TEXT NOT NULL REFERENCES temporal_sources(id) ON DELETE CASCADE,
+            projection_ref TEXT NOT NULL,
+            PRIMARY KEY (release_id, source_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS taria_release_sources_source
+            ON taria_release_sources(source_id, release_id);
+
         CREATE TABLE taria_calendar_sets (
             calendar_set_id TEXT PRIMARY KEY,
             projection_ref TEXT NOT NULL,
@@ -2054,6 +2125,30 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> anyhow::Result<()> {
         .context("failed to set schema version 3")?;
     tx.commit()
         .context("failed to commit v2 to v3 schema migration")
+}
+
+fn migrate_v10_to_v11(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v10 to v11 migration")?;
+    tx.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS taria_release_sources (
+            release_id TEXT NOT NULL REFERENCES taria_releases(release_id) ON DELETE CASCADE,
+            source_id TEXT NOT NULL REFERENCES temporal_sources(id) ON DELETE CASCADE,
+            projection_ref TEXT NOT NULL,
+            PRIMARY KEY (release_id, source_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS taria_release_sources_source
+            ON taria_release_sources(source_id, release_id);
+        "#,
+    )
+    .context("failed to add Taria release/source associations")?;
+    tx.pragma_update(None, "user_version", 11)
+        .context("failed to set schema version 11")?;
+    tx.commit()
+        .context("failed to commit v10 to v11 schema migration")
 }
 
 fn migrate_v9_to_v10(conn: &mut Connection) -> anyhow::Result<()> {
@@ -2720,6 +2815,15 @@ mod tests {
         assert!(columns.contains(&"overlays_json".to_string()));
         assert!(columns.contains(&"composition_layers_json".to_string()));
         assert!(columns.contains(&"table_columns_json".to_string()));
+
+        let release_source_table: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'taria_release_sources'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("release source table");
+        assert_eq!(release_source_table, 1);
     }
 
     #[test]
