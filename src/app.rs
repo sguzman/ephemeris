@@ -2361,7 +2361,14 @@ impl EphemerisApp {
                         })
                         .collect::<Vec<_>>()
                         .join(", ");
-                    inspector_row(ui, "Month weekdays", &selectors);
+                    let label = if rule.frequency == RecurrenceFrequency::Yearly
+                        && rule.by_month.is_empty()
+                    {
+                        "Year weekdays"
+                    } else {
+                        "Month weekdays"
+                    };
+                    inspector_row(ui, label, &selectors);
                 }
                 if !rule.by_set_pos.is_empty() {
                     let mut positions = rule.by_set_pos.clone();
