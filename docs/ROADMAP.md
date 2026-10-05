@@ -379,6 +379,7 @@ Implemented recurrence foundation:
 - moved occurrence overrides with identity anchored to the original recurrence slot
 - cancelled occurrence overrides retained as queryable cancelled facts
 - moved-in exception materialization when the original slot lies outside the active view horizon
+- override-target validation so detached overrides cannot manufacture occurrences outside the RRULE/RDATE set
 - recurrence definition + occurrence origin/index/identity/override inspection in the GUI
 
 Next Phase 8 work:

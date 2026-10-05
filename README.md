@@ -89,7 +89,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified Phase 8 recurrence-exception code checkpoint at 2026-10-05 is `08d4d66c7e85d8368ab6f29671a0807537c646d0`: format, compile, strict Clippy, and **88 library tests** all pass.
+The verified Phase 8 recurrence-exception code checkpoint at 2026-10-05 is `1ae5f63f9751b62e893aee10ba288de7cc513d6e`: format, compile, strict Clippy, and **90 library tests** all pass.
 
 ## Product boundary
 

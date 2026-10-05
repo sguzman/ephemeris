@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the hardened Phase 8 recurrence-exception checkpoint, all **88** library tests pass. Verified implementation code checkpoint: `08d4d66c7e85d8368ab6f29671a0807537c646d0`, with format, check, strict Clippy, and tests all green.
+At the hardened Phase 8 recurrence-exception checkpoint, all **90** library tests pass. Verified implementation code checkpoint: `1ae5f63f9751b62e893aee10ba288de7cc513d6e`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -92,7 +92,7 @@ Implemented:
 - preservation of all-day/range duration;
 - exact/source-timezone recurrence by source wall clock across DST;
 - invalid calendar dates in monthly/yearly series are skipped rather than coerced;
-- recurrence definitions and exception time kinds/conflicts are validated at the SQLite persistence boundary;
+- recurrence definitions, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 

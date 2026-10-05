@@ -84,7 +84,7 @@ Current canonical recurrence definitions support:
 - per-occurrence moved and cancelled overrides;
 - date-only, all-day, floating, and exact/source-timezone base events.
 
-Month/year/unresolved precision cannot be a recurrence base and is rejected before persistence. Exception timestamps must use the same temporal kind as the series, duplicate overrides are rejected, and one original occurrence slot cannot simultaneously be EXDATE-excluded and overridden.
+Month/year/unresolved precision cannot be a recurrence base and is rejected before persistence. Exception timestamps must use the same temporal kind as the series, duplicate overrides are rejected, and one original occurrence slot cannot simultaneously be EXDATE-excluded and overridden. An override's original slot must also resolve to a real RRULE-generated or RDATE-added occurrence; detached overrides cannot manufacture phantom occurrences.
 
 Exact recurrence with a retained source timezone advances in source-local wall-clock time, then resolves each occurrence back to UTC. This preserves a series such as 09:00 America/New_York across DST rather than preserving a fixed UTC hour. Nonexistent local times are skipped; ambiguous local times resolve deterministically to the earlier instant.
 
