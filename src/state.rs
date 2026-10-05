@@ -349,6 +349,21 @@ mod tests {
     }
 
     #[test]
+    fn timeline_layout_roundtrips_in_ui_state() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("ui-state.json");
+        let state = PersistedUiState {
+            calendar_layout: CalendarLayout::Timeline,
+            ..PersistedUiState::default()
+        };
+
+        state.save_to_path(&path).expect("save");
+        let loaded = PersistedUiState::load_from_path(&path).expect("load");
+
+        assert_eq!(loaded.calendar_layout, CalendarLayout::Timeline);
+    }
+
+    #[test]
     fn applying_saved_view_restores_query_and_presentation() {
         let mut state = PersistedUiState {
             domain_filter: Some("elections".to_string()),
