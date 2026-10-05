@@ -3439,7 +3439,7 @@ fn render_density(
                 }
 
                 column += 1;
-                if column % 7 == 0 {
+                if column.is_multiple_of(7) {
                     ui.end_row();
                 }
             }
