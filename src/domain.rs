@@ -713,11 +713,14 @@ impl fmt::Display for RecurrenceError {
             Self::DuplicateByWeekday(weekday) => {
                 write!(formatter, "duplicate BYDAY weekday {weekday}")
             }
-            Self::ByMonthRequiresYearly => {
-                formatter.write_str("BYMONTH selection is currently supported only for yearly recurrence")
-            }
+            Self::ByMonthRequiresYearly => formatter.write_str(
+                "BYMONTH selection is currently supported only for yearly recurrence",
+            ),
             Self::InvalidByMonth(month) => {
-                write!(formatter, "BYMONTH value must be between 1 and 12, got {month}")
+                write!(
+                    formatter,
+                    "BYMONTH value must be between 1 and 12, got {month}"
+                )
             }
             Self::DuplicateByMonth(month) => {
                 write!(formatter, "duplicate BYMONTH value {month}")
