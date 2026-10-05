@@ -4044,7 +4044,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
-            by_month_day: vec![1, 15, 31],
+            by_month_day: vec![-1, 1, 15, 31],
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
