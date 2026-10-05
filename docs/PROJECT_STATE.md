@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the first canonical release-snapshot checkpoint, all **60** library tests pass. Verified implementation code checkpoint: `6f5612c7a6314deaf81a1ce06137abe61288b8c4`, with format, check, strict Clippy, and tests all green. Later source-inspector correctness refinements build on that checkpoint and are validated again at the documentation head.
+At the Phase 6 refresh-history/health checkpoint, all **62** library tests pass. Verified implementation code checkpoint: `f9aeb12c33ace2707e220694c0aa15d3e27febb9`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -37,7 +37,7 @@ At the first canonical release-snapshot checkpoint, all **60** library tests pas
 
 SQLite via bundled `rusqlite`.
 
-Current schema version: 12.
+Current schema version: 13.
 
 The database owns:
 
@@ -320,7 +320,6 @@ Not yet implemented:
 - richer per-field release diff presentation beyond canonical add/remove/time/status/cancellation changes
 - event-occurrence/recurrence engine
 - general-purpose provenance/history tables beyond the Taria release snapshot model
-- persistent refresh-failure history and policy-driven stale/health thresholds
 - annotations
 - relations and collections
 - duplicate/entity resolution
@@ -440,10 +439,21 @@ Release-history/diff inspection is now implemented from persisted SQLite state:
 - source rollover diffs report added/removed projection refs;
 - schema v12 stores one canonical event snapshot per event actually present in each release, after cross-projection reconciliation;
 - retained-missing local records are not falsely counted as present in later release snapshots;
-- canonical snapshot diffs report added/removed events, temporal moves, lifecycle-status changes, and newly cancelled events;
+- canonical snapshot diffs report added/removed events, title changes, temporal moves, lifecycle-status changes, and newly cancelled events;
+- expandable change details expose event title/UUID plus before/after title, status, and temporal representation;
 - resolved CalendarSet member-event deltas remain a separate membership-level view;
 - snapshot capture participates in the same whole-release transaction, including rollback;
 - older pre-v12 releases are not fabricated/backfilled; re-adoption can populate snapshots from the immutable release payload.
+
+Refresh-attempt history and health are also persisted:
+
+- schema v13 adds generic source-refresh attempt records;
+- a Taria refresh attempt is written before the background worker starts;
+- completed attempts retain success/failure, completion time, release ID, summary, and error;
+- an app crash/restart can therefore leave an explicit incomplete attempt rather than erasing the attempt;
+- the UI distinguishes running from orphaned/incomplete attempts;
+- Taria refresh health is explicit: never-refreshed, running, healthy, stale, failed, interrupted, or unknown;
+- the current local Taria policy marks a successful refresh stale after 7 days without another successful refresh, and the threshold is shown in the UI.
 
 Calendar algebra is also now editable in the GUI.
 
@@ -476,7 +486,7 @@ Implemented:
 - SavedView capture/apply persistence;
 - SQLite saved-view persistence through schema v10 and the v9 -> v10 migration.
 
-The programmable-view inheritance/composition slice is complete. The next major implementation boundary is Phase 6 source-management/history hardening, while the severe constrained-width UI/layout failure remains explicitly deferred layout debt.
+The programmable-view inheritance/composition slice is complete. Phase 6 now has source inspection, release/source posture, canonical snapshot history, detailed release-event drill-down, persistent refresh-attempt history, and an explicit Taria health policy. The remaining Phase 6 boundary is broader non-Taria source refresh/history integration. The severe constrained-width UI/layout failure remains explicitly deferred layout debt.
 
 ## Rule going forward
 
