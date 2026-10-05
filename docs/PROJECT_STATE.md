@@ -37,7 +37,7 @@ At the completed Phase 7 visualization-foundation checkpoint, all **72** library
 
 SQLite via bundled `rusqlite`.
 
-Current schema version: 13.
+Current schema version: 14.
 
 The database owns:
 
@@ -53,6 +53,7 @@ The database owns:
 - release-to-CalendarSet associations
 - projected calendars
 - CalendarSet event memberships
+- persisted event recurrence definitions
 
 Transient UI state remains separate.
 
@@ -69,6 +70,29 @@ Implemented time forms:
 - unresolved/blocked temporal value
 
 Month/year precision is not coerced onto an invented day. Date-only data is not silently promoted to an instant or conflated with explicit all-day semantics.
+
+### Recurrence foundation
+
+Schema v14 adds an optional recurrence definition to the canonical event record.
+
+Implemented:
+
+- daily, weekly, monthly, and yearly frequency;
+- positive interval;
+- optional occurrence count;
+- optional inclusive civil-date `until` bound;
+- deterministic occurrence UUID derived from the canonical event and original occurrence time;
+- expansion only inside the active query/view horizon rather than eager infinite materialization;
+- recurrence candidates are retrieved independently from the base date-window query so a long-lived series can appear years after DTSTART;
+- date-only, all-day, floating, and exact instant bases;
+- preservation of all-day/range duration;
+- exact/source-timezone recurrence by source wall clock across DST;
+- invalid calendar dates in monthly/yearly series are skipped rather than coerced;
+- recurrence definitions are validated at the SQLite persistence boundary;
+- month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
+- materialized occurrences retain canonical event lineage and recurrence index in the inspector.
+
+Not yet implemented in this recurrence layer: RDATE, EXDATE, moved/cancelled occurrence overrides, or general recurrence-exception editing.
 
 Implemented event metadata includes:
 
@@ -331,12 +355,10 @@ The current milestone is a foundation, not the finished calendar.
 Not yet implemented:
 
 - richer per-field release diff presentation beyond canonical add/remove/time/status/cancellation changes
-- event-occurrence/recurrence engine
 - general-purpose provenance/history tables beyond the Taria release snapshot model
 - annotations
 - relations and collections
 - duplicate/entity resolution
-- timeline/heatmap/pivot views
 - responsive shell/layout hardening for constrained widths and side-panel collapse
 - reminders
 - ICS/webcal/CalDAV ingestion/export
