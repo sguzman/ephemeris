@@ -23,9 +23,9 @@ cargo test
 
 At the hardened Phase 8 recurrence-selector checkpoint, all **141** library tests pass. Verified implementation code checkpoint: `732354bf5b0457c99093b7c1e118fce895682d22`, with format, check, strict Clippy, and tests all green.
 
-`main` is verified through DAILY BYDAY at `69a32937c224649587c53d56c1d4b2af36fc272a`: format, check, strict Clippy, and all **200** library tests pass in GitHub Actions. The preceding YEARLY BYMONTHDAY checkpoint is also independently verified at `e4e97ec6ddc14d5fd5c21810040d48ed8f9c137a` with **195** tests.
+`main` is verified through DAILY BYMONTH at `fda7172a65917a74aca6eb30ab5dd93ac24d7c5a`: format, check, strict Clippy, and all **205** library tests pass in GitHub Actions. The preceding DAILY BYDAY checkpoint is independently verified at `69a32937c224649587c53d56c1d4b2af36fc272a` with **200** tests.
 
-A child staging slice at code/persistence checkpoint `21231cc8f578264d6129dae106d602827a1be8aa` adds DAILY BYMONTH limiting and targets **205** library tests. DAILY selector reachability now covers BYDAY-only weekday cycles and BYMONTH-involved finite Gregorian cycles so impossible selector/interval combinations terminate cleanly instead of searching forever. The 205-test slice is pending fresh CI verification before promotion.
+DAILY selector reachability covers BYDAY-only weekday cycles and BYMONTH-involved finite Gregorian cycles so impossible selector/interval combinations terminate cleanly instead of searching forever.
 
 ## Implemented architecture
 
