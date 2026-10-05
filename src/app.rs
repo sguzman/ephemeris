@@ -1020,6 +1020,125 @@ impl EphemerisApp {
                 }
             });
 
+        let event_types = self
+            .events
+            .iter()
+            .chain(self.unplaced_events.iter())
+            .filter_map(|event| event.event_type.clone())
+            .collect::<BTreeSet<_>>();
+        egui::ComboBox::from_id_salt("query.event_type")
+            .selected_text(
+                self.state
+                    .event_type_filter
+                    .as_deref()
+                    .unwrap_or("All event types"),
+            )
+            .show_ui(ui, |ui| {
+                filters_changed |= ui
+                    .selectable_value(
+                        &mut self.state.event_type_filter,
+                        None,
+                        "All event types",
+                    )
+                    .changed();
+                for event_type in event_types {
+                    filters_changed |= ui
+                        .selectable_value(
+                            &mut self.state.event_type_filter,
+                            Some(event_type.clone()),
+                            event_type,
+                        )
+                        .changed();
+                }
+            });
+
+        let institutions = self
+            .events
+            .iter()
+            .chain(self.unplaced_events.iter())
+            .filter_map(|event| event.institution.clone())
+            .collect::<BTreeSet<_>>();
+        egui::ComboBox::from_id_salt("query.institution")
+            .selected_text(
+                self.state
+                    .institution_filter
+                    .as_deref()
+                    .unwrap_or("All institutions"),
+            )
+            .show_ui(ui, |ui| {
+                filters_changed |= ui
+                    .selectable_value(
+                        &mut self.state.institution_filter,
+                        None,
+                        "All institutions",
+                    )
+                    .changed();
+                for institution in institutions {
+                    filters_changed |= ui
+                        .selectable_value(
+                            &mut self.state.institution_filter,
+                            Some(institution.clone()),
+                            institution,
+                        )
+                        .changed();
+                }
+            });
+
+        let renderabilities = self
+            .events
+            .iter()
+            .chain(self.unplaced_events.iter())
+            .filter_map(|event| event.renderability.clone())
+            .collect::<BTreeSet<_>>();
+        egui::ComboBox::from_id_salt("query.renderability")
+            .selected_text(
+                self.state
+                    .renderability_filter
+                    .as_deref()
+                    .unwrap_or("All renderability"),
+            )
+            .show_ui(ui, |ui| {
+                filters_changed |= ui
+                    .selectable_value(
+                        &mut self.state.renderability_filter,
+                        None,
+                        "All renderability",
+                    )
+                    .changed();
+                for renderability in renderabilities {
+                    filters_changed |= ui
+                        .selectable_value(
+                            &mut self.state.renderability_filter,
+                            Some(renderability.clone()),
+                            renderability,
+                        )
+                        .changed();
+                }
+            });
+
+        let tags = self
+            .events
+            .iter()
+            .chain(self.unplaced_events.iter())
+            .flat_map(|event| event.tags.iter().cloned())
+            .collect::<BTreeSet<_>>();
+        egui::ComboBox::from_id_salt("query.tag")
+            .selected_text(self.state.tag_filter.as_deref().unwrap_or("All tags"))
+            .show_ui(ui, |ui| {
+                filters_changed |= ui
+                    .selectable_value(&mut self.state.tag_filter, None, "All tags")
+                    .changed();
+                for tag in tags {
+                    filters_changed |= ui
+                        .selectable_value(
+                            &mut self.state.tag_filter,
+                            Some(tag.clone()),
+                            tag,
+                        )
+                        .changed();
+                }
+            });
+
         egui::ComboBox::from_id_salt("query.status")
             .selected_text(
                 self.state
