@@ -4112,7 +4112,82 @@ mod tests {
     }
 
     #[test]
-    fn store_rejects_by_month_day_on_non_monthly_recurrence() {
+    fn store_rejects_yearly_by_month_day_without_by_month() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Invalid yearly BYMONTHDAY",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: None,
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_month_day: vec![1],
+            by_month_weekday: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let error = store
+            .upsert_event(&event)
+            .expect_err("yearly BYMONTHDAY without BYMONTH must not persist");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event recurrence definition")
+        );
+        assert_eq!(store.event_count().expect("event count"), 0);
+    }
+
+    #[test]
+    fn yearly_by_month_and_month_day_roundtrips_through_event_storage() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 6, 15).expect("day");
+        let mut event = TemporalEvent::new(
+            "Yearly month-day selectors",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: Some(8),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: vec![1, 7, 12],
+            by_month_day: vec![1, -1],
+            by_month_weekday: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        store.upsert_event(&event).expect("save");
+        let loaded = store
+            .event_by_id(event.id)
+            .expect("load")
+            .expect("stored event");
+        assert_eq!(loaded.recurrence, event.recurrence);
+    }
+
+    #[test]
+    fn store_rejects_by_month_day_without_supported_month_context() {
         use crate::domain::{RecurrenceFrequency, RecurrenceRule};
 
         let store = TemporalStore::open_in_memory().expect("store");
