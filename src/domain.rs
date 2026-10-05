@@ -814,7 +814,10 @@ impl fmt::Display for RecurrenceError {
                 )
             }
             Self::DuplicateOrdinalByWeekday(ordinal, weekday) => {
-                write!(formatter, "duplicate ordinal BYDAY selector {ordinal} {weekday}")
+                write!(
+                    formatter,
+                    "duplicate ordinal BYDAY selector {ordinal} {weekday}"
+                )
             }
             Self::UnsupportedTimeKind(kind) => {
                 write!(
@@ -1441,7 +1444,8 @@ fn yearly_recurrence_candidates(
         }
         if !rule.by_month_day.is_empty() {
             candidate_dates.retain(|date| {
-                let Some(month_start) = NaiveDate::from_ymd_opt(date.year(), date.month(), 1) else {
+                let Some(month_start) = NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
+                else {
                     return false;
                 };
                 rule.by_month_day
@@ -1452,7 +1456,8 @@ fn yearly_recurrence_candidates(
         }
         if !rule.by_month_weekday.is_empty() {
             candidate_dates.retain(|date| {
-                let Some(month_start) = NaiveDate::from_ymd_opt(date.year(), date.month(), 1) else {
+                let Some(month_start) = NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
+                else {
                     return false;
                 };
                 rule.by_month_weekday
@@ -1466,45 +1471,47 @@ fn yearly_recurrence_candidates(
         months.sort_unstable();
 
         for month in months {
-        let Some(month_start) = NaiveDate::from_ymd_opt(active_year, u32::from(month), 1) else {
-            continue;
-        };
-
-        if !rule.by_month_weekday.is_empty() {
-            let month_day_dates = (!rule.by_month_day.is_empty()).then(|| {
-                rule.by_month_day
-                    .iter()
-                    .filter_map(|selector| resolve_month_day(month_start, *selector))
-                    .collect::<HashSet<_>>()
-            });
-
-            for selector in &rule.by_month_weekday {
-                let Some(candidate_date) = resolve_ordinal_weekday(month_start, *selector) else {
-                    continue;
-                };
-                if month_day_dates
-                    .as_ref()
-                    .is_some_and(|dates| !dates.contains(&candidate_date))
-                {
-                    continue;
-                }
-                candidate_dates.push(candidate_date);
-            }
-        } else if !rule.by_month_day.is_empty() {
-            for day in &rule.by_month_day {
-                let Some(candidate_date) = resolve_month_day(month_start, *day) else {
-                    continue;
-                };
-                candidate_dates.push(candidate_date);
-            }
-        } else {
-            let Some(candidate_date) =
-                NaiveDate::from_ymd_opt(active_year, u32::from(month), base_date.day())
+            let Some(month_start) = NaiveDate::from_ymd_opt(active_year, u32::from(month), 1)
             else {
                 continue;
             };
-            candidate_dates.push(candidate_date);
-        }
+
+            if !rule.by_month_weekday.is_empty() {
+                let month_day_dates = (!rule.by_month_day.is_empty()).then(|| {
+                    rule.by_month_day
+                        .iter()
+                        .filter_map(|selector| resolve_month_day(month_start, *selector))
+                        .collect::<HashSet<_>>()
+                });
+
+                for selector in &rule.by_month_weekday {
+                    let Some(candidate_date) = resolve_ordinal_weekday(month_start, *selector)
+                    else {
+                        continue;
+                    };
+                    if month_day_dates
+                        .as_ref()
+                        .is_some_and(|dates| !dates.contains(&candidate_date))
+                    {
+                        continue;
+                    }
+                    candidate_dates.push(candidate_date);
+                }
+            } else if !rule.by_month_day.is_empty() {
+                for day in &rule.by_month_day {
+                    let Some(candidate_date) = resolve_month_day(month_start, *day) else {
+                        continue;
+                    };
+                    candidate_dates.push(candidate_date);
+                }
+            } else {
+                let Some(candidate_date) =
+                    NaiveDate::from_ymd_opt(active_year, u32::from(month), base_date.day())
+                else {
+                    continue;
+                };
+                candidate_dates.push(candidate_date);
+            }
         }
     }
 
