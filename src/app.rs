@@ -3326,11 +3326,12 @@ fn timeline_span(
             )
         }
         TimeSpec::Floating { start, end, .. } => {
+            let point = end.is_none();
             let end = end.unwrap_or(start);
             (
                 date_fraction(start.date(), start.time().num_seconds_from_midnight()),
                 date_fraction(end.date(), end.time().num_seconds_from_midnight()),
-                event.time.matches_instantaneous(),
+                point,
             )
         }
         TimeSpec::Month { year, month } => {
@@ -3358,7 +3359,12 @@ fn timeline_span(
         TimeSpec::Unknown { .. } => return None,
     };
 
-    if raw_end < 0.0 || raw_start > 1.0 {
+    let outside_window = if point {
+        raw_start < 0.0 || raw_start >= 1.0
+    } else {
+        raw_end <= 0.0 || raw_start >= 1.0
+    };
+    if outside_window {
         return None;
     }
 
