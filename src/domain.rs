@@ -597,6 +597,25 @@ impl TemporalEvent {
         self.time.display_time_label(timezone)
     }
 
+    pub fn validate_recurrence(&self) -> Result<(), RecurrenceError> {
+        let Some(rule) = self.recurrence.as_ref() else {
+            return Ok(());
+        };
+
+        self.validate_recurrence()?;
+
+        if let TimeSpec::Instant {
+            source_timezone: Some(raw),
+            ..
+        } = &self.time
+        {
+            raw.parse::<Tz>()
+                .map_err(|_| RecurrenceError::InvalidSourceTimezone(raw.clone()))?;
+        }
+
+        Ok(())
+    }
+
     pub fn occurrences_in_window(
         &self,
         start: NaiveDate,
