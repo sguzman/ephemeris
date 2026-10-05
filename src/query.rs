@@ -1667,6 +1667,11 @@ mod tests {
                     ..EventQuery::default()
                 },
             }],
+            table_columns: vec![
+                TableColumn::Title,
+                TableColumn::Date,
+                TableColumn::Jurisdiction,
+            ],
             overlays: vec![Overlay {
                 id: Uuid::new_v4(),
                 name: "Federal".to_string(),
