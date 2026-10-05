@@ -25,6 +25,8 @@ At the hardened Phase 8 recurrence-selector checkpoint, all **141** library test
 
 The prepared Phase 8 selector stack through BYSETPOS, BYWEEKNO, and monthly plain BYDAY is attached to `main` at `86cc3dbf15548bfb41427f79d5c06e535a80b595` and targets **176** library tests. Fresh CI verification is pending; the 141-test checkpoint above remains the last verified gate until that run completes.
 
+A further staging slice at code checkpoint `3f356b7c745b0fc6ba8de6cb8e30041c6678454b` adds yearly plain BYDAY and targets **182** library tests. It remains unverified while GitHub-hosted Actions runners are degraded.
+
 ## Implemented architecture
 
 ### Native application
@@ -95,6 +97,7 @@ Implemented:
 - plain and ordinal monthly BYDAY selectors form one resolved BYDAY civil-date union; when BYMONTHDAY is present it filters that union before BYSETPOS/COUNT/EXDATE/override processing;
 - the canonical last-weekday rule (`MO,TU,WE,TH,FR` + `BYSETPOS=-1`) is therefore representable directly;
 - positive yearly BYMONTH selection for months 1-12, with duplicate/range/non-yearly validation;
+- yearly plain BYDAY expansion for every selected weekday across the active recurrence year, or only inside selected BYMONTH months when BYMONTH is present;
 - yearly BYMONTH + signed BYMONTHDAY composition, producing selected month/day candidates with positive or month-end-relative day selectors;
 - yearly BYMONTH + ordinal BYDAY composition, where ordinal weekdays are resolved inside each selected month rather than across the whole recurrence year;
 - when yearly BYMONTHDAY and ordinal BYDAY are both present, Ephemeris intersects their resolved civil-date sets independently inside each selected month before COUNT/EXDATE/override processing;
@@ -106,7 +109,7 @@ Implemented:
 - week 53 is skipped in week-number years that contain only 52 weeks, and BYMONTH/BYYEARDAY plus valid BYMONTHDAY context filter week-number candidates before BYSETPOS/COUNT/exceptions;
 - signed yearly BYYEARDAY selection for `-366..=-1` and `1..=366`, with zero/out-of-range/duplicate/non-yearly validation;
 - positive BYYEARDAY values count from January 1 and negative values count backward from year-end (`-1` = December 31); day 366 is skipped in non-leap years rather than coerced;
-- when BYYEARDAY is combined with BYMONTH and existing month-scoped selectors, those selectors filter the resolved year-day set before COUNT/EXDATE/override processing;
+- when BYYEARDAY is combined with BYMONTH, plain BYDAY, and existing month-scoped selectors, those selectors filter the resolved year-day set before COUNT/EXDATE/override processing;
 - generic signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied to each recurrence interval's fully resolved BY-selector candidate set before COUNT is consumed;
 - BYSETPOS requires at least one supported BY selector, rejects zero/out-of-range/duplicate positions, ignores positions outside the current candidate-set size, and deduplicates alias positions that resolve to the same slot;
 - BYSETPOS is shared by visible expansion and override-target validation, preserving original-slot identity and exception semantics;
@@ -122,11 +125,11 @@ Implemented:
 - preservation of all-day/range duration;
 - exact/source-timezone recurrence by source wall clock across DST;
 - invalid calendar dates in monthly/yearly series are skipped rather than coerced;
-- recurrence definitions, weekly/monthly-plain-BYDAY/WKST/BYWEEKNO/BYYEARDAY/BYMONTHDAY/monthly-ordinal-BYDAY/BYMONTH/BYSETPOS selector constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
+- recurrence definitions, weekly/monthly/yearly-plain-BYDAY/WKST/BYWEEKNO/BYYEARDAY/BYMONTHDAY/monthly-ordinal-BYDAY/BYMONTH/BYSETPOS selector constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond monthly plain/ordinal BYDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented month-oriented combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond weekly/monthly/yearly plain BYDAY, monthly ordinal BYDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented month-oriented combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
