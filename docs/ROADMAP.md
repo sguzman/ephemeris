@@ -190,7 +190,7 @@ This is explicitly tracked as a product bug, not accepted polish. The later layo
 
 ## Phase 5 - Query and saved views
 
-Status: **active**
+Status: **substantially complete**
 
 Implemented:
 
@@ -284,9 +284,16 @@ Implemented calendar-algebra foundation:
 
 The composition-layer GUI editor is implemented: layers can be enabled/disabled, renamed, assigned Union/Intersect/Subtract, reordered, deleted, and edited through the recursive query editor.
 
-Next programmable-view work:
+Implemented saved-view-reference composition:
 
-- saved-view inheritance/composition with cycle-safe semantics
+- composition layers can reference another SavedView by stable UUID;
+- referenced logical sets recursively include query, source visibility, composition, and overlays;
+- referenced presentation state is not inherited;
+- missing references are explicit no-ops;
+- direct/indirect cycles are rejected on save and at the store boundary;
+- runtime evaluation defensively skips cyclic edges in corrupt/external data.
+
+Next major work moves into Phase 6 source management/history. Programmable-view inheritance is no longer the blocking Phase 5 boundary.
 
 Exit criterion remains:
 
