@@ -813,8 +813,7 @@ impl EphemerisApp {
                     let mut materialized = event.clone();
                     materialized.id = occurrence.id;
                     materialized.time = occurrence.time;
-                    self.occurrence_parent_ids
-                        .insert(materialized.id, event.id);
+                    self.occurrence_parent_ids.insert(materialized.id, event.id);
                     self.events.push(materialized);
                 }
             } else {
