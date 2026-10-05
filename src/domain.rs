@@ -3548,12 +3548,14 @@ mod tests {
     }
 
     #[test]
-    fn yearly_plain_byday_requires_by_week_no_context() {
+    fn yearly_plain_byday_rejects_custom_week_start_without_week_number_context() {
         let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.week_start = RecurrenceWeekday::Sunday;
         rule.by_weekday = vec![RecurrenceWeekday::Monday];
+
         assert!(matches!(
             rule.validate(),
-            Err(RecurrenceError::ByWeekdayRequiresSupportedContext)
+            Err(RecurrenceError::WeekStartRequiresWeekContext)
         ));
     }
 
