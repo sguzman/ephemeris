@@ -445,6 +445,26 @@ pub enum RecurrenceFrequency {
     Yearly,
 }
 
+impl RecurrenceFrequency {
+    pub const ALL: [Self; 4] = [Self::Daily, Self::Weekly, Self::Monthly, Self::Yearly];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Daily => "daily",
+            Self::Weekly => "weekly",
+            Self::Monthly => "monthly",
+            Self::Yearly => "yearly",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        let normalized = raw.trim().to_ascii_lowercase();
+        Self::ALL
+            .into_iter()
+            .find(|frequency| frequency.as_str() == normalized)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecurrenceRule {
     pub frequency: RecurrenceFrequency,
