@@ -14,7 +14,7 @@ use crate::domain::{
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -103,6 +103,7 @@ pub struct TariaReleaseHistoryEntry {
     pub calendar_set_count: u64,
     pub projected_calendar_count: u64,
     pub source_count: u64,
+    pub snapshot_event_count: u64,
     pub resolved_member_event_count: u64,
 }
 
@@ -116,8 +117,22 @@ pub struct TariaReleaseDiff {
     pub removed_bundle_refs: Vec<String>,
     pub added_calendar_ids: Vec<String>,
     pub removed_calendar_ids: Vec<String>,
+    pub added_snapshot_event_ids: Vec<Uuid>,
+    pub removed_snapshot_event_ids: Vec<Uuid>,
+    pub moved_event_ids: Vec<Uuid>,
+    pub status_changed_event_ids: Vec<Uuid>,
+    pub newly_cancelled_event_ids: Vec<Uuid>,
     pub added_member_event_ids: Vec<Uuid>,
     pub removed_member_event_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Clone)]
+struct StoredTariaEventSnapshot {
+    event_id: Uuid,
+    normalized_title: String,
+    status: String,
+    time_json: String,
+    snapshot_json: String,
 }
 
 pub struct TemporalStore {
@@ -769,6 +784,114 @@ impl TemporalStore {
         Ok(source_ids)
     }
 
+    pub fn capture_taria_release_event_snapshots(
+        &self,
+        release_id: &str,
+        event_ids: &BTreeSet<Uuid>,
+    ) -> anyhow::Result<usize> {
+        let mut captured = 0usize;
+
+        for event_id in event_ids {
+            let event = self
+                .event_by_id(*event_id)?
+                .ok_or_else(|| anyhow!("cannot snapshot missing canonical event {event_id}"))?;
+            let time_json = serde_json::to_string(&event.time)
+                .context("failed to encode release event time")?;
+            let snapshot_json = canonical_event_snapshot_json(&event)?;
+
+            let existing: Option<String> = self
+                .conn
+                .query_row(
+                    r#"
+                    SELECT snapshot_json
+                    FROM taria_release_event_snapshots
+                    WHERE release_id = ?1 AND event_id = ?2
+                    "#,
+                    params![release_id, event_id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .context("failed to check release event snapshot immutability")?;
+
+            if let Some(existing) = existing {
+                if existing != snapshot_json {
+                    return Err(anyhow!(
+                        "Taria release {release_id} event snapshot changed for {event_id}"
+                    ));
+                }
+                continue;
+            }
+
+            self.conn
+                .execute(
+                    r#"
+                    INSERT INTO taria_release_event_snapshots (
+                        release_id, event_id, normalized_title, status,
+                        time_json, snapshot_json
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    "#,
+                    params![
+                        release_id,
+                        event_id.to_string(),
+                        event.normalized_title,
+                        event.status.as_str(),
+                        time_json,
+                        snapshot_json,
+                    ],
+                )
+                .context("failed to insert Taria release event snapshot")?;
+            captured += 1;
+        }
+
+        Ok(captured)
+    }
+
+    pub fn taria_release_event_snapshot_count(&self, release_id: &str) -> anyhow::Result<u64> {
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM taria_release_event_snapshots WHERE release_id = ?1",
+                params![release_id],
+                |row| row.get(0),
+            )
+            .context("failed to count Taria release event snapshots")?;
+        i64_to_u64(count, "release event snapshot count")
+    }
+
+    fn taria_release_event_snapshots(
+        &self,
+        release_id: &str,
+    ) -> anyhow::Result<HashMap<Uuid, StoredTariaEventSnapshot>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT event_id, normalized_title, status, time_json, snapshot_json
+            FROM taria_release_event_snapshots
+            WHERE release_id = ?1
+            ORDER BY event_id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![release_id])?;
+        let mut snapshots = HashMap::new();
+
+        while let Some(row) = rows.next()? {
+            let raw_event_id: String = row.get(0)?;
+            let event_id = Uuid::parse_str(&raw_event_id)
+                .with_context(|| format!("invalid release snapshot event id: {raw_event_id}"))?;
+            snapshots.insert(
+                event_id,
+                StoredTariaEventSnapshot {
+                    event_id,
+                    normalized_title: row.get(1)?,
+                    status: row.get(2)?,
+                    time_json: row.get(3)?,
+                    snapshot_json: row.get(4)?,
+                },
+            );
+        }
+
+        Ok(snapshots)
+    }
+
     pub fn replace_taria_calendar_set(
         &self,
         set: &TariaCalendarSetRecord,
@@ -1039,6 +1162,11 @@ impl TemporalStore {
                     WHERE source_link.release_id = release.release_id
                 ),
                 (
+                    SELECT COUNT(*)
+                    FROM taria_release_event_snapshots AS snapshot
+                    WHERE snapshot.release_id = release.release_id
+                ),
+                (
                     SELECT COUNT(DISTINCT membership.event_id)
                     FROM taria_calendar_memberships AS membership
                     JOIN taria_release_calendar_sets AS link
@@ -1064,8 +1192,9 @@ impl TemporalStore {
                 calendar_set_count: i64_to_u64(row.get(7)?, "CalendarSet count")?,
                 projected_calendar_count: i64_to_u64(row.get(8)?, "projected calendar count")?,
                 source_count: i64_to_u64(row.get(9)?, "source count")?,
+                snapshot_event_count: i64_to_u64(row.get(10)?, "snapshot event count")?,
                 resolved_member_event_count: i64_to_u64(
-                    row.get(10)?,
+                    row.get(11)?,
                     "resolved member event count",
                 )?,
             });
@@ -1199,6 +1328,33 @@ impl TemporalStore {
             "#,
         )?;
 
+        let from_snapshots = self.taria_release_event_snapshots(from_release_id)?;
+        let to_snapshots = self.taria_release_event_snapshots(to_release_id)?;
+        let from_snapshot_ids = from_snapshots
+            .keys()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let to_snapshot_ids = to_snapshots.keys().copied().collect::<BTreeSet<_>>();
+
+        let mut moved_event_ids = Vec::new();
+        let mut status_changed_event_ids = Vec::new();
+        let mut newly_cancelled_event_ids = Vec::new();
+
+        for event_id in from_snapshot_ids.intersection(&to_snapshot_ids) {
+            let from = &from_snapshots[event_id];
+            let to = &to_snapshots[event_id];
+
+            if from.time_json != to.time_json {
+                moved_event_ids.push(*event_id);
+            }
+            if from.status != to.status {
+                status_changed_event_ids.push(*event_id);
+                if to.status == EventStatus::Cancelled.as_str() {
+                    newly_cancelled_event_ids.push(*event_id);
+                }
+            }
+        }
+
         Ok(TariaReleaseDiff {
             from_release_id: from_release_id.to_string(),
             to_release_id: to_release_id.to_string(),
@@ -1208,6 +1364,17 @@ impl TemporalStore {
             removed_bundle_refs: set_added(&to_bundles, &from_bundles),
             added_calendar_ids: set_added(&from_calendars, &to_calendars),
             removed_calendar_ids: set_added(&to_calendars, &from_calendars),
+            added_snapshot_event_ids: to_snapshot_ids
+                .difference(&from_snapshot_ids)
+                .copied()
+                .collect(),
+            removed_snapshot_event_ids: from_snapshot_ids
+                .difference(&to_snapshot_ids)
+                .copied()
+                .collect(),
+            moved_event_ids,
+            status_changed_event_ids,
+            newly_cancelled_event_ids,
             added_member_event_ids: set_added(&from_events, &to_events)
                 .into_iter()
                 .map(|value| Uuid::parse_str(&value).context("invalid stored event UUID"))
@@ -1833,6 +2000,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 10 {
         migrate_v10_to_v11(conn)?;
+        current = 11;
+    }
+
+    if current == 11 {
+        migrate_v11_to_v12(conn)?;
     }
 
     Ok(())
@@ -1999,6 +2171,19 @@ fn create_taria_release_schema_current(conn: &Connection) -> anyhow::Result<()> 
         CREATE INDEX IF NOT EXISTS taria_release_sources_source
             ON taria_release_sources(source_id, release_id);
 
+        CREATE TABLE IF NOT EXISTS taria_release_event_snapshots (
+            release_id TEXT NOT NULL REFERENCES taria_releases(release_id) ON DELETE CASCADE,
+            event_id TEXT NOT NULL,
+            normalized_title TEXT NOT NULL,
+            status TEXT NOT NULL,
+            time_json TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            PRIMARY KEY (release_id, event_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS taria_release_event_snapshots_event
+            ON taria_release_event_snapshots(event_id, release_id);
+
         CREATE TABLE taria_calendar_sets (
             calendar_set_id TEXT PRIMARY KEY,
             projection_ref TEXT NOT NULL,
@@ -2146,6 +2331,33 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> anyhow::Result<()> {
         .context("failed to set schema version 3")?;
     tx.commit()
         .context("failed to commit v2 to v3 schema migration")
+}
+
+fn migrate_v11_to_v12(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v11 to v12 migration")?;
+    tx.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS taria_release_event_snapshots (
+            release_id TEXT NOT NULL REFERENCES taria_releases(release_id) ON DELETE CASCADE,
+            event_id TEXT NOT NULL,
+            normalized_title TEXT NOT NULL,
+            status TEXT NOT NULL,
+            time_json TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            PRIMARY KEY (release_id, event_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS taria_release_event_snapshots_event
+            ON taria_release_event_snapshots(event_id, release_id);
+        "#,
+    )
+    .context("failed to add Taria release event snapshots")?;
+    tx.pragma_update(None, "user_version", 12)
+        .context("failed to set schema version 12")?;
+    tx.commit()
+        .context("failed to commit v11 to v12 schema migration")
 }
 
 fn migrate_v10_to_v11(conn: &mut Connection) -> anyhow::Result<()> {
@@ -2845,6 +3057,15 @@ mod tests {
             )
             .expect("release source table");
         assert_eq!(release_source_table, 1);
+
+        let snapshot_table: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'taria_release_event_snapshots'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("release event snapshot table");
+        assert_eq!(snapshot_table, 1);
     }
 
     #[test]
