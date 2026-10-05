@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the hardened Phase 8 recurrence-selector checkpoint, all **118** library tests pass. Verified implementation code checkpoint: `b5c72b175ed6f84c5eb8373d315afdaca5848fd5`, with format, check, strict Clippy, and tests all green.
+At the hardened Phase 8 recurrence-selector checkpoint, all **128** library tests pass. Verified implementation code checkpoint: `ab219f2937412ba5ebe0d5e9b51255ccec2f8d90`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -87,6 +87,9 @@ Implemented:
 - signed monthly BYMONTHDAY selection for civil days `-31..=-1` and `1..=31`, with zero/duplicate/range/non-monthly validation;
 - positive BYMONTHDAY values count from month start, negative values count backward from month end (`-1` = last day), and selector aliases resolving to the same civil date are deduplicated;
 - chronological resolved-date generation within each active month, with first-month candidates before DTSTART omitted and impossible civil dates skipped;
+- monthly ordinal BYDAY selection for first-through-fifth or last-through-fifth-from-last weekdays (`±1..±5`), with zero/out-of-range/non-monthly/duplicate validation;
+- ordinal weekday candidates resolved chronologically inside each active month, with missing fifth weekdays skipped and first-month candidates before DTSTART omitted;
+- when BYMONTHDAY and ordinal monthly BYDAY are both present, Ephemeris intersects their resolved civil-date sets before COUNT/EXDATE/override processing, matching filtering semantics rather than unioning unrelated candidates;
 - positive yearly BYMONTH selection for months 1-12, with duplicate/range/non-yearly validation;
 - chronological month generation within each active recurrence year, with first-year candidates before DTSTART omitted and DTSTART's civil day preserved where that date exists;
 - deterministic occurrence UUID derived from the canonical event and original recurrence slot;
@@ -100,11 +103,11 @@ Implemented:
 - preservation of all-day/range duration;
 - exact/source-timezone recurrence by source wall clock across DST;
 - invalid calendar dates in monthly/yearly series are skipped rather than coerced;
-- recurrence definitions, BYDAY/WKST/BYMONTHDAY/BYMONTH selector constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
+- recurrence definitions, weekly-BYDAY/WKST/BYMONTHDAY/monthly-ordinal-BYDAY/BYMONTH selector constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: broader RRULE dimensions (for example ordinal/month-oriented BYDAY and selector combinations), richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: broader yearly/month-oriented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 

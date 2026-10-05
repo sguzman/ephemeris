@@ -81,13 +81,14 @@ Current canonical recurrence definitions support:
 - optional inclusive civil-date `until`;
 - weekly multi-day BYDAY weekday selection with explicit WKST recurrence-week anchoring;
 - signed monthly BYMONTHDAY selection for `-31..=-1` and `1..=31`;
+- monthly ordinal BYDAY selection using ordinal weekdays `-5..=-1` or `1..=5`;
 - positive yearly BYMONTH selection for months 1-12;
 - RDATE additions;
 - EXDATE exclusions;
 - per-occurrence moved and cancelled overrides;
 - date-only, all-day, floating, and exact/source-timezone base events.
 
-Month/year/unresolved precision cannot be a recurrence base and is rejected before persistence. BYDAY is currently supported only for weekly recurrence; duplicate weekdays are rejected, and custom WKST is accepted only for weekly BYDAY. BYMONTHDAY is currently supported only for monthly recurrence, accepts signed values `-31..=-1` and `1..=31`, rejects zero/duplicate/out-of-range values, and keeps previously persisted positive selector values backward-compatible. BYMONTH is currently supported only for yearly recurrence, accepts positive month numbers 1-12, and rejects duplicate or out-of-range values. Exception timestamps must use the same temporal kind as the series, duplicate overrides are rejected, and one original occurrence slot cannot simultaneously be EXDATE-excluded and overridden. An override's original slot must also resolve to a real RRULE-generated or RDATE-added occurrence; detached overrides cannot manufacture phantom occurrences.
+Month/year/unresolved precision cannot be a recurrence base and is rejected before persistence. BYDAY is currently supported only for weekly recurrence; duplicate weekdays are rejected, and custom WKST is accepted only for weekly BYDAY. BYMONTHDAY is currently supported only for monthly recurrence, accepts signed values `-31..=-1` and `1..=31`, rejects zero/duplicate/out-of-range values, and keeps previously persisted positive selector values backward-compatible. Monthly ordinal BYDAY is also supported through a separate canonical ordinal-weekday selector with ordinals `-5..=-1` or `1..=5`; zero/out-of-range ordinals, duplicate ordinal+weekday selectors, and non-monthly use are rejected. When BYMONTHDAY and monthly ordinal BYDAY are both present, their resolved civil-date sets are intersected. BYMONTH is currently supported only for yearly recurrence, accepts positive month numbers 1-12, and rejects duplicate or out-of-range values. Exception timestamps must use the same temporal kind as the series, duplicate overrides are rejected, and one original occurrence slot cannot simultaneously be EXDATE-excluded and overridden. An override's original slot must also resolve to a real RRULE-generated or RDATE-added occurrence; detached overrides cannot manufacture phantom occurrences.
 
 Exact recurrence with a retained source timezone advances in source-local wall-clock time, then resolves each occurrence back to UTC. This preserves a series such as 09:00 America/New_York across DST rather than preserving a fixed UTC hour. Nonexistent local times are skipped; ambiguous local times resolve deterministically to the earlier instant.
 
@@ -95,15 +96,19 @@ Weekly BYDAY recurrence uses the persisted WKST value as its recurrence-week anc
 
 Monthly BYMONTHDAY recurrence resolves positive selectors from the start of the month and negative selectors backward from month-end (`-1` is the last day, `-2` the penultimate day, and so on). Resolved civil dates are sorted chronologically and deduplicated before occurrence counting, so different selectors that resolve to the same date produce one occurrence. In the first active month, resolved dates earlier than DTSTART are omitted; DTSTART itself is an RRULE occurrence only when a selector resolves to it. `interval = N` means every Nth month measured from DTSTART's month. A selector that cannot resolve inside a particular month is skipped rather than coerced.
 
+Monthly ordinal BYDAY recurrence resolves selectors such as `1 Monday` (first Monday), `-1 Friday` (last Friday), and `5 Monday` (fifth Monday). Positive ordinals count forward from month start; negative ordinals count backward from month end. Resolved dates are sorted and deduplicated before occurrence counting. A missing fifth weekday simply contributes no candidate for that month. In the first active month, resolved dates before DTSTART are omitted.
+
+When monthly BYMONTHDAY and ordinal BYDAY are combined, Ephemeris first resolves both selector families to civil dates for the active recurrence month, then keeps only dates present in both sets. That intersection is sorted/deduplicated before COUNT is consumed and before EXDATE or occurrence overrides are applied. This preserves the same original-slot identity and override-target validation used by single-selector monthly series.
+
 Yearly BYMONTH recurrence generates selected positive months in ascending order inside every active recurrence year while preserving DTSTART's civil day and local/source-wall-clock time. In the first active year, selected months whose resulting date is before DTSTART are omitted; DTSTART itself is an RRULE occurrence only when its month is selected. `interval = N` means every Nth recurrence year measured from DTSTART's year. If DTSTART's day does not exist in a selected month, that candidate is skipped rather than coerced.
 
-Monthly/yearly recurrence without BYMONTHDAY/BYMONTH preserves the original calendar month/day. An invalid target date is skipped rather than coerced to month-end. Count applies to valid RRULE-generated occurrences across selected BYDAY/BYMONTHDAY/BYMONTH candidates; RDATE additions do not consume the RRULE count, and EXDATE is applied after candidate generation.
+Monthly/yearly recurrence without explicit monthly/yearly selectors preserves the original calendar month/day. An invalid target date is skipped rather than coerced to month-end. Count applies to valid RRULE-generated occurrences across selected weekly BYDAY, monthly BYMONTHDAY, monthly ordinal BYDAY, and yearly BYMONTH candidates; RDATE additions do not consume the RRULE count, and EXDATE is applied after candidate generation.
 
 Conceptually, the visible occurrence set is built from RRULE candidates plus RDATE additions, with EXDATE removing matching original slots and occurrence overrides transforming matching slots. A moved override changes the rendered time without changing the identity of the original slot. A cancelled override remains materialized with cancelled lifecycle status; cancellation is therefore not equivalent to EXDATE disappearance.
 
 Still required for fuller interoperable recurrence semantics:
 
-- broader RRULE dimensions beyond the current frequency/interval/count/until/weekly-BYDAY/WKST/signed-monthly-BYMONTHDAY/yearly-BYMONTH subset, including ordinal/month-oriented BYDAY and selector combinations;
+- broader RRULE dimensions beyond the current frequency/interval/count/until/weekly-BYDAY/WKST/signed-monthly-BYMONTHDAY/monthly-ordinal-BYDAY/monthly-selector-intersection/yearly-BYMONTH subset, especially yearly/month-oriented combinations;
 - richer recurrence/exception authoring and editing;
 - source-adapter mapping for external recurrence-exception representations.
 

@@ -371,6 +371,8 @@ Implemented recurrence foundation:
 - interval, count, and inclusive-until bounds
 - weekly multi-day BYDAY selection with explicit WKST recurrence-week anchoring
 - signed monthly BYMONTHDAY selection for `-31..=-1` and `1..=31`, including month-end-relative selectors, resolved-date ordering/deduplication, and impossible-date skipping
+- monthly ordinal BYDAY selection for `±1..±5` weekdays, including last-weekday forms and missing-fifth skipping
+- BYMONTHDAY + monthly ordinal BYDAY intersection over resolved civil dates before occurrence counting/exceptions
 - positive yearly BYMONTH selection for months 1-12 while preserving DTSTART's civil day where valid
 - active-window occurrence expansion rather than eager infinite materialization
 - deterministic occurrence identity and canonical-event lineage
@@ -387,7 +389,7 @@ Implemented recurrence foundation:
 
 Next Phase 8 work:
 
-- broader RRULE dimensions (including ordinal/month-oriented BYDAY and selector combinations) plus recurrence-exception interoperability
+- broader yearly/month-oriented RRULE selector combinations plus recurrence-exception interoperability
 - richer recurrence/exception authoring and editing
 - relations
 - collections/sequences
