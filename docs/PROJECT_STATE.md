@@ -193,14 +193,24 @@ Layouts are independent from date range:
 
 - Grid
 - Agenda
+- Compact Agenda
 - Stream
+- Timeline
+- Density
+- Summary
 - Table
 
-That separation is deliberate. A Month view can be rendered as a grid, agenda, chronological stream, or dense table; presentation does not define the temporal query.
+That separation is deliberate. A Month view can be rendered through any of these presentation surfaces without redefining the temporal query or duplicating canonical events.
 
-Stream has intentionally different ordering semantics from Agenda/Table: it is always chronological. Month/year precision markers sort before date-only/all-day records at their anchor date, timed instant/floating records then sort by actual local clock time, and unresolved records sort last. Saved grouping/sort settings remain preserved but inactive while Stream is selected.
+Stream has intentionally different ordering semantics from Agenda/Compact/Table: it is always chronological. Month/year precision markers sort before date-only/all-day records at their anchor date, timed instant/floating records then sort by actual local clock time, and unresolved records sort last. Saved grouping/sort settings remain preserved but inactive while Stream is selected.
 
-Agenda and Table both use true group partitioning: grouping remains independent from the active stable sort rules rather than merely emitting repeated headings whenever the sort order changes group values.
+Timeline is a proportional interval view over the active Year/Quarter/Month/Week/Day window. Exact/floating instants render as points; date-only/all-day/range records render as spans; month/year precision spans their real coarse interval; unresolved records are not assigned fake positions. The axis uses view-scale ticks (month, week/day, or six-hour ticks).
+
+Density aggregates genuinely positioned events per day and renders relative intensity. Coarse month/year precision records are reported separately rather than sprayed across invented days. Clicking a Density day drills into Agenda + Day.
+
+Summary is the first pivot/summary foundation. It reuses the existing GroupBy dimension as its pivot axis and reports group count, share, earliest/latest positioned date, plus a precision breakdown. Sort/color settings remain preserved but inactive for aggregate rows.
+
+Agenda, Compact Agenda, and Table use true group partitioning: grouping remains independent from the active stable sort rules rather than merely emitting repeated headings whenever the sort order changes group values.
 
 ### Querying and presentation
 
@@ -226,7 +236,7 @@ Current presentation dimensions are also independent:
 - stable multi-key sorting
 - semantic fallback coloring by source, domain, jurisdiction, institution, event type, or status
 - ordered query-driven color rules with first-match precedence
-- Grid, Agenda, Stream, and Table layouts
+- Grid, Agenda, Compact Agenda, Stream, Timeline, Density, Summary, and Table layouts
 - ordered visible Table-column configuration independent from filtering/grouping/sorting
 
 These dimensions persist in saved views and do not reorganize or duplicate canonical events.
@@ -344,7 +354,7 @@ Implemented:
 - explicit RGB colors
 - enable/disable, edit, add/delete, and reorder controls
 - existing semantic ColorBy strategy remains the fallback
-- rules apply consistently across Grid, Agenda, Stream, Table, and unplaced records
+- rules apply consistently across Grid, Agenda, Compact Agenda, Stream, Timeline, Table, and unplaced records; aggregate Density/Summary views intentionally do not assign one event color to multi-event cells/rows
 - rules persist in saved views
 
 ### Calendar algebra foundation
