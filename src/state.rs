@@ -349,6 +349,21 @@ mod tests {
     }
 
     #[test]
+    fn compact_agenda_layout_roundtrips_in_ui_state() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("ui-state.json");
+        let state = PersistedUiState {
+            calendar_layout: CalendarLayout::CompactAgenda,
+            ..PersistedUiState::default()
+        };
+
+        state.save_to_path(&path).expect("save");
+        let loaded = PersistedUiState::load_from_path(&path).expect("load");
+
+        assert_eq!(loaded.calendar_layout, CalendarLayout::CompactAgenda);
+    }
+
+    #[test]
     fn timeline_layout_roundtrips_in_ui_state() {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("ui-state.json");
