@@ -4416,7 +4416,7 @@ mod tests {
     }
 
     #[test]
-    fn store_rejects_yearly_ordinal_byday_without_by_month() {
+    fn store_rejects_out_of_range_whole_year_ordinal_byday() {
         use crate::domain::{
             RecurrenceFrequency, RecurrenceOrdinalWeekday, RecurrenceRule, RecurrenceWeekday,
         };
@@ -4441,7 +4441,7 @@ mod tests {
             by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(54, RecurrenceWeekday::Monday)],
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4450,7 +4450,7 @@ mod tests {
 
         let error = store
             .upsert_event(&event)
-            .expect_err("yearly ordinal BYDAY without BYMONTH must not persist");
+            .expect_err("whole-year ordinal BYDAY beyond 53 must not persist");
         assert!(
             error
                 .to_string()
