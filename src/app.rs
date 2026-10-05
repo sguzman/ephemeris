@@ -1101,6 +1101,9 @@ impl EphemerisApp {
             if input.key_pressed(egui::Key::L) {
                 target_layout = Some(CalendarLayout::Timeline);
             }
+            if input.key_pressed(egui::Key::H) {
+                target_layout = Some(CalendarLayout::Density);
+            }
         });
 
         if navigate != 0 {
@@ -1535,16 +1538,22 @@ impl EphemerisApp {
 
         let mut presentation_changed = false;
 
-        let chronology_locked = matches!(
+        let ordering_locked = matches!(
             self.state.calendar_layout,
-            CalendarLayout::Stream | CalendarLayout::Timeline
+            CalendarLayout::Stream | CalendarLayout::Timeline | CalendarLayout::Density
         );
-        if chronology_locked {
-            ui.small(
-                "Stream/Timeline own temporal ordering. Saved grouping and sort rules are preserved for Agenda/Table but do not alter these chronological layouts.",
-            );
+        let density_layout = self.state.calendar_layout == CalendarLayout::Density;
+        if ordering_locked {
+            ui.small(match self.state.calendar_layout {
+                CalendarLayout::Density => {
+                    "Density aggregates by day. Saved grouping and sort rules are preserved but do not alter this aggregate layout."
+                }
+                _ => {
+                    "Stream/Timeline own temporal ordering. Saved grouping and sort rules are preserved for Agenda/Compact/Table but do not alter these chronological layouts."
+                }
+            });
         }
-        ui.add_enabled_ui(!chronology_locked, |ui| {
+        ui.add_enabled_ui(!ordering_locked, |ui| {
             egui::ComboBox::from_id_salt("presentation.group")
                 .selected_text(self.state.group_by.label())
                 .show_ui(ui, |ui| {
@@ -1556,28 +1565,39 @@ impl EphemerisApp {
                 });
         });
 
-        ui.strong("Color rules");
-        ui.small("Rules are evaluated top to bottom; the first enabled match wins.");
+        ui.add_enabled_ui(!density_layout, |ui| {
+            ui.strong("Color rules");
+            ui.small("Rules are evaluated top to bottom; the first enabled match wins.");
 
-        presentation_changed |= render_color_rules_editor(
-            ui,
-            &mut self.state.color_rules,
-            "base-color-rule",
-            &membership_options,
-        );
+            presentation_changed |= render_color_rules_editor(
+                ui,
+                &mut self.state.color_rules,
+                "base-color-rule",
+                &membership_options,
+            );
 
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Fallback:");
-            egui::ComboBox::from_id_salt("presentation.color")
-                .selected_text(self.state.color_by.label())
-                .show_ui(ui, |ui| {
-                    for color_by in ColorBy::ALL {
-                        presentation_changed |= ui
-                            .selectable_value(&mut self.state.color_by, color_by, color_by.label())
-                            .changed();
-                    }
-                });
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Fallback:");
+                egui::ComboBox::from_id_salt("presentation.color")
+                    .selected_text(self.state.color_by.label())
+                    .show_ui(ui, |ui| {
+                        for color_by in ColorBy::ALL {
+                            presentation_changed |= ui
+                                .selectable_value(
+                                    &mut self.state.color_by,
+                                    color_by,
+                                    color_by.label(),
+                                )
+                                .changed();
+                        }
+                    });
+            });
         });
+        if density_layout {
+            ui.small(
+                "Density uses aggregate intensity rather than per-event color rules. Saved color settings are preserved for other layouts.",
+            );
+        }
 
         ui.separator();
         ui.strong("Calendar algebra");
@@ -1932,7 +1952,7 @@ impl EphemerisApp {
 
         ui.separator();
         ui.strong("Sort rules");
-        ui.add_enabled_ui(!chronology_locked, |ui| {
+        ui.add_enabled_ui(!ordering_locked, |ui| {
             let mut remove_sort = None;
             let can_remove_sort = self.state.sort_rules.len() > 1;
             for (index, rule) in self.state.sort_rules.iter_mut().enumerate() {
@@ -3157,6 +3177,9 @@ fn render_calendar(
                 colors,
             },
         ),
+        CalendarLayout::Density => {
+            render_density(ui, events, view, focus, timezone, monday_start)
+        }
         CalendarLayout::Table => render_table(
             ui,
             events,
@@ -3181,6 +3204,113 @@ fn render_calendar(
             CalendarView::Day => render_day(ui, events, focus, timezone, selected, colors),
         },
     }
+}
+
+fn render_density(
+    ui: &mut egui::Ui,
+    events: &[TemporalEvent],
+    view: CalendarView,
+    focus: NaiveDate,
+    timezone: Tz,
+    monday_start: bool,
+) -> Option<CalendarAction> {
+    let window = window_for_view(view, focus, monday_start);
+    let mut days = Vec::new();
+    let mut cursor = window.start;
+
+    while cursor < window.end_exclusive {
+        let count = events
+            .iter()
+            .filter(|event| event.time.occurs_on(cursor, timezone))
+            .count();
+        days.push((cursor, count));
+        cursor += chrono::Duration::days(1);
+    }
+
+    let max_count = days.iter().map(|(_, count)| *count).max().unwrap_or(0);
+    let imprecise_count = events
+        .iter()
+        .filter(|event| matches!(event.time, TimeSpec::Month { .. } | TimeSpec::Year { .. }))
+        .count();
+
+    ui.horizontal_wrapped(|ui| {
+        ui.strong("Density");
+        ui.small(format!("{} positioned day(s)", days.len()));
+        ui.small(format!("· peak {max_count} event(s)/day"));
+        if imprecise_count > 0 {
+            ui.small(format!(
+                "· {imprecise_count} coarse-precision event(s) not assigned to fake days"
+            ));
+        }
+    });
+    ui.separator();
+
+    let weekday_labels = if monday_start {
+        ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    } else {
+        ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    };
+
+    let mut action = None;
+    egui::Grid::new("density-grid")
+        .num_columns(7)
+        .spacing([4.0, 4.0])
+        .show(ui, |ui| {
+            for label in weekday_labels {
+                ui.small(RichText::new(label).strong());
+            }
+            ui.end_row();
+
+            let offset = if monday_start {
+                window.start.weekday().num_days_from_monday()
+            } else {
+                window.start.weekday().num_days_from_sunday()
+            };
+            for _ in 0..offset {
+                ui.label("");
+            }
+            let mut column = offset as usize;
+
+            for (day, count) in &days {
+                let fill = density_fill(ui, *count, max_count);
+                let text = if *count == 0 {
+                    day.day().to_string()
+                } else {
+                    format!("{}\n{}", day.day(), count)
+                };
+                let response = ui.add_sized(
+                    [52.0, 42.0],
+                    egui::Button::new(text)
+                        .fill(fill)
+                        .selected(false),
+                );
+                if response
+                    .on_hover_text(format!("{} · {} event(s)", day, count))
+                    .clicked()
+                {
+                    action = Some(CalendarAction::OpenDay(*day));
+                }
+
+                column += 1;
+                if column % 7 == 0 {
+                    ui.end_row();
+                }
+            }
+        });
+
+    action
+}
+
+fn density_fill(ui: &egui::Ui, count: usize, max_count: usize) -> Color32 {
+    if count == 0 || max_count == 0 {
+        return ui.visuals().extreme_bg_color;
+    }
+
+    let ratio = count as f32 / max_count as f32;
+    ui.visuals()
+        .selection
+        .bg_fill
+        .gamma_multiply(0.35 + ratio * 0.65)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
