@@ -2501,6 +2501,15 @@ struct ColorPresentation<'a> {
     query_context: QueryContext,
 }
 
+#[derive(Clone, Copy)]
+struct TableRenderContext<'a> {
+    selected: Option<Uuid>,
+    group_by: GroupBy,
+    sort_rules: &'a [SortRule],
+    table_columns: &'a [TableColumn],
+    colors: ColorPresentation<'a>,
+}
+
 fn render_calendar(
     ui: &mut egui::Ui,
     context: CalendarRenderContext<'_>,
@@ -2535,11 +2544,13 @@ fn render_calendar(
             ui,
             events,
             timezone,
-            selected,
-            group_by,
-            sort_rules,
-            table_columns,
-            colors,
+            TableRenderContext {
+                selected,
+                group_by,
+                sort_rules,
+                table_columns,
+                colors,
+            },
         ),
         CalendarLayout::Grid => match view {
             CalendarView::Year => render_year(ui, events, focus, timezone, selected, colors),
@@ -2614,12 +2625,15 @@ fn render_table(
     ui: &mut egui::Ui,
     events: &[TemporalEvent],
     timezone: Tz,
-    selected: Option<Uuid>,
-    group_by: GroupBy,
-    sort_rules: &[SortRule],
-    table_columns: &[TableColumn],
-    colors: ColorPresentation<'_>,
+    context: TableRenderContext<'_>,
 ) -> Option<CalendarAction> {
+    let TableRenderContext {
+        selected,
+        group_by,
+        sort_rules,
+        table_columns,
+        colors,
+    } = context;
     let groups = grouped_events(events, timezone, group_by, sort_rules);
     let mut action = None;
 
