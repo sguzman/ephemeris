@@ -3809,9 +3809,7 @@ fn snapshot_time_label(raw: Option<&str>, timezone: Tz) -> String {
             |end| format!("{start} → {end} exclusive · all day"),
         ),
         TimeSpec::Instant {
-            start_utc,
-            end_utc,
-            ..
+            start_utc, end_utc, ..
         } => {
             let start = start_utc.with_timezone(&timezone).to_rfc3339();
             end_utc.map_or(start.clone(), |end| {
