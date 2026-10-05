@@ -1364,8 +1364,59 @@ fn recurrence_rule_has_reachable_candidate(
         RecurrenceFrequency::Daily => daily_rule_has_reachable_candidate(base, rule),
         RecurrenceFrequency::Weekly => weekly_rule_has_reachable_candidate(base, rule),
         RecurrenceFrequency::Monthly => monthly_rule_has_reachable_candidate(base, rule),
-        RecurrenceFrequency::Yearly => Ok(true),
+        RecurrenceFrequency::Yearly => yearly_rule_has_reachable_candidate(base, rule),
     }
+}
+
+const GREGORIAN_CYCLE_YEARS: u64 = 400;
+
+fn yearly_rule_has_reachable_candidate(
+    base: &TimeSpec,
+    rule: &RecurrenceRule,
+) -> Result<bool, RecurrenceError> {
+    if rule.frequency != RecurrenceFrequency::Yearly {
+        return Ok(true);
+    }
+
+    let has_selector = !rule.by_weekday.is_empty()
+        || !rule.by_month.is_empty()
+        || !rule.by_week_no.is_empty()
+        || !rule.by_year_day.is_empty()
+        || !rule.by_month_day.is_empty()
+        || !rule.by_month_weekday.is_empty();
+    if !has_selector {
+        return Ok(true);
+    }
+
+    let base_date = recurrence_rule_date(base)?;
+    let cycle_year = 2000_i32
+        .checked_add(base_date.year().rem_euclid(400))
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let equivalent_base_date =
+        NaiveDate::from_ymd_opt(cycle_year, base_date.month(), base_date.day())
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let representative_base = TimeSpec::DateOnly {
+        start: equivalent_base_date,
+        end_exclusive: None,
+    };
+
+    let mut representative_rule = rule.clone();
+    let interval_mod = u64::from(rule.interval) % GREGORIAN_CYCLE_YEARS;
+    representative_rule.interval =
+        u32::try_from(interval_mod).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+    let cycle_len =
+        GREGORIAN_CYCLE_YEARS / greatest_common_divisor(GREGORIAN_CYCLE_YEARS, interval_mod);
+
+    for period in 1..=cycle_len {
+        let period = u32::try_from(period).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+        if !recurrence_candidates_for_period(&representative_base, &representative_rule, period)?
+            .is_empty()
+        {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
@@ -8331,4 +8382,160 @@ mod tests {
                 .is_empty()
         );
     }
+
+    #[test]
+    fn yearly_reachability_detects_impossible_february_monthday() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Impossible February thirtieth",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.count = Some(1);
+        rule.by_month = vec![2];
+        rule.by_month_day = vec![30];
+        event.recurrence = Some(rule.clone());
+
+        assert!(!yearly_rule_has_reachable_candidate(&event.time, &rule).expect("reachability"));
+        assert!(
+            event
+                .occurrences_in_window(
+                    start,
+                    NaiveDate::from_ymd_opt(2030, 1, 1).expect("end"),
+                    chrono_tz::UTC,
+                )
+                .expect("expand")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn yearly_reachability_detects_permanently_nonleap_byyearday_cycle() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Never leap day",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.interval = 4;
+        rule.count = Some(1);
+        rule.by_year_day = vec![366];
+        event.recurrence = Some(rule.clone());
+
+        assert!(!yearly_rule_has_reachable_candidate(&event.time, &rule).expect("reachability"));
+        assert!(
+            event
+                .occurrences_in_window(
+                    start,
+                    NaiveDate::from_ymd_opt(2050, 1, 1).expect("end"),
+                    chrono_tz::UTC,
+                )
+                .expect("expand")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn yearly_reachability_accounts_for_bysetpos_candidate_size() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Impossible yearly second position",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.count = Some(1);
+        rule.by_month = vec![1];
+        rule.by_set_pos = vec![2];
+        event.recurrence = Some(rule.clone());
+
+        assert!(!yearly_rule_has_reachable_candidate(&event.time, &rule).expect("reachability"));
+        assert!(
+            event
+                .occurrences_in_window(
+                    start,
+                    NaiveDate::from_ymd_opt(2030, 1, 1).expect("end"),
+                    chrono_tz::UTC,
+                )
+                .expect("expand")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn yearly_reachability_finds_late_leap_year_in_century_cycle() {
+        let start = NaiveDate::from_ymd_opt(2100, 1, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Century leap day",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.interval = 100;
+        rule.count = Some(1);
+        rule.by_year_day = vec![366];
+        event.recurrence = Some(rule.clone());
+
+        assert!(yearly_rule_has_reachable_candidate(&event.time, &rule).expect("reachability"));
+        let dates = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2401, 1, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            dates,
+            vec![NaiveDate::from_ymd_opt(2400, 12, 31).expect("leap day 366")]
+        );
+    }
+
+    #[test]
+    fn yearly_reachability_ignores_first_period_dtstart_filter_for_future_cycles() {
+        let start = NaiveDate::from_ymd_opt(2026, 12, 31).expect("start");
+        let mut event = TemporalEvent::new(
+            "January every four centuries",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.interval = 400;
+        rule.count = Some(1);
+        rule.by_month = vec![1];
+        event.recurrence = Some(rule.clone());
+
+        assert!(yearly_rule_has_reachable_candidate(&event.time, &rule).expect("reachability"));
+        let dates = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2427, 1, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            dates,
+            vec![NaiveDate::from_ymd_opt(2426, 1, 31).expect("future January")]
+        );
+    }
+
 }
