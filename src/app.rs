@@ -3326,10 +3326,7 @@ fn render_timeline(
     action
 }
 
-fn timeline_ticks(
-    view: CalendarView,
-    window: crate::calendar::DateWindow,
-) -> Vec<(f32, String)> {
+fn timeline_ticks(view: CalendarView, window: crate::calendar::DateWindow) -> Vec<(f32, String)> {
     let total_days = (window.end_exclusive - window.start).num_days();
     if total_days <= 0 {
         return Vec::new();
@@ -3368,8 +3365,7 @@ fn timeline_ticks(
                 let date = window
                     .start
                     .checked_add_signed(chrono::Duration::days(i64::from(week) * 7))?;
-                (date < window.end_exclusive)
-                    .then(|| (date_fraction(date), date.day().to_string()))
+                (date < window.end_exclusive).then(|| (date_fraction(date), date.day().to_string()))
             })
             .collect(),
         CalendarView::Week => (0..7)
@@ -3377,10 +3373,7 @@ fn timeline_ticks(
                 let date = window
                     .start
                     .checked_add_signed(chrono::Duration::days(i64::from(day)))?;
-                Some((
-                    date_fraction(date),
-                    date.format("%a %-d").to_string(),
-                ))
+                Some((date_fraction(date), date.format("%a %-d").to_string()))
             })
             .collect(),
         CalendarView::Day => vec![
@@ -4595,8 +4588,14 @@ mod tests {
         };
         let year_ticks = timeline_ticks(CalendarView::Year, year);
         assert_eq!(year_ticks.len(), 12);
-        assert_eq!(year_ticks.first().map(|(_, label)| label.as_str()), Some("Jan"));
-        assert_eq!(year_ticks.last().map(|(_, label)| label.as_str()), Some("Dec"));
+        assert_eq!(
+            year_ticks.first().map(|(_, label)| label.as_str()),
+            Some("Jan")
+        );
+        assert_eq!(
+            year_ticks.last().map(|(_, label)| label.as_str()),
+            Some("Dec")
+        );
 
         let day = crate::calendar::DateWindow {
             start: NaiveDate::from_ymd_opt(2026, 10, 5).expect("day start"),
