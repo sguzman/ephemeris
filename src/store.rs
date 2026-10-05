@@ -1324,10 +1324,7 @@ impl TemporalStore {
 
         let from_snapshots = self.taria_release_event_snapshots(from_release_id)?;
         let to_snapshots = self.taria_release_event_snapshots(to_release_id)?;
-        let from_snapshot_ids = from_snapshots
-            .keys()
-            .copied()
-            .collect::<BTreeSet<_>>();
+        let from_snapshot_ids = from_snapshots.keys().copied().collect::<BTreeSet<_>>();
         let to_snapshot_ids = to_snapshots.keys().copied().collect::<BTreeSet<_>>();
 
         let mut moved_event_ids = Vec::new();
