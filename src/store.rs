@@ -570,6 +570,9 @@ impl TemporalStore {
     }
 
     pub fn upsert_event(&self, event: &TemporalEvent) -> anyhow::Result<()> {
+        event
+            .validate_recurrence()
+            .context("invalid event recurrence definition")?;
         let encoded = EncodedTime::from_time_spec(&event.time)?;
         let assertion_refs_json = encode_string_vec(&event.assertion_refs, "assertion refs")?;
         let source_refs_json = encode_string_vec(&event.source_refs, "source refs")?;
@@ -3850,6 +3853,33 @@ mod tests {
     fn schema_bootstraps_at_current_version() {
         let store = TemporalStore::open_in_memory().expect("store");
         assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn store_rejects_invalid_recurrence_definition() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Broken recurrence",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 0,
+            count: None,
+            until: None,
+        });
+
+        let error = store
+            .upsert_event(&event)
+            .expect_err("invalid recurrence must not persist");
+        assert!(error.to_string().contains("invalid event recurrence definition"));
+        assert_eq!(store.event_count().expect("event count"), 0);
     }
 
     #[test]
