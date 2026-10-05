@@ -316,7 +316,7 @@ impl TemporalStore {
                     id, name, query_json, hidden_source_ids_json,
                     calendar_view_json, calendar_layout,
                     group_by_json, sort_rules_json, color_by_json, color_rules_json,
-                    composition_layers_json, overlays_json,
+                    composition_layers_json, overlays_json, table_columns_json,
                     display_timezone, week_start_monday
                 ) VALUES (
                     :id, :name, :query_json, :hidden_source_ids_json,
