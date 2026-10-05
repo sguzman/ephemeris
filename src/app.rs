@@ -509,6 +509,113 @@ impl EphemerisApp {
                                 .join(", ")
                         ));
                     }
+
+
+                    if !diff.event_changes.is_empty() {
+                        ui.collapsing(
+                            format!("Canonical event changes ({})", diff.event_changes.len()),
+                            |ui| {
+                                for change in &diff.event_changes {
+                                    let mut kinds = Vec::new();
+                                    if change.added {
+                                        kinds.push("added");
+                                    }
+                                    if change.removed {
+                                        kinds.push("removed");
+                                    }
+                                    if change.title_changed {
+                                        kinds.push("renamed");
+                                    }
+                                    if change.moved {
+                                        kinds.push("moved");
+                                    }
+                                    if change.newly_cancelled {
+                                        kinds.push("cancelled");
+                                    } else if change.status_changed {
+                                        kinds.push("status");
+                                    }
+
+                                    ui.collapsing(
+                                        format!("{} · {}", kinds.join(" + "), change.title),
+                                        |ui| {
+                                            inspector_row(
+                                                ui,
+                                                "Event ID",
+                                                &change.event_id.to_string(),
+                                            );
+
+                                            if change.title_changed {
+                                                if let Some(from_title) =
+                                                    change.from_title.as_deref()
+                                                {
+                                                    inspector_row(
+                                                        ui,
+                                                        "Previous title",
+                                                        from_title,
+                                                    );
+                                                }
+                                                if let Some(to_title) = change.to_title.as_deref() {
+                                                    inspector_row(ui, "New title", to_title);
+                                                }
+                                            }
+
+                                            if change.status_changed {
+                                                inspector_row(
+                                                    ui,
+                                                    "Previous status",
+                                                    change
+                                                        .from_status
+                                                        .as_deref()
+                                                        .unwrap_or("unknown"),
+                                                );
+                                                inspector_row(
+                                                    ui,
+                                                    "New status",
+                                                    change.to_status.as_deref().unwrap_or("unknown"),
+                                                );
+                                            } else if change.added || change.removed {
+                                                let status = change
+                                                    .to_status
+                                                    .as_deref()
+                                                    .or(change.from_status.as_deref())
+                                                    .unwrap_or("unknown");
+                                                inspector_row(ui, "Status", status);
+                                            }
+
+                                            if change.moved {
+                                                inspector_row(
+                                                    ui,
+                                                    "Previous time",
+                                                    &snapshot_time_label(
+                                                        change.from_time_json.as_deref(),
+                                                        self.timezone(),
+                                                    ),
+                                                );
+                                                inspector_row(
+                                                    ui,
+                                                    "New time",
+                                                    &snapshot_time_label(
+                                                        change.to_time_json.as_deref(),
+                                                        self.timezone(),
+                                                    ),
+                                                );
+                                            } else if change.added || change.removed {
+                                                let time = change
+                                                    .to_time_json
+                                                    .as_deref()
+                                                    .or(change.from_time_json.as_deref());
+                                                inspector_row(
+                                                    ui,
+                                                    "Time",
+                                                    &snapshot_time_label(time, self.timezone()),
+                                                );
+                                            }
+                                        },
+                                    );
+                                }
+                            },
+                        );
+                    }
                 } else if self.taria_release_history.len() > 1 {
                     ui.small("No previous release on the current channel.");
                 }
@@ -3676,6 +3783,60 @@ fn short_bundle_label(bundle_ref: &str) -> String {
         .strip_prefix("bundle:temporal/")
         .unwrap_or(bundle_ref)
         .replace('-', " ")
+}
+
+fn snapshot_time_label(raw: Option<&str>, timezone: Tz) -> String {
+    let Some(raw) = raw else {
+        return "—".to_string();
+    };
+    let Ok(time) = serde_json::from_str::<TimeSpec>(raw) else {
+        return raw.to_string();
+    };
+
+    match time {
+        TimeSpec::DateOnly {
+            start,
+            end_exclusive,
+        } => end_exclusive.map_or_else(
+            || start.to_string(),
+            |end| format!("{start} → {end} exclusive"),
+        ),
+        TimeSpec::AllDay {
+            start,
+            end_exclusive,
+        } => end_exclusive.map_or_else(
+            || format!("{start} · all day"),
+            |end| format!("{start} → {end} exclusive · all day"),
+        ),
+        TimeSpec::Instant {
+            start_utc,
+            end_utc,
+            ..
+        } => {
+            let start = start_utc.with_timezone(&timezone).to_rfc3339();
+            end_utc.map_or(start.clone(), |end| {
+                format!("{start} → {}", end.with_timezone(&timezone).to_rfc3339())
+            })
+        }
+        TimeSpec::Floating {
+            start,
+            end,
+            source_timezone,
+        } => {
+            let suffix = source_timezone
+                .as_deref()
+                .map_or_else(|| "floating".to_string(), |zone| format!("local {zone}"));
+            end.map_or_else(
+                || format!("{start} · {suffix}"),
+                |end| format!("{start} → {end} · {suffix}"),
+            )
+        }
+        TimeSpec::Month { year, month } => format!("{year}-{month:02} · month precision"),
+        TimeSpec::Year { year } => format!("{year} · year precision"),
+        TimeSpec::Unknown { original_value } => original_value
+            .map(|value| format!("{value} · unresolved"))
+            .unwrap_or_else(|| "unresolved".to_string()),
+    }
 }
 
 fn render_time_spec(ui: &mut egui::Ui, time: &TimeSpec, timezone: Tz) {
