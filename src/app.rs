@@ -2296,7 +2296,11 @@ impl EphemerisApp {
                 );
                 inspector_row(ui, "RDATE additions", &rule.rdates.len().to_string());
                 inspector_row(ui, "EXDATE exclusions", &rule.exdates.len().to_string());
-                inspector_row(ui, "Occurrence overrides", &rule.overrides.len().to_string());
+                inspector_row(
+                    ui,
+                    "Occurrence overrides",
+                    &rule.overrides.len().to_string(),
+                );
             }
             if let Some(value) = event.event_type.as_deref() {
                 inspector_row(ui, "Type", value);

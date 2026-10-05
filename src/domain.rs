@@ -573,7 +573,10 @@ impl fmt::Display for RecurrenceError {
             Self::ZeroInterval => formatter.write_str("recurrence interval must be at least 1"),
             Self::ZeroCount => formatter.write_str("recurrence count must be at least 1"),
             Self::UnsupportedTimeKind(kind) => {
-                write!(formatter, "recurrence is not supported for {kind} precision")
+                write!(
+                    formatter,
+                    "recurrence is not supported for {kind} precision"
+                )
             }
             Self::InvalidSourceTimezone(zone) => {
                 write!(formatter, "invalid recurrence source timezone {zone}")
@@ -853,13 +856,9 @@ impl TemporalEvent {
 
         Ok(occurrences)
     }
-
 }
 
-fn occurrence_identity(
-    event_id: Uuid,
-    original_time: &TimeSpec,
-) -> Result<Uuid, RecurrenceError> {
+fn occurrence_identity(event_id: Uuid, original_time: &TimeSpec) -> Result<Uuid, RecurrenceError> {
     let key = recurrence_key(original_time)?;
     let mut hasher = Sha256::new();
     hasher.update(event_id.as_bytes());
@@ -1262,11 +1261,7 @@ mod tests {
                 .iter()
                 .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
                 .collect::<Vec<_>>(),
-            vec![
-                start,
-                start + Duration::days(2),
-                start + Duration::days(4),
-            ]
+            vec![start, start + Duration::days(2), start + Duration::days(4),]
         );
         assert!(
             occurrences
