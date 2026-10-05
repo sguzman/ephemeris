@@ -3180,9 +3180,7 @@ fn render_calendar(
                 colors,
             },
         ),
-        CalendarLayout::Density => {
-            render_density(ui, events, view, focus, timezone, monday_start)
-        }
+        CalendarLayout::Density => render_density(ui, events, view, focus, timezone, monday_start),
         CalendarLayout::Table => render_table(
             ui,
             events,
@@ -3283,9 +3281,7 @@ fn render_density(
                 };
                 let response = ui.add_sized(
                     [52.0, 42.0],
-                    egui::Button::new(text)
-                        .fill(fill)
-                        .selected(false),
+                    egui::Button::new(text).fill(fill).selected(false),
                 );
                 if response
                     .on_hover_text(format!("{} · {} event(s)", day, count))
