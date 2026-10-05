@@ -11,7 +11,9 @@ use crate::calendar::{
     CalendarLayout, CalendarView, calendar_title, month_days, month_grid_start, quarter_months,
     shift_focus, week_days, window_for_view, year_months,
 };
-use crate::domain::{EventStatus, TemporalEvent, TemporalSource, TimeSpec};
+use crate::domain::{
+    EventStatus, RecurrenceOccurrenceOrigin, TemporalEvent, TemporalSource, TimeSpec,
+};
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
@@ -57,10 +59,14 @@ impl TariaRefreshHealth {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct OccurrenceContext {
     event_id: Uuid,
-    recurrence_index: u32,
+    recurrence_index: Option<u32>,
+    origin: RecurrenceOccurrenceOrigin,
+    original_time: TimeSpec,
+    override_applied: bool,
+    cancelled_by_override: bool,
 }
 
 pub struct EphemerisApp {
@@ -817,12 +823,17 @@ impl EphemerisApp {
                 {
                     let mut materialized = event.clone();
                     materialized.id = occurrence.id;
-                    materialized.time = occurrence.time;
+                    materialized.time = occurrence.time.clone();
+                    materialized.status = occurrence.status;
                     self.occurrence_contexts.insert(
                         materialized.id,
                         OccurrenceContext {
                             event_id: event.id,
                             recurrence_index: occurrence.recurrence_index,
+                            origin: occurrence.origin,
+                            original_time: occurrence.original_time,
+                            override_applied: occurrence.override_applied,
+                            cancelled_by_override: occurrence.cancelled_by_override,
                         },
                     );
                     self.events.push(materialized);
@@ -2283,6 +2294,9 @@ impl EphemerisApp {
                         .until
                         .map_or_else(|| "unbounded".to_string(), |until| until.to_string()),
                 );
+                inspector_row(ui, "RDATE additions", &rule.rdates.len().to_string());
+                inspector_row(ui, "EXDATE exclusions", &rule.exdates.len().to_string());
+                inspector_row(ui, "Occurrence overrides", &rule.overrides.len().to_string());
             }
             if let Some(value) = event.event_type.as_deref() {
                 inspector_row(ui, "Type", value);
@@ -2370,11 +2384,29 @@ impl EphemerisApp {
             ui.separator();
             let canonical_id = self.canonical_event_id(event.id);
             if let Some(occurrence) = self.occurrence_contexts.get(&event.id) {
-                inspector_row(
-                    ui,
-                    "Occurrence",
-                    &(occurrence.recurrence_index.saturating_add(1)).to_string(),
-                );
+                let occurrence_label = match occurrence.origin {
+                    RecurrenceOccurrenceOrigin::Rule => occurrence.recurrence_index.map_or_else(
+                        || "Rule occurrence".to_string(),
+                        |index| format!("Rule occurrence {}", index.saturating_add(1)),
+                    ),
+                    _ => occurrence.origin.as_str().to_string(),
+                };
+                inspector_row(ui, "Occurrence", &occurrence_label);
+                if occurrence.override_applied {
+                    let moved = occurrence.original_time != event.time;
+                    let override_label = match (moved, occurrence.cancelled_by_override) {
+                        (true, true) => "moved + cancelled",
+                        (true, false) => "moved",
+                        (false, true) => "cancelled",
+                        (false, false) => "override",
+                    };
+                    inspector_row(ui, "Override", override_label);
+                    inspector_row(
+                        ui,
+                        "Original occurrence",
+                        &occurrence_time_label(&occurrence.original_time, self.timezone()),
+                    );
+                }
                 inspector_row(ui, "Occurrence ID", &event.id.to_string());
                 inspector_row(ui, "Event ID", &canonical_id.to_string());
             } else {
@@ -4833,6 +4865,13 @@ fn taria_refresh_health(
             }
         }
     }
+}
+
+fn occurrence_time_label(time: &TimeSpec, timezone: Tz) -> String {
+    let date = time
+        .display_date(timezone)
+        .map_or_else(|| "unplaced".to_string(), |date| date.to_string());
+    format!("{date} · {}", time.display_time_label(timezone))
 }
 
 fn snapshot_time_label(raw: Option<&str>, timezone: Tz) -> String {

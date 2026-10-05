@@ -3873,6 +3873,9 @@ mod tests {
             interval: 0,
             count: None,
             until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
         });
 
         let error = store
@@ -3906,6 +3909,48 @@ mod tests {
     }
 
     #[test]
+    fn store_rejects_conflicting_recurrence_exception() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceOverride, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let excluded = TimeSpec::DateOnly {
+            start: day + chrono::Duration::days(1),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Conflicting exception",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: None,
+            until: None,
+            rdates: Vec::new(),
+            exdates: vec![excluded.clone()],
+            overrides: vec![RecurrenceOverride {
+                original: excluded,
+                replacement: None,
+                cancelled: true,
+            }],
+        });
+
+        let error = store
+            .upsert_event(&event)
+            .expect_err("conflicting exception must not persist");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event recurrence definition")
+        );
+        assert_eq!(store.event_count().expect("event count"), 0);
+    }
+
+    #[test]
     fn recurring_events_are_retrievable_outside_base_window() {
         use crate::domain::{RecurrenceFrequency, RecurrenceRule};
 
@@ -3923,6 +3968,9 @@ mod tests {
             interval: 1,
             count: None,
             until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
         });
         store.upsert_event(&recurring).expect("save recurring");
 
@@ -3942,7 +3990,7 @@ mod tests {
 
     #[test]
     fn recurrence_definition_roundtrips_through_event_storage() {
-        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+        use crate::domain::{RecurrenceFrequency, RecurrenceOverride, RecurrenceRule};
 
         let store = TemporalStore::open_in_memory().expect("store");
         let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("date");
@@ -3958,6 +4006,25 @@ mod tests {
             interval: 2,
             count: Some(5),
             until: Some(NaiveDate::from_ymd_opt(2027, 1, 1).expect("until")),
+            rdates: vec![TimeSpec::DateOnly {
+                start: day + chrono::Duration::days(1),
+                end_exclusive: None,
+            }],
+            exdates: vec![TimeSpec::DateOnly {
+                start: day + chrono::Duration::days(14),
+                end_exclusive: None,
+            }],
+            overrides: vec![RecurrenceOverride {
+                original: TimeSpec::DateOnly {
+                    start: day + chrono::Duration::days(28),
+                    end_exclusive: None,
+                },
+                replacement: Some(TimeSpec::DateOnly {
+                    start: day + chrono::Duration::days(29),
+                    end_exclusive: None,
+                }),
+                cancelled: false,
+            }],
         });
 
         store.upsert_event(&event).expect("save");

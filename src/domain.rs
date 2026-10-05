@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use chrono::{
     DateTime, Datelike, Days, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc,
@@ -465,7 +465,7 @@ impl RecurrenceFrequency {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecurrenceRule {
     pub frequency: RecurrenceFrequency,
     #[serde(default = "default_recurrence_interval")]
@@ -474,6 +474,12 @@ pub struct RecurrenceRule {
     pub count: Option<u32>,
     #[serde(default)]
     pub until: Option<NaiveDate>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rdates: Vec<TimeSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exdates: Vec<TimeSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<RecurrenceOverride>,
 }
 
 impl RecurrenceRule {
@@ -483,6 +489,9 @@ impl RecurrenceRule {
             interval: 1,
             count: None,
             until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
         }
     }
 
@@ -502,11 +511,45 @@ const fn default_recurrence_interval() -> u32 {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecurrenceOverride {
+    pub original: TimeSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<TimeSpec>,
+    #[serde(default)]
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecurrenceOccurrenceOrigin {
+    Single,
+    Rule,
+    RDate,
+    DetachedOverride,
+}
+
+impl RecurrenceOccurrenceOrigin {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::Rule => "rule",
+            Self::RDate => "rdate",
+            Self::DetachedOverride => "detached override",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventOccurrence {
     pub id: Uuid,
     pub event_id: Uuid,
-    pub recurrence_index: u32,
+    pub recurrence_index: Option<u32>,
+    pub origin: RecurrenceOccurrenceOrigin,
+    pub original_time: TimeSpec,
     pub time: TimeSpec,
+    pub status: EventStatus,
+    pub override_applied: bool,
+    pub cancelled_by_override: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -515,8 +558,13 @@ pub enum RecurrenceError {
     ZeroCount,
     UnsupportedTimeKind(&'static str),
     InvalidSourceTimezone(String),
+    MismatchedExceptionTimeKind {
+        expected: &'static str,
+        actual: &'static str,
+    },
+    DuplicateOverride(String),
+    ConflictingException(String),
     ArithmeticOverflow,
-    IdentityEncoding(String),
 }
 
 impl fmt::Display for RecurrenceError {
@@ -525,18 +573,27 @@ impl fmt::Display for RecurrenceError {
             Self::ZeroInterval => formatter.write_str("recurrence interval must be at least 1"),
             Self::ZeroCount => formatter.write_str("recurrence count must be at least 1"),
             Self::UnsupportedTimeKind(kind) => {
-                write!(
-                    formatter,
-                    "recurrence is not supported for {kind} precision"
-                )
+                write!(formatter, "recurrence is not supported for {kind} precision")
             }
             Self::InvalidSourceTimezone(zone) => {
                 write!(formatter, "invalid recurrence source timezone {zone}")
             }
-            Self::ArithmeticOverflow => formatter.write_str("recurrence arithmetic overflow"),
-            Self::IdentityEncoding(error) => {
-                write!(formatter, "failed to encode occurrence identity: {error}")
+            Self::MismatchedExceptionTimeKind { expected, actual } => {
+                write!(
+                    formatter,
+                    "recurrence exception uses {actual} time for a {expected} series"
+                )
             }
+            Self::DuplicateOverride(key) => {
+                write!(formatter, "duplicate recurrence override for {key}")
+            }
+            Self::ConflictingException(key) => {
+                write!(
+                    formatter,
+                    "recurrence occurrence {key} cannot be both excluded and overridden"
+                )
+            }
+            Self::ArithmeticOverflow => formatter.write_str("recurrence arithmetic overflow"),
         }
     }
 }
@@ -623,21 +680,50 @@ impl TemporalEvent {
         };
 
         rule.validate()?;
+        validate_recurrence_time(&self.time)?;
+        let expected_kind = self.time.kind_name();
 
-        if matches!(
-            self.time,
-            TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. }
-        ) {
-            return Err(RecurrenceError::UnsupportedTimeKind(self.time.kind_name()));
+        for time in rule.rdates.iter().chain(rule.exdates.iter()) {
+            validate_recurrence_time(time)?;
+            if time.kind_name() != expected_kind {
+                return Err(RecurrenceError::MismatchedExceptionTimeKind {
+                    expected: expected_kind,
+                    actual: time.kind_name(),
+                });
+            }
         }
 
-        if let TimeSpec::Instant {
-            source_timezone: Some(raw),
-            ..
-        } = &self.time
-        {
-            raw.parse::<Tz>()
-                .map_err(|_| RecurrenceError::InvalidSourceTimezone(raw.clone()))?;
+        let exdate_keys = rule
+            .exdates
+            .iter()
+            .map(recurrence_key)
+            .collect::<Result<HashSet<_>, _>>()?;
+        let mut override_keys = HashSet::new();
+        for occurrence_override in &rule.overrides {
+            validate_recurrence_time(&occurrence_override.original)?;
+            if occurrence_override.original.kind_name() != expected_kind {
+                return Err(RecurrenceError::MismatchedExceptionTimeKind {
+                    expected: expected_kind,
+                    actual: occurrence_override.original.kind_name(),
+                });
+            }
+            if let Some(replacement) = occurrence_override.replacement.as_ref() {
+                validate_recurrence_time(replacement)?;
+                if replacement.kind_name() != expected_kind {
+                    return Err(RecurrenceError::MismatchedExceptionTimeKind {
+                        expected: expected_kind,
+                        actual: replacement.kind_name(),
+                    });
+                }
+            }
+
+            let key = recurrence_key(&occurrence_override.original)?;
+            if !override_keys.insert(key.clone()) {
+                return Err(RecurrenceError::DuplicateOverride(key));
+            }
+            if exdate_keys.contains(&key) {
+                return Err(RecurrenceError::ConflictingException(key));
+            }
         }
 
         Ok(())
@@ -661,22 +747,23 @@ impl TemporalEvent {
                 return Ok(Vec::new());
             }
             return Ok(vec![EventOccurrence {
-                id: occurrence_identity(self.id, &self.time)?,
+                id: self.id,
                 event_id: self.id,
-                recurrence_index: 0,
+                recurrence_index: None,
+                origin: RecurrenceOccurrenceOrigin::Single,
+                original_time: self.time.clone(),
                 time: self.time.clone(),
+                status: self.status,
+                override_applied: false,
+                cancelled_by_override: false,
             }]);
         };
 
-        rule.validate()?;
-        if matches!(
-            self.time,
-            TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. }
-        ) {
-            return Err(RecurrenceError::UnsupportedTimeKind(self.time.kind_name()));
-        }
+        self.validate_recurrence()?;
 
         let mut occurrences = Vec::new();
+        let mut seen_occurrence_ids = HashSet::new();
+        let mut generated_keys = HashSet::new();
         let mut recurrence_period = 0_u32;
         let mut emitted = 0_u32;
 
@@ -703,14 +790,21 @@ impl TemporalEvent {
             emitted = emitted
                 .checked_add(1)
                 .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            generated_keys.insert(recurrence_key(&time)?);
 
-            if time.overlaps_date_window(start, end_exclusive, display_timezone) {
-                occurrences.push(EventOccurrence {
-                    id: occurrence_identity(self.id, &time)?,
-                    event_id: self.id,
-                    recurrence_index,
-                    time: time.clone(),
-                });
+            if let Some(occurrence) = materialize_recurrence_occurrence(
+                self.id,
+                self.status,
+                rule,
+                time,
+                Some(recurrence_index),
+                RecurrenceOccurrenceOrigin::Rule,
+                start,
+                end_exclusive,
+                display_timezone,
+            )? && seen_occurrence_ids.insert(occurrence.id)
+            {
+                occurrences.push(occurrence);
             }
 
             if occurrence_date >= end_exclusive {
@@ -718,16 +812,58 @@ impl TemporalEvent {
             }
         }
 
+        for rdate in &rule.rdates {
+            generated_keys.insert(recurrence_key(rdate)?);
+            if let Some(occurrence) = materialize_recurrence_occurrence(
+                self.id,
+                self.status,
+                rule,
+                rdate.clone(),
+                None,
+                RecurrenceOccurrenceOrigin::RDate,
+                start,
+                end_exclusive,
+                display_timezone,
+            )? && seen_occurrence_ids.insert(occurrence.id)
+            {
+                occurrences.push(occurrence);
+            }
+        }
+
+        for occurrence_override in &rule.overrides {
+            let key = recurrence_key(&occurrence_override.original)?;
+            if generated_keys.contains(&key) {
+                continue;
+            }
+            if let Some(occurrence) = materialize_recurrence_occurrence(
+                self.id,
+                self.status,
+                rule,
+                occurrence_override.original.clone(),
+                None,
+                RecurrenceOccurrenceOrigin::DetachedOverride,
+                start,
+                end_exclusive,
+                display_timezone,
+            )? && seen_occurrence_ids.insert(occurrence.id)
+            {
+                occurrences.push(occurrence);
+            }
+        }
+
         Ok(occurrences)
     }
+
 }
 
-fn occurrence_identity(event_id: Uuid, time: &TimeSpec) -> Result<Uuid, RecurrenceError> {
-    let encoded = serde_json::to_vec(time)
-        .map_err(|error| RecurrenceError::IdentityEncoding(error.to_string()))?;
+fn occurrence_identity(
+    event_id: Uuid,
+    original_time: &TimeSpec,
+) -> Result<Uuid, RecurrenceError> {
+    let key = recurrence_key(original_time)?;
     let mut hasher = Sha256::new();
     hasher.update(event_id.as_bytes());
-    hasher.update(encoded);
+    hasher.update(key.as_bytes());
     let digest = hasher.finalize();
 
     let mut bytes = [0_u8; 16];
@@ -735,6 +871,95 @@ fn occurrence_identity(event_id: Uuid, time: &TimeSpec) -> Result<Uuid, Recurren
     bytes[6] = (bytes[6] & 0x0f) | 0x80;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     Ok(Uuid::from_bytes(bytes))
+}
+
+fn recurrence_key(time: &TimeSpec) -> Result<String, RecurrenceError> {
+    match time {
+        TimeSpec::DateOnly { start, .. } => Ok(format!("date_only:{start}")),
+        TimeSpec::AllDay { start, .. } => Ok(format!("all_day:{start}")),
+        TimeSpec::Instant { start_utc, .. } => Ok(format!("instant:{}", start_utc.to_rfc3339())),
+        TimeSpec::Floating { start, .. } => Ok(format!("floating:{start}")),
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+            Err(RecurrenceError::UnsupportedTimeKind(time.kind_name()))
+        }
+    }
+}
+
+fn validate_recurrence_time(time: &TimeSpec) -> Result<(), RecurrenceError> {
+    if matches!(
+        time,
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. }
+    ) {
+        return Err(RecurrenceError::UnsupportedTimeKind(time.kind_name()));
+    }
+
+    if let TimeSpec::Instant {
+        source_timezone: Some(raw),
+        ..
+    } = time
+    {
+        raw.parse::<Tz>()
+            .map_err(|_| RecurrenceError::InvalidSourceTimezone(raw.clone()))?;
+    }
+
+    Ok(())
+}
+
+fn materialize_recurrence_occurrence(
+    event_id: Uuid,
+    base_status: EventStatus,
+    rule: &RecurrenceRule,
+    original_time: TimeSpec,
+    recurrence_index: Option<u32>,
+    origin: RecurrenceOccurrenceOrigin,
+    start: NaiveDate,
+    end_exclusive: NaiveDate,
+    display_timezone: Tz,
+) -> Result<Option<EventOccurrence>, RecurrenceError> {
+    let key = recurrence_key(&original_time)?;
+
+    for exdate in &rule.exdates {
+        if recurrence_key(exdate)? == key {
+            return Ok(None);
+        }
+    }
+
+    let mut time = original_time.clone();
+    let mut status = base_status;
+    let mut override_applied = false;
+    let mut cancelled_by_override = false;
+
+    for occurrence_override in &rule.overrides {
+        if recurrence_key(&occurrence_override.original)? != key {
+            continue;
+        }
+
+        override_applied = true;
+        if let Some(replacement) = occurrence_override.replacement.as_ref() {
+            time.clone_from(replacement);
+        }
+        if occurrence_override.cancelled {
+            status = EventStatus::Cancelled;
+            cancelled_by_override = true;
+        }
+        break;
+    }
+
+    if !time.overlaps_date_window(start, end_exclusive, display_timezone) {
+        return Ok(None);
+    }
+
+    Ok(Some(EventOccurrence {
+        id: occurrence_identity(event_id, &original_time)?,
+        event_id,
+        recurrence_index,
+        origin,
+        original_time,
+        time,
+        status,
+        override_applied,
+        cancelled_by_override,
+    }))
 }
 
 fn shift_recurrence_time(
@@ -965,6 +1190,9 @@ mod tests {
             interval: 2,
             count: Some(4),
             until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
         });
 
         let first = event
@@ -1000,6 +1228,235 @@ mod tests {
     }
 
     #[test]
+    fn rdate_and_exdate_adjust_generated_occurrence_set() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Adjusted daily",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: Some(3),
+            until: None,
+            rdates: vec![TimeSpec::DateOnly {
+                start: start + Duration::days(4),
+                end_exclusive: None,
+            }],
+            exdates: vec![TimeSpec::DateOnly {
+                start: start + Duration::days(1),
+                end_exclusive: None,
+            }],
+            overrides: Vec::new(),
+        });
+
+        let occurrences = event
+            .occurrences_in_window(start, start + Duration::days(7), chrono_tz::UTC)
+            .expect("expand");
+
+        assert_eq!(
+            occurrences
+                .iter()
+                .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+                .collect::<Vec<_>>(),
+            vec![
+                start,
+                start + Duration::days(2),
+                start + Duration::days(4),
+            ]
+        );
+        assert!(
+            occurrences
+                .iter()
+                .any(|occurrence| occurrence.origin == RecurrenceOccurrenceOrigin::RDate)
+        );
+    }
+
+    #[test]
+    fn moved_override_keeps_original_occurrence_identity() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 1).expect("start");
+        let original = TimeSpec::DateOnly {
+            start: start + Duration::days(7),
+            end_exclusive: None,
+        };
+        let replacement = TimeSpec::DateOnly {
+            start: start + Duration::days(9),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Weekly move",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            count: Some(2),
+            until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let baseline = event
+            .occurrences_in_window(start, start + Duration::days(14), chrono_tz::UTC)
+            .expect("baseline");
+        let baseline_id = baseline[1].id;
+
+        event
+            .recurrence
+            .as_mut()
+            .expect("recurrence")
+            .overrides
+            .push(RecurrenceOverride {
+                original: original.clone(),
+                replacement: Some(replacement.clone()),
+                cancelled: false,
+            });
+
+        let moved = event
+            .occurrences_in_window(start, start + Duration::days(14), chrono_tz::UTC)
+            .expect("moved");
+        let occurrence = moved
+            .iter()
+            .find(|occurrence| occurrence.original_time == original)
+            .expect("moved occurrence");
+
+        assert_eq!(occurrence.id, baseline_id);
+        assert_eq!(occurrence.time, replacement);
+        assert!(occurrence.override_applied);
+        assert!(!occurrence.cancelled_by_override);
+    }
+
+    #[test]
+    fn cancelled_override_remains_materialized_as_cancelled() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 1).expect("start");
+        let cancelled_time = TimeSpec::DateOnly {
+            start: start + Duration::days(1),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Daily cancellation",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: Some(2),
+            until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: vec![RecurrenceOverride {
+                original: cancelled_time.clone(),
+                replacement: None,
+                cancelled: true,
+            }],
+        });
+
+        let occurrences = event
+            .occurrences_in_window(start, start + Duration::days(3), chrono_tz::UTC)
+            .expect("expand");
+        let cancelled = occurrences
+            .iter()
+            .find(|occurrence| occurrence.original_time == cancelled_time)
+            .expect("cancelled occurrence");
+
+        assert_eq!(cancelled.status, EventStatus::Cancelled);
+        assert_eq!(cancelled.time, cancelled_time);
+        assert!(cancelled.cancelled_by_override);
+    }
+
+    #[test]
+    fn detached_moved_override_can_enter_the_active_window() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 1).expect("start");
+        let original = TimeSpec::DateOnly {
+            start: start + Duration::days(19),
+            end_exclusive: None,
+        };
+        let replacement = TimeSpec::DateOnly {
+            start: start + Duration::days(4),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Moved into window",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: None,
+            until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: vec![RecurrenceOverride {
+                original: original.clone(),
+                replacement: Some(replacement),
+                cancelled: false,
+            }],
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                start + Duration::days(4),
+                start + Duration::days(5),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+        let moved = occurrences
+            .iter()
+            .find(|occurrence| occurrence.original_time == original)
+            .expect("detached moved occurrence");
+
+        assert_eq!(moved.origin, RecurrenceOccurrenceOrigin::DetachedOverride);
+        assert!(moved.override_applied);
+    }
+
+    #[test]
+    fn exdate_and_override_conflict_is_rejected() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 1).expect("start");
+        let excluded = TimeSpec::DateOnly {
+            start: start + Duration::days(1),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Conflicting exception",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: None,
+            until: None,
+            rdates: Vec::new(),
+            exdates: vec![excluded.clone()],
+            overrides: vec![RecurrenceOverride {
+                original: excluded,
+                replacement: None,
+                cancelled: true,
+            }],
+        });
+
+        assert!(matches!(
+            event.validate_recurrence(),
+            Err(RecurrenceError::ConflictingException(_))
+        ));
+    }
+
+    #[test]
     fn monthly_recurrence_skips_invalid_calendar_dates() {
         let start = NaiveDate::from_ymd_opt(2026, 1, 31).expect("start");
         let mut event = TemporalEvent::new(
@@ -1014,6 +1471,9 @@ mod tests {
             interval: 1,
             count: Some(3),
             until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
         });
 
         let occurrences = event
@@ -1051,6 +1511,9 @@ mod tests {
             interval: 1,
             count: Some(2),
             until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
         });
 
         let occurrences = event
@@ -1085,6 +1548,9 @@ mod tests {
             interval: 1,
             count: Some(2),
             until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
         });
 
         let occurrences = event
