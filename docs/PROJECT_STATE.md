@@ -193,9 +193,12 @@ Layouts are independent from date range:
 
 - Grid
 - Agenda
+- Stream
 - Table
 
-That separation is deliberate. A Month view can be rendered as a grid, agenda, or dense table; presentation does not define the temporal query.
+That separation is deliberate. A Month view can be rendered as a grid, agenda, chronological stream, or dense table; presentation does not define the temporal query.
+
+Stream has intentionally different ordering semantics from Agenda/Table: it is always chronological. Month/year precision markers sort before date-only/all-day records at their anchor date, timed instant/floating records then sort by actual local clock time, and unresolved records sort last. Saved grouping/sort settings remain preserved but inactive while Stream is selected.
 
 Agenda and Table both use true group partitioning: grouping remains independent from the active stable sort rules rather than merely emitting repeated headings whenever the sort order changes group values.
 
@@ -223,7 +226,7 @@ Current presentation dimensions are also independent:
 - stable multi-key sorting
 - semantic fallback coloring by source, domain, jurisdiction, institution, event type, or status
 - ordered query-driven color rules with first-match precedence
-- Grid, Agenda, and Table layouts
+- Grid, Agenda, Stream, and Table layouts
 - ordered visible Table-column configuration independent from filtering/grouping/sorting
 
 These dimensions persist in saved views and do not reorganize or duplicate canonical events.
@@ -341,7 +344,7 @@ Implemented:
 - explicit RGB colors
 - enable/disable, edit, add/delete, and reorder controls
 - existing semantic ColorBy strategy remains the fallback
-- rules apply consistently across Grid, Agenda, Table, and unplaced records
+- rules apply consistently across Grid, Agenda, Stream, Table, and unplaced records
 - rules persist in saved views
 
 ### Calendar algebra foundation
