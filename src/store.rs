@@ -10,11 +10,12 @@ use uuid::Uuid;
 
 use crate::calendar::CalendarLayout;
 use crate::domain::{
-    EventStatus, SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
+    EventStatus, RecurrenceRule, SourceAuthority, SourceKind, TemporalEvent, TemporalSource,
+    TimeSpec,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -573,6 +574,12 @@ impl TemporalStore {
         let assertion_refs_json = encode_string_vec(&event.assertion_refs, "assertion refs")?;
         let source_refs_json = encode_string_vec(&event.source_refs, "source refs")?;
         let provenance_refs_json = encode_string_vec(&event.provenance_refs, "provenance refs")?;
+        let recurrence_json = event
+            .recurrence
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("failed to encode event recurrence")?;
         let tags_json = encode_string_vec(&event.tags, "event tags")?;
         let properties_json = serde_json::to_string(&event.properties)
             .context("failed to encode event properties")?;
@@ -590,6 +597,7 @@ impl TemporalStore {
                     time_kind, start_utc, end_utc, source_timezone,
                     start_date, end_date_exclusive,
                     start_local, end_local, time_original_value,
+                    recurrence_json,
                     tags_json, properties_json,
                     created_at, updated_at
                 ) VALUES (
@@ -602,6 +610,7 @@ impl TemporalStore {
                     :time_kind, :start_utc, :end_utc, :source_timezone,
                     :start_date, :end_date_exclusive,
                     :start_local, :end_local, :time_original_value,
+                    :recurrence_json,
                     :tags_json, :properties_json,
                     :created_at, :updated_at
                 )
@@ -634,6 +643,7 @@ impl TemporalStore {
                     start_local = excluded.start_local,
                     end_local = excluded.end_local,
                     time_original_value = excluded.time_original_value,
+                    recurrence_json = excluded.recurrence_json,
                     tags_json = excluded.tags_json,
                     properties_json = excluded.properties_json,
                     updated_at = excluded.updated_at
@@ -668,6 +678,7 @@ impl TemporalStore {
                     ":start_local": encoded.start_local,
                     ":end_local": encoded.end_local,
                     ":time_original_value": encoded.original_value,
+                    ":recurrence_json": recurrence_json,
                     ":tags_json": tags_json,
                     ":properties_json": properties_json,
                     ":created_at": event.created_at.to_rfc3339(),
@@ -2214,6 +2225,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 12 {
         migrate_v12_to_v13(conn)?;
+        current = 13;
+    }
+
+    if current == 13 {
+        migrate_v13_to_v14(conn)?;
     }
 
     Ok(())
@@ -2276,6 +2292,7 @@ fn create_schema_v2(conn: &Connection) -> anyhow::Result<()> {
             start_local TEXT,
             end_local TEXT,
             time_original_value TEXT,
+            recurrence_json TEXT,
 
             tags_json TEXT NOT NULL DEFAULT '[]',
             properties_json TEXT NOT NULL DEFAULT '{}',
@@ -2562,6 +2579,21 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> anyhow::Result<()> {
         .context("failed to set schema version 3")?;
     tx.commit()
         .context("failed to commit v2 to v3 schema migration")
+}
+
+fn migrate_v13_to_v14(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v13 to v14 migration")?;
+    tx.execute(
+        "ALTER TABLE temporal_events ADD COLUMN recurrence_json TEXT",
+        [],
+    )
+    .context("failed to add event recurrence definition")?;
+    tx.pragma_update(None, "user_version", 14)
+        .context("failed to set schema version 14")?;
+    tx.commit()
+        .context("failed to commit v13 to v14 schema migration")
 }
 
 fn migrate_v12_to_v13(conn: &mut Connection) -> anyhow::Result<()> {
@@ -2893,6 +2925,7 @@ fn event_select_sql(suffix: &str) -> String {
             time_kind, start_utc, end_utc, source_timezone,
             start_date, end_date_exclusive,
             start_local, end_local, time_original_value,
+            recurrence_json,
             tags_json, properties_json,
             created_at, updated_at
         FROM temporal_events
@@ -2998,6 +3031,11 @@ fn decode_event(row: &Row<'_>) -> rusqlite::Result<TemporalEvent> {
         importance: row.get("importance")?,
         personal_relevance: row.get("personal_relevance")?,
         time,
+        recurrence: row
+            .get::<_, Option<String>>("recurrence_json")?
+            .map(|raw| serde_json::from_str::<RecurrenceRule>(&raw))
+            .transpose()
+            .map_err(to_sql_decode_error)?,
         tags: decode_string_vec(row, "tags_json")?,
         properties: decode_json_value(row, "properties_json")?,
         created_at: parse_datetime(&row.get::<_, String>("created_at")?)
@@ -3308,6 +3346,17 @@ mod tests {
         assert!(columns.contains(&"overlays_json".to_string()));
         assert!(columns.contains(&"composition_layers_json".to_string()));
         assert!(columns.contains(&"table_columns_json".to_string()));
+
+        let event_columns = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(temporal_events)")
+                .expect("event table info");
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .expect("event columns");
+            rows.collect::<Result<Vec<_>, _>>().expect("event columns")
+        };
+        assert!(event_columns.contains(&"recurrence_json".to_string()));
 
         let release_source_table: i64 = conn
             .query_row(
@@ -3780,6 +3829,35 @@ mod tests {
     fn schema_bootstraps_at_current_version() {
         let store = TemporalStore::open_in_memory().expect("store");
         assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn recurrence_definition_roundtrips_through_event_storage() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("date");
+        let mut event = TemporalEvent::new(
+            "Recurring",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 2,
+            count: Some(5),
+            until: Some(NaiveDate::from_ymd_opt(2027, 1, 1).expect("until")),
+        });
+
+        store.upsert_event(&event).expect("save");
+        let loaded = store
+            .event_by_id(event.id)
+            .expect("load")
+            .expect("stored event");
+
+        assert_eq!(loaded.recurrence, event.recurrence);
     }
 
     #[test]
