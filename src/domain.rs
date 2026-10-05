@@ -465,9 +465,10 @@ impl RecurrenceFrequency {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RecurrenceWeekday {
+    #[default]
     Monday,
     Tuesday,
     Wednesday,
@@ -524,6 +525,10 @@ impl RecurrenceWeekday {
         }
     }
 
+    pub const fn offset_from(self, week_start: Self) -> u64 {
+        (self.offset_from_monday() + 7 - week_start.offset_from_monday()) % 7
+    }
+
     pub fn parse(raw: &str) -> Option<Self> {
         let normalized = raw.trim().to_ascii_lowercase();
         Self::ALL
@@ -541,6 +546,8 @@ pub struct RecurrenceRule {
     pub count: Option<u32>,
     #[serde(default)]
     pub until: Option<NaiveDate>,
+    #[serde(default)]
+    pub week_start: RecurrenceWeekday,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub by_weekday: Vec<RecurrenceWeekday>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -558,6 +565,7 @@ impl RecurrenceRule {
             interval: 1,
             count: None,
             until: None,
+            week_start: RecurrenceWeekday::Monday,
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -574,6 +582,11 @@ impl RecurrenceRule {
         }
         if !self.by_weekday.is_empty() && self.frequency != RecurrenceFrequency::Weekly {
             return Err(RecurrenceError::ByWeekdayRequiresWeekly);
+        }
+        if self.week_start != RecurrenceWeekday::Monday
+            && (self.frequency != RecurrenceFrequency::Weekly || self.by_weekday.is_empty())
+        {
+            return Err(RecurrenceError::WeekStartRequiresWeeklyByDay);
         }
         let mut weekdays = HashSet::new();
         for weekday in &self.by_weekday {
@@ -636,6 +649,7 @@ pub enum RecurrenceError {
     ZeroInterval,
     ZeroCount,
     ByWeekdayRequiresWeekly,
+    WeekStartRequiresWeeklyByDay,
     DuplicateByWeekday(&'static str),
     UnsupportedTimeKind(&'static str),
     InvalidSourceTimezone(String),
@@ -656,6 +670,9 @@ impl fmt::Display for RecurrenceError {
             Self::ZeroCount => formatter.write_str("recurrence count must be at least 1"),
             Self::ByWeekdayRequiresWeekly => formatter.write_str(
                 "BYDAY weekday selection is currently supported only for weekly recurrence",
+            ),
+            Self::WeekStartRequiresWeeklyByDay => formatter.write_str(
+                "custom WKST is currently supported only for weekly recurrence with BYDAY",
             ),
             Self::DuplicateByWeekday(weekday) => {
                 write!(formatter, "duplicate BYDAY weekday {weekday}")
@@ -1028,10 +1045,11 @@ fn weekly_recurrence_candidates(
     period: u32,
 ) -> Result<Vec<TimeSpec>, RecurrenceError> {
     let base_date = recurrence_rule_date(base)?;
+    let base_weekday = u64::from(base_date.weekday().num_days_from_monday());
+    let days_since_week_start =
+        (base_weekday + 7 - rule.week_start.offset_from_monday()) % 7;
     let week_start = base_date
-        .checked_sub_days(Days::new(u64::from(
-            base_date.weekday().num_days_from_monday(),
-        )))
+        .checked_sub_days(Days::new(days_since_week_start))
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
     let week_offset = u64::from(rule.interval)
         .checked_mul(u64::from(period))
@@ -1042,12 +1060,12 @@ fn weekly_recurrence_candidates(
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
 
     let mut weekdays = rule.by_weekday.clone();
-    weekdays.sort_by_key(|weekday| weekday.offset_from_monday());
+    weekdays.sort_by_key(|weekday| weekday.offset_from(rule.week_start));
 
     let mut candidates = Vec::with_capacity(weekdays.len());
     for weekday in weekdays {
         let candidate_date = active_week_start
-            .checked_add_days(Days::new(weekday.offset_from_monday()))
+            .checked_add_days(Days::new(weekday.offset_from(rule.week_start)))
             .ok_or(RecurrenceError::ArithmeticOverflow)?;
         if period == 0 && candidate_date < base_date {
             continue;
@@ -1501,6 +1519,7 @@ mod tests {
             interval: 2,
             count: Some(4),
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -1554,6 +1573,7 @@ mod tests {
             interval: 1,
             count: Some(3),
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: vec![TimeSpec::DateOnly {
                 start: start + Duration::days(4),
@@ -1607,6 +1627,7 @@ mod tests {
             interval: 1,
             count: Some(2),
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -1662,6 +1683,7 @@ mod tests {
             interval: 1,
             count: Some(2),
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -1708,6 +1730,7 @@ mod tests {
             interval: 1,
             count: None,
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -1753,6 +1776,7 @@ mod tests {
             interval: 1,
             count: None,
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -1788,6 +1812,7 @@ mod tests {
             interval: 1,
             count: Some(2),
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -1822,6 +1847,7 @@ mod tests {
             interval: 1,
             count: Some(5),
             until: None,
+            week_start: Default::default(),
             by_weekday: vec![
                 RecurrenceWeekday::Friday,
                 RecurrenceWeekday::Monday,
@@ -1866,6 +1892,7 @@ mod tests {
             interval: 2,
             count: Some(4),
             until: None,
+            week_start: Default::default(),
             by_weekday: vec![RecurrenceWeekday::Monday, RecurrenceWeekday::Wednesday],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -1888,6 +1915,57 @@ mod tests {
                 NaiveDate::from_ymd_opt(2026, 10, 21).expect("w2"),
             ]
         );
+    }
+
+    #[test]
+    fn weekly_byday_respects_custom_week_start_for_interval_grouping() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 4).expect("start");
+        let mut event = TemporalEvent::new(
+            "Sunday anchored",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 2,
+            count: Some(4),
+            until: None,
+            week_start: RecurrenceWeekday::Sunday,
+            by_weekday: vec![RecurrenceWeekday::Sunday, RecurrenceWeekday::Monday],
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let occurrences = event
+            .occurrences_in_window(start, start + Duration::days(21), chrono_tz::UTC)
+            .expect("expand");
+
+        assert_eq!(
+            occurrences
+                .iter()
+                .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+                .collect::<Vec<_>>(),
+            vec![
+                NaiveDate::from_ymd_opt(2026, 10, 4).expect("sun1"),
+                NaiveDate::from_ymd_opt(2026, 10, 5).expect("mon1"),
+                NaiveDate::from_ymd_opt(2026, 10, 18).expect("sun2"),
+                NaiveDate::from_ymd_opt(2026, 10, 19).expect("mon2"),
+            ]
+        );
+    }
+
+    #[test]
+    fn custom_week_start_requires_weekly_byday() {
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Weekly);
+        rule.week_start = RecurrenceWeekday::Sunday;
+
+        assert!(matches!(
+            rule.validate(),
+            Err(RecurrenceError::WeekStartRequiresWeeklyByDay)
+        ));
     }
 
     #[test]
@@ -1930,6 +2008,7 @@ mod tests {
             interval: 1,
             count: Some(3),
             until: None,
+            week_start: Default::default(),
             by_weekday: vec![RecurrenceWeekday::Sunday, RecurrenceWeekday::Tuesday],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -1988,6 +2067,7 @@ mod tests {
             interval: 1,
             count: Some(4),
             until: None,
+            week_start: Default::default(),
             by_weekday: vec![
                 RecurrenceWeekday::Monday,
                 RecurrenceWeekday::Wednesday,
@@ -2040,6 +2120,7 @@ mod tests {
             interval: 1,
             count: Some(3),
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -2081,6 +2162,7 @@ mod tests {
             interval: 1,
             count: Some(2),
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -2119,6 +2201,7 @@ mod tests {
             interval: 1,
             count: Some(2),
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),

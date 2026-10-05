@@ -2303,6 +2303,7 @@ impl EphemerisApp {
                         .collect::<Vec<_>>()
                         .join(", ");
                     inspector_row(ui, "Weekdays", &weekdays);
+                    inspector_row(ui, "Week start", rule.week_start.short_label());
                 }
                 inspector_row(ui, "RDATE additions", &rule.rdates.len().to_string());
                 inspector_row(ui, "EXDATE exclusions", &rule.exdates.len().to_string());

@@ -3873,6 +3873,7 @@ mod tests {
             interval: 0,
             count: None,
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3910,6 +3911,42 @@ mod tests {
     }
 
     #[test]
+    fn store_rejects_custom_week_start_without_weekly_byday() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule, RecurrenceWeekday};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Invalid WKST",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            count: None,
+            until: None,
+            week_start: RecurrenceWeekday::Sunday,
+            by_weekday: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let error = store
+            .upsert_event(&event)
+            .expect_err("custom WKST without BYDAY must not persist");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event recurrence definition")
+        );
+        assert_eq!(store.event_count().expect("event count"), 0);
+    }
+
+    #[test]
     fn store_rejects_byday_on_non_weekly_recurrence() {
         use crate::domain::{RecurrenceFrequency, RecurrenceRule, RecurrenceWeekday};
 
@@ -3927,6 +3964,7 @@ mod tests {
             interval: 1,
             count: None,
             until: None,
+            week_start: Default::default(),
             by_weekday: vec![RecurrenceWeekday::Monday],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3966,6 +4004,7 @@ mod tests {
             interval: 1,
             count: None,
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -4005,6 +4044,7 @@ mod tests {
             interval: 1,
             count: Some(2),
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4047,6 +4087,7 @@ mod tests {
             interval: 1,
             count: None,
             until: None,
+            week_start: Default::default(),
             by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4086,6 +4127,7 @@ mod tests {
             interval: 2,
             count: Some(5),
             until: Some(NaiveDate::from_ymd_opt(2027, 1, 1).expect("until")),
+            week_start: crate::domain::RecurrenceWeekday::Sunday,
             by_weekday: vec![
                 crate::domain::RecurrenceWeekday::Monday,
                 crate::domain::RecurrenceWeekday::Wednesday,
