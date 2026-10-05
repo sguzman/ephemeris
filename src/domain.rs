@@ -1,7 +1,8 @@
-use std::{collections::HashSet, fmt};
+use std::{cmp::Ordering, collections::HashSet, fmt};
 
 use chrono::{
-    DateTime, Datelike, Days, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc,
+    DateTime, Datelike, Days, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Timelike,
+    Utc,
 };
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
@@ -715,13 +716,23 @@ impl RecurrenceRule {
                 ));
             }
         }
+        let mut hours = HashSet::new();
+        for hour in &self.by_hour {
+            if *hour > 23 {
+                return Err(RecurrenceError::InvalidByHour(*hour));
+            }
+            if !hours.insert(*hour) {
+                return Err(RecurrenceError::DuplicateByHour(*hour));
+            }
+        }
         if !self.by_set_pos.is_empty() {
             let has_selector = !self.by_weekday.is_empty()
                 || !self.by_month.is_empty()
                 || !self.by_week_no.is_empty()
                 || !self.by_year_day.is_empty()
                 || !self.by_month_day.is_empty()
-                || !self.by_month_weekday.is_empty();
+                || !self.by_month_weekday.is_empty()
+                || !self.by_hour.is_empty();
             if !has_selector {
                 return Err(RecurrenceError::BySetPosRequiresSelector);
             }
@@ -804,6 +815,9 @@ pub enum RecurrenceError {
     ByMonthDayRequiresSupportedContext,
     InvalidByMonthDay(i8),
     DuplicateByMonthDay(i8),
+    ByHourRequiresDateTime(&'static str),
+    InvalidByHour(u8),
+    DuplicateByHour(u8),
     OrdinalByWeekdayRequiresMonthlyOrYearly,
     InvalidOrdinalByWeekday(i8),
     DuplicateOrdinalByWeekday(i8, &'static str),
@@ -881,6 +895,15 @@ impl fmt::Display for RecurrenceError {
             }
             Self::DuplicateByMonthDay(day) => {
                 write!(formatter, "duplicate BYMONTHDAY value {day}")
+            }
+            Self::ByHourRequiresDateTime(kind) => {
+                write!(formatter, "BYHOUR requires a date-time recurrence base, got {kind}")
+            }
+            Self::InvalidByHour(hour) => {
+                write!(formatter, "BYHOUR value must be between 0 and 23, got {hour}")
+            }
+            Self::DuplicateByHour(hour) => {
+                write!(formatter, "duplicate BYHOUR value {hour}")
             }
             Self::OrdinalByWeekdayRequiresMonthlyOrYearly => {
                 formatter.write_str("ordinal BYDAY selection requires monthly or yearly recurrence")
@@ -1029,6 +1052,11 @@ impl TemporalEvent {
 
         rule.validate()?;
         validate_recurrence_time(&self.time)?;
+        if !rule.by_hour.is_empty()
+            && matches!(self.time, TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. })
+        {
+            return Err(RecurrenceError::ByHourRequiresDateTime(self.time.kind_name()));
+        }
         let expected_kind = self.time.kind_name();
 
         for time in rule.rdates.iter().chain(rule.exdates.iter()) {
@@ -1130,12 +1158,19 @@ impl TemporalEvent {
                 break;
             }
 
-            let candidates = recurrence_candidates_for_period(&self.time, rule, recurrence_period)?;
+            let period = recurrence_period;
+            let period_lower_bound = recurrence_period_lower_bound_date(&self.time, rule, period)?;
+            let candidates = recurrence_candidates_for_period(&self.time, rule, period)?;
             recurrence_period = recurrence_period
                 .checked_add(1)
                 .ok_or(RecurrenceError::ArithmeticOverflow)?;
 
             if candidates.is_empty() {
+                if period_lower_bound.is_some_and(|date| {
+                    date >= end_exclusive || rule.until.is_some_and(|until| date > until)
+                }) {
+                    break;
+                }
                 continue;
             }
 
@@ -1265,7 +1300,149 @@ fn recurrence_candidates_for_period(
     period: u32,
 ) -> Result<Vec<TimeSpec>, RecurrenceError> {
     let candidates = recurrence_candidates_before_set_pos(base, rule, period)?;
+    let candidates = expand_by_hours(base, candidates, &rule.by_hour, period)?;
     Ok(apply_set_positions(candidates, &rule.by_set_pos))
+}
+
+fn recurrence_hour_multiplier(rule: &RecurrenceRule) -> usize {
+    if rule.by_hour.is_empty() {
+        1
+    } else {
+        rule.by_hour.len()
+    }
+}
+
+fn expand_by_hours(
+    base: &TimeSpec,
+    candidates: Vec<TimeSpec>,
+    hours: &[u8],
+    period: u32,
+) -> Result<Vec<TimeSpec>, RecurrenceError> {
+    if hours.is_empty() || candidates.is_empty() {
+        return Ok(candidates);
+    }
+
+    let mut hours = hours.to_vec();
+    hours.sort_unstable();
+    let mut expanded = Vec::with_capacity(candidates.len().saturating_mul(hours.len()));
+
+    for candidate in candidates {
+        for hour in &hours {
+            let Some(hour_candidate) = with_recurrence_hour(&candidate, *hour)? else {
+                continue;
+            };
+            if period == 0
+                && recurrence_start_cmp(&hour_candidate, base)? == Ordering::Less
+            {
+                continue;
+            }
+            expanded.push(hour_candidate);
+        }
+    }
+
+    Ok(expanded)
+}
+
+fn with_recurrence_hour(
+    candidate: &TimeSpec,
+    hour: u8,
+) -> Result<Option<TimeSpec>, RecurrenceError> {
+    match candidate {
+        TimeSpec::Floating {
+            start,
+            end,
+            source_timezone,
+        } => {
+            let selected_time = start
+                .time()
+                .with_hour(u32::from(hour))
+                .ok_or(RecurrenceError::InvalidByHour(hour))?;
+            let selected_start = NaiveDateTime::new(start.date(), selected_time);
+            let selected_end = match end {
+                Some(end) => Some(
+                    selected_start
+                        .checked_add_signed(*end - *start)
+                        .ok_or(RecurrenceError::ArithmeticOverflow)?,
+                ),
+                None => None,
+            };
+            Ok(Some(TimeSpec::Floating {
+                start: selected_start,
+                end: selected_end,
+                source_timezone: source_timezone.clone(),
+            }))
+        }
+        TimeSpec::Instant {
+            start_utc,
+            end_utc,
+            source_timezone,
+        } => {
+            let timezone = match source_timezone.as_deref() {
+                Some(raw) => raw
+                    .parse::<Tz>()
+                    .map_err(|_| RecurrenceError::InvalidSourceTimezone(raw.to_string()))?,
+                None => chrono_tz::UTC,
+            };
+            let local_start = start_utc.with_timezone(&timezone).naive_local();
+            let selected_time = local_start
+                .time()
+                .with_hour(u32::from(hour))
+                .ok_or(RecurrenceError::InvalidByHour(hour))?;
+            let selected_local = NaiveDateTime::new(local_start.date(), selected_time);
+            let Some(selected_start) = resolve_local_datetime(timezone, selected_local) else {
+                return Ok(None);
+            };
+            let selected_end = match end_utc {
+                Some(end) => Some(
+                    selected_start
+                        .checked_add_signed(*end - *start_utc)
+                        .ok_or(RecurrenceError::ArithmeticOverflow)?,
+                ),
+                None => None,
+            };
+            Ok(Some(TimeSpec::Instant {
+                start_utc: selected_start,
+                end_utc: selected_end,
+                source_timezone: source_timezone.clone(),
+            }))
+        }
+        TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => {
+            Err(RecurrenceError::ByHourRequiresDateTime(candidate.kind_name()))
+        }
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+            Err(RecurrenceError::UnsupportedTimeKind(candidate.kind_name()))
+        }
+    }
+}
+
+fn recurrence_start_cmp(
+    left: &TimeSpec,
+    right: &TimeSpec,
+) -> Result<Ordering, RecurrenceError> {
+    match (left, right) {
+        (TimeSpec::DateOnly { start: left, .. }, TimeSpec::DateOnly { start: right, .. })
+        | (TimeSpec::AllDay { start: left, .. }, TimeSpec::AllDay { start: right, .. }) => {
+            Ok(left.cmp(right))
+        }
+        (TimeSpec::Floating { start: left, .. }, TimeSpec::Floating { start: right, .. }) => {
+            Ok(left.cmp(right))
+        }
+        (
+            TimeSpec::Instant {
+                start_utc: left, ..
+            },
+            TimeSpec::Instant {
+                start_utc: right, ..
+            },
+        ) => Ok(left.cmp(right)),
+        _ if left.kind_name() != right.kind_name() => Err(
+            RecurrenceError::MismatchedExceptionTimeKind {
+                expected: right.kind_name(),
+                actual: left.kind_name(),
+            },
+        ),
+        _ => Err(RecurrenceError::UnsupportedTimeKind(left.kind_name())),
+    }
 }
 
 fn recurrence_candidates_before_set_pos(
@@ -1395,14 +1572,18 @@ fn yearly_rule_has_reachable_candidate(
         return Ok(true);
     }
 
-    let has_selector = !rule.by_weekday.is_empty()
+    let has_date_selector = !rule.by_weekday.is_empty()
         || !rule.by_month.is_empty()
         || !rule.by_week_no.is_empty()
         || !rule.by_year_day.is_empty()
         || !rule.by_month_day.is_empty()
         || !rule.by_month_weekday.is_empty();
-    if !has_selector {
-        return Ok(true);
+    let hour_multiplier = recurrence_hour_multiplier(rule);
+    if !has_date_selector {
+        return Ok(set_positions_select_any(
+            hour_multiplier,
+            &rule.by_set_pos,
+        ));
     }
 
     let base_date = recurrence_rule_date(base)?;
@@ -1426,9 +1607,13 @@ fn yearly_rule_has_reachable_candidate(
 
     for period in 1..=cycle_len {
         let period = u32::try_from(period).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
-        if !recurrence_candidates_for_period(&representative_base, &representative_rule, period)?
-            .is_empty()
-        {
+        let date_candidates =
+            recurrence_candidates_before_set_pos(&representative_base, &representative_rule, period)?;
+        let candidate_count = date_candidates
+            .len()
+            .checked_mul(hour_multiplier)
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+        if set_positions_select_any(candidate_count, &rule.by_set_pos) {
             return Ok(true);
         }
     }
@@ -1452,9 +1637,10 @@ fn daily_rule_has_reachable_candidate(
     if rule.frequency != RecurrenceFrequency::Daily {
         return Ok(true);
     }
+    let hour_multiplier = recurrence_hour_multiplier(rule);
     if rule.by_month.is_empty() && rule.by_month_day.is_empty() {
         return Ok(daily_byday_has_reachable_weekday(base, rule)?
-            && set_positions_select_any(1, &rule.by_set_pos));
+            && set_positions_select_any(hour_multiplier, &rule.by_set_pos));
     }
 
     let base_date = recurrence_rule_date(base)?;
@@ -1497,7 +1683,7 @@ fn daily_rule_has_reachable_candidate(
         if month_matches
             && weekday_matches
             && month_day_matches
-            && set_positions_select_any(1, &rule.by_set_pos)
+            && set_positions_select_any(hour_multiplier, &rule.by_set_pos)
         {
             return Ok(true);
         }
@@ -1584,7 +1770,11 @@ fn weekly_rule_has_reachable_candidate(
             ))
             .ok_or(RecurrenceError::ArithmeticOverflow)?;
         let candidate_dates = weekly_selector_dates_for_week(base_date, rule, active_week_start)?;
-        if set_positions_select_any(candidate_dates.len(), &rule.by_set_pos) {
+        let candidate_count = candidate_dates
+            .len()
+            .checked_mul(recurrence_hour_multiplier(rule))
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+        if set_positions_select_any(candidate_count, &rule.by_set_pos) {
             return Ok(true);
         }
 
@@ -1670,7 +1860,11 @@ fn monthly_rule_has_reachable_candidate(
         let month_start =
             NaiveDate::from_ymd_opt(year, month, 1).ok_or(RecurrenceError::ArithmeticOverflow)?;
         let candidate_dates = monthly_selector_dates_for_month(base_date, rule, month_start)?;
-        if set_positions_select_any(candidate_dates.len(), &rule.by_set_pos) {
+        let candidate_count = candidate_dates
+            .len()
+            .checked_mul(recurrence_hour_multiplier(rule))
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+        if set_positions_select_any(candidate_count, &rule.by_set_pos) {
             return Ok(true);
         }
 
@@ -2603,12 +2797,19 @@ fn recurrence_generates_original_time(
             return Ok(false);
         }
 
-        let candidates = recurrence_candidates_for_period(base, rule, recurrence_period)?;
+        let period = recurrence_period;
+        let period_lower_bound = recurrence_period_lower_bound_date(base, rule, period)?;
+        let candidates = recurrence_candidates_for_period(base, rule, period)?;
         recurrence_period = recurrence_period
             .checked_add(1)
             .ok_or(RecurrenceError::ArithmeticOverflow)?;
 
         if candidates.is_empty() {
+            if period_lower_bound.is_some_and(|date| {
+                date >= target_date || rule.until.is_some_and(|until| date > until)
+            }) {
+                return Ok(false);
+            }
             continue;
         }
 
@@ -2629,7 +2830,7 @@ fn recurrence_generates_original_time(
             if recurrence_key(&time)? == target_key {
                 return Ok(true);
             }
-            if occurrence_date >= target_date {
+            if recurrence_start_cmp(&time, target)? != Ordering::Less {
                 return Ok(false);
             }
         }
@@ -2805,6 +3006,50 @@ fn shift_recurrence_time(
         }
         TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
             Err(RecurrenceError::UnsupportedTimeKind(time.kind_name()))
+        }
+    }
+}
+
+fn recurrence_period_lower_bound_date(
+    base: &TimeSpec,
+    rule: &RecurrenceRule,
+    period: u32,
+) -> Result<Option<NaiveDate>, RecurrenceError> {
+    let base_date = recurrence_rule_date(base)?;
+    let steps = rule
+        .interval
+        .checked_mul(period)
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+
+    match rule.frequency {
+        RecurrenceFrequency::Daily => {
+            Ok(base_date.checked_add_days(Days::new(u64::from(steps))))
+        }
+        RecurrenceFrequency::Weekly => {
+            let base_weekday = u64::from(base_date.weekday().num_days_from_monday());
+            let days_since_week_start =
+                (base_weekday + 7 - rule.week_start.offset_from_monday()) % 7;
+            let week_start = base_date
+                .checked_sub_days(Days::new(days_since_week_start))
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            let day_offset = u64::from(steps)
+                .checked_mul(7)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            Ok(week_start.checked_add_days(Days::new(day_offset)))
+        }
+        RecurrenceFrequency::Monthly => {
+            let month_start = NaiveDate::from_ymd_opt(base_date.year(), base_date.month(), 1)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            add_months_preserving_day(month_start, steps)
+        }
+        RecurrenceFrequency::Yearly => {
+            let step_years =
+                i32::try_from(steps).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+            let year = base_date
+                .year()
+                .checked_add(step_years)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            Ok(NaiveDate::from_ymd_opt(year, 1, 1))
         }
     }
 }
