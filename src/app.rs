@@ -36,6 +36,8 @@ pub struct EphemerisApp {
     events: Vec<TemporalEvent>,
     unplaced_events: Vec<TemporalEvent>,
     sources: Vec<TemporalSource>,
+    source_event_counts: HashMap<Uuid, u64>,
+    selected_source_id: Option<Uuid>,
     taria_memberships: HashMap<Uuid, EventMembership>,
     taria_release_status: Option<TariaReleaseStatusRecord>,
     taria_release_history: Vec<TariaReleaseHistoryEntry>,
@@ -77,6 +79,8 @@ impl EphemerisApp {
             events: Vec::new(),
             unplaced_events: Vec::new(),
             sources: Vec::new(),
+            source_event_counts: HashMap::new(),
+            selected_source_id: None,
             taria_memberships: HashMap::new(),
             taria_release_status: None,
             taria_release_history: Vec::new(),
@@ -524,6 +528,13 @@ impl EphemerisApp {
         }
         self.unplaced_events = self.store.unplaced_events()?;
         self.sources = self.store.list_sources()?;
+        self.source_event_counts = self.store.source_event_counts()?;
+        if self
+            .selected_source_id
+            .is_some_and(|selected| !self.sources.iter().any(|source| source.id == selected))
+        {
+            self.selected_source_id = None;
+        }
         self.taria_memberships = self
             .store
             .taria_event_memberships_for_release(self.state.taria_last_release_id.as_deref())?;
@@ -1690,17 +1701,30 @@ impl EphemerisApp {
 
         let sources = self.sources.clone();
         egui::ScrollArea::vertical().show(ui, |ui| {
-            for source in sources {
-                let mut visible = !self.state.hidden_source_ids.contains(&source.id);
-                if ui.checkbox(&mut visible, &source.name).changed() {
-                    if visible {
-                        self.state.hidden_source_ids.remove(&source.id);
-                    } else {
-                        self.state.hidden_source_ids.insert(source.id);
+            for source in &sources {
+                ui.horizontal(|ui| {
+                    let mut visible = !self.state.hidden_source_ids.contains(&source.id);
+                    if ui.checkbox(&mut visible, "").changed() {
+                        if visible {
+                            self.state.hidden_source_ids.remove(&source.id);
+                        } else {
+                            self.state.hidden_source_ids.insert(source.id);
+                        }
+                        self.state.active_saved_view_id = None;
+                        self.mark_state_dirty();
                     }
-                    self.state.active_saved_view_id = None;
-                    self.mark_state_dirty();
-                }
+
+                    if ui
+                        .selectable_label(
+                            self.selected_source_id == Some(source.id),
+                            &source.name,
+                        )
+                        .on_hover_text("Inspect source metadata")
+                        .clicked()
+                    {
+                        self.selected_source_id = Some(source.id);
+                    }
+                });
                 ui.small(format!(
                     "{} · {}{}",
                     source.kind.as_str(),
@@ -1712,6 +1736,51 @@ impl EphemerisApp {
                     }
                 ));
                 ui.add_space(6.0);
+            }
+
+            if let Some(source) = self
+                .selected_source_id
+                .and_then(|id| sources.iter().find(|source| source.id == id))
+            {
+                ui.separator();
+                ui.strong("Source inspector");
+                inspector_row(ui, "Name", &source.name);
+                inspector_row(ui, "ID", &source.id.to_string());
+                if let Some(external_ref) = source.external_ref.as_deref() {
+                    inspector_row(ui, "External ref", external_ref);
+                }
+                if let Some(publisher) = source.publisher.as_deref() {
+                    inspector_row(ui, "Publisher", publisher);
+                }
+                inspector_row(ui, "Kind", source.kind.as_str());
+                inspector_row(ui, "Authority", source.authority.as_str());
+                inspector_row(ui, "Enabled", if source.enabled { "yes" } else { "no" });
+                inspector_row(
+                    ui,
+                    "Read only",
+                    if source.read_only { "yes" } else { "no" },
+                );
+                if let Some(locator) = source.locator.as_deref() {
+                    inspector_row(ui, "Locator", locator);
+                }
+                inspector_row(
+                    ui,
+                    "Canonical events",
+                    &self
+                        .source_event_counts
+                        .get(&source.id)
+                        .copied()
+                        .unwrap_or_default()
+                        .to_string(),
+                );
+                inspector_row(ui, "Created", &source.created_at.to_rfc3339());
+                inspector_row(ui, "Updated", &source.updated_at.to_rfc3339());
+
+                ui.collapsing("Properties", |ui| {
+                    let pretty = serde_json::to_string_pretty(&source.properties)
+                        .unwrap_or_else(|_| source.properties.to_string());
+                    ui.code(pretty);
+                });
             }
 
             let unplaced = self.visible_unplaced_events();
