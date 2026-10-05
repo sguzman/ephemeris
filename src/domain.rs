@@ -789,7 +789,6 @@ pub enum RecurrenceError {
     ByWeekdayRequiresSupportedContext,
     WeekStartRequiresWeekContext,
     DuplicateByWeekday(&'static str),
-    ByMonthRequiresSupportedContext,
     InvalidByMonth(u8),
     DuplicateByMonth(u8),
     ByWeekNoRequiresYearly,
@@ -833,9 +832,6 @@ impl fmt::Display for RecurrenceError {
             ),
             Self::DuplicateByWeekday(weekday) => {
                 write!(formatter, "duplicate BYDAY weekday {weekday}")
-            }
-            Self::ByMonthRequiresSupportedContext => {
-                formatter.write_str("BYMONTH selection is unsupported in this recurrence context")
             }
             Self::InvalidByMonth(month) => {
                 write!(
@@ -1389,7 +1385,10 @@ fn daily_rule_has_reachable_candidate(
         return Ok(true);
     }
     if rule.by_month.is_empty() {
-        return daily_byday_has_reachable_weekday(base, rule);
+        return Ok(
+            daily_byday_has_reachable_weekday(base, rule)?
+                && set_positions_select_any(1, &rule.by_set_pos),
+        );
     }
 
     let base_date = recurrence_rule_date(base)?;
@@ -1417,7 +1416,10 @@ fn daily_rule_has_reachable_candidate(
                 weekday.offset_from_monday()
                     == u64::from(candidate_date.weekday().num_days_from_monday())
             });
-        if month_matches && weekday_matches {
+        if month_matches
+            && weekday_matches
+            && set_positions_select_any(1, &rule.by_set_pos)
+        {
             return Ok(true);
         }
 
@@ -8297,6 +8299,36 @@ mod tests {
         assert_eq!(
             moved.id,
             occurrence_identity(event.id, &original).expect("stable identity")
+        );
+    }
+
+
+    #[test]
+    fn daily_reachability_accounts_for_bysetpos_candidate_size() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Impossible daily second position",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(1);
+        rule.by_weekday = vec![RecurrenceWeekday::Monday];
+        rule.by_set_pos = vec![2];
+        event.recurrence = Some(rule.clone());
+
+        assert!(!daily_rule_has_reachable_candidate(&event.time, &rule).expect("reachability"));
+        assert!(
+            event
+                .occurrences_in_window(
+                    start,
+                    NaiveDate::from_ymd_opt(2027, 1, 1).expect("end"),
+                    chrono_tz::UTC,
+                )
+                .expect("expand")
+                .is_empty()
         );
     }
 
