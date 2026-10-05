@@ -4708,13 +4708,13 @@ mod tests {
     }
 
     #[test]
-    fn store_rejects_byday_on_non_weekly_recurrence() {
+    fn store_rejects_duplicate_daily_byday_weekdays() {
         use crate::domain::{RecurrenceFrequency, RecurrenceRule, RecurrenceWeekday};
 
         let store = TemporalStore::open_in_memory().expect("store");
         let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
         let mut event = TemporalEvent::new(
-            "Invalid BYDAY",
+            "Invalid duplicate BYDAY",
             TimeSpec::DateOnly {
                 start: day,
                 end_exclusive: None,
@@ -4726,7 +4726,7 @@ mod tests {
             count: None,
             until: None,
             week_start: Default::default(),
-            by_weekday: vec![RecurrenceWeekday::Monday],
+            by_weekday: vec![RecurrenceWeekday::Monday, RecurrenceWeekday::Monday],
             by_month: Vec::new(),
             by_week_no: Vec::new(),
             by_year_day: Vec::new(),
@@ -4740,7 +4740,7 @@ mod tests {
 
         let error = store
             .upsert_event(&event)
-            .expect_err("non-weekly BYDAY must not persist");
+            .expect_err("duplicate daily BYDAY weekday must not persist");
         assert!(
             error
                 .to_string()
@@ -5541,4 +5541,46 @@ mod tests {
 
         assert_eq!(loaded.recurrence, event.recurrence);
     }
+
+    #[test]
+    fn daily_byday_roundtrips_through_event_storage() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule, RecurrenceWeekday};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Weekday recurrence",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 2,
+            count: Some(6),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: vec![
+                RecurrenceWeekday::Monday,
+                RecurrenceWeekday::Wednesday,
+                RecurrenceWeekday::Friday,
+            ],
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        store.upsert_event(&event).expect("persist recurrence");
+        let loaded = store.event_by_id(event.id).expect("query").expect("event");
+
+        assert_eq!(loaded.recurrence, event.recurrence);
+    }
+
 }
