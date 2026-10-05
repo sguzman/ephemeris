@@ -2,7 +2,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
-use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate, Utc};
+use chrono::{
+    DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate, Timelike, Utc,
+};
 use chrono_tz::Tz;
 use eframe::egui::{self, Color32, RichText};
 use uuid::Uuid;
@@ -1095,6 +1097,9 @@ impl EphemerisApp {
             if input.key_pressed(egui::Key::S) {
                 target_layout = Some(CalendarLayout::Stream);
             }
+            if input.key_pressed(egui::Key::L) {
+                target_layout = Some(CalendarLayout::Timeline);
+            }
         });
 
         if navigate != 0 {
@@ -1529,13 +1534,16 @@ impl EphemerisApp {
 
         let mut presentation_changed = false;
 
-        let stream_chronology_locked = self.state.calendar_layout == CalendarLayout::Stream;
-        if stream_chronology_locked {
+        let chronology_locked = matches!(
+            self.state.calendar_layout,
+            CalendarLayout::Stream | CalendarLayout::Timeline
+        );
+        if chronology_locked {
             ui.small(
-                "Stream owns chronological order and date/precision markers. Saved grouping and sort rules are preserved for Agenda/Table but do not alter Stream.",
+                "Stream/Timeline own temporal ordering. Saved grouping and sort rules are preserved for Agenda/Table but do not alter these chronological layouts.",
             );
         }
-        ui.add_enabled_ui(!stream_chronology_locked, |ui| {
+        ui.add_enabled_ui(!chronology_locked, |ui| {
             egui::ComboBox::from_id_salt("presentation.group")
                 .selected_text(self.state.group_by.label())
                 .show_ui(ui, |ui| {
@@ -1923,7 +1931,7 @@ impl EphemerisApp {
 
         ui.separator();
         ui.strong("Sort rules");
-        ui.add_enabled_ui(!stream_chronology_locked, |ui| {
+        ui.add_enabled_ui(!chronology_locked, |ui| {
             let mut remove_sort = None;
             let can_remove_sort = self.state.sort_rules.len() > 1;
             for (index, rule) in self.state.sort_rules.iter_mut().enumerate() {
@@ -3123,6 +3131,16 @@ fn render_calendar(
             render_agenda(ui, events, timezone, selected, group_by, sort_rules, colors)
         }
         CalendarLayout::Stream => render_stream(ui, events, timezone, selected, colors),
+        CalendarLayout::Timeline => render_timeline(
+            ui,
+            events,
+            view,
+            focus,
+            timezone,
+            monday_start,
+            selected,
+            colors,
+        ),
         CalendarLayout::Table => render_table(
             ui,
             events,
@@ -3147,6 +3165,208 @@ fn render_calendar(
             CalendarView::Day => render_day(ui, events, focus, timezone, selected, colors),
         },
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TimelineSpan {
+    start_fraction: f32,
+    end_fraction: f32,
+    point: bool,
+}
+
+fn render_timeline(
+    ui: &mut egui::Ui,
+    events: &[TemporalEvent],
+    view: CalendarView,
+    focus: NaiveDate,
+    timezone: Tz,
+    monday_start: bool,
+    selected: Option<Uuid>,
+    colors: ColorPresentation<'_>,
+) -> Option<CalendarAction> {
+    let window = window_for_view(view, focus, monday_start);
+    let mut positioned = events
+        .iter()
+        .filter_map(|event| timeline_span(event, window, timezone).map(|span| (event, span)))
+        .collect::<Vec<_>>();
+    positioned.sort_by(|(left_event, left_span), (right_event, right_span)| {
+        left_span
+            .start_fraction
+            .total_cmp(&right_span.start_fraction)
+            .then_with(|| left_span.end_fraction.total_cmp(&right_span.end_fraction))
+            .then_with(|| {
+                left_event
+                    .normalized_title
+                    .cmp(&right_event.normalized_title)
+            })
+            .then_with(|| left_event.id.cmp(&right_event.id))
+    });
+
+    let unpositioned = events.len().saturating_sub(positioned.len());
+    let axis_label = format!(
+        "{} → {}",
+        window.start,
+        window.end_exclusive - chrono::Duration::days(1)
+    );
+    ui.horizontal_wrapped(|ui| {
+        ui.strong("Timeline");
+        ui.small(axis_label);
+        if unpositioned > 0 {
+            ui.small(format!("· {unpositioned} unresolved event(s) not positioned"));
+        }
+    });
+    ui.separator();
+
+    let mut action = None;
+    for (event, span) in positioned {
+        ui.horizontal(|ui| {
+            let label = ui.add_sized(
+                [220.0, 22.0],
+                egui::Button::new(
+                    RichText::new(&event.normalized_title)
+                        .color(event_color(event, colors))
+                        .strong(),
+                )
+                .selected(selected == Some(event.id)),
+            );
+            if label.clicked() {
+                action = Some(CalendarAction::Select(event.id));
+            }
+
+            let desired = egui::vec2(ui.available_width().max(80.0), 22.0);
+            let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
+            let painter = ui.painter_at(rect);
+            let center_y = rect.center().y;
+
+            painter.line_segment(
+                [
+                    egui::pos2(rect.left(), center_y),
+                    egui::pos2(rect.right(), center_y),
+                ],
+                egui::Stroke::new(1.0, Color32::DARK_GRAY),
+            );
+
+            let x_for = |fraction: f32| {
+                rect.left() + rect.width() * fraction.clamp(0.0, 1.0)
+            };
+            let start_x = x_for(span.start_fraction);
+            let end_x = x_for(span.end_fraction);
+            let color = event_color(event, colors);
+
+            if span.point {
+                painter.circle_filled(egui::pos2(start_x, center_y), 4.0, color);
+            } else {
+                let width = (end_x - start_x).abs().max(4.0);
+                let bar = egui::Rect::from_min_size(
+                    egui::pos2(start_x.min(end_x), center_y - 4.0),
+                    egui::vec2(width, 8.0),
+                );
+                painter.rect_filled(bar, 2.0, color);
+            }
+
+            if response.clicked() {
+                action = Some(CalendarAction::Select(event.id));
+            }
+            response.on_hover_text(format!(
+                "{} · {}",
+                event.display_time_label(timezone),
+                event.status.as_str()
+            ));
+        });
+    }
+
+    action
+}
+
+fn timeline_span(
+    event: &TemporalEvent,
+    window: crate::calendar::DateWindow,
+    timezone: Tz,
+) -> Option<TimelineSpan> {
+    let window_days = (window.end_exclusive - window.start).num_days();
+    if window_days <= 0 {
+        return None;
+    }
+    let total_seconds = window_days as f64 * 86_400.0;
+
+    let date_fraction = |date: NaiveDate, seconds: u32| {
+        let days = (date - window.start).num_days() as f64;
+        (days * 86_400.0 + f64::from(seconds)) / total_seconds
+    };
+
+    let (raw_start, raw_end, point) = match event.time {
+        TimeSpec::DateOnly {
+            start,
+            end_exclusive,
+        }
+        | TimeSpec::AllDay {
+            start,
+            end_exclusive,
+        } => {
+            let end = end_exclusive.unwrap_or(start + chrono::Duration::days(1));
+            (
+                date_fraction(start, 0),
+                date_fraction(end, 0),
+                false,
+            )
+        }
+        TimeSpec::Instant {
+            start_utc,
+            end_utc,
+            ..
+        } => {
+            let start = start_utc.with_timezone(&timezone).naive_local();
+            let end = end_utc
+                .map(|value| value.with_timezone(&timezone).naive_local())
+                .unwrap_or(start);
+            (
+                date_fraction(start.date(), start.time().num_seconds_from_midnight()),
+                date_fraction(end.date(), end.time().num_seconds_from_midnight()),
+                end_utc.is_none(),
+            )
+        }
+        TimeSpec::Floating { start, end, .. } => {
+            let end = end.unwrap_or(start);
+            (
+                date_fraction(start.date(), start.time().num_seconds_from_midnight()),
+                date_fraction(end.date(), end.time().num_seconds_from_midnight()),
+                event.time.matches_instantaneous(),
+            )
+        }
+        TimeSpec::Month { year, month } => {
+            let start = NaiveDate::from_ymd_opt(year, month, 1)?;
+            let end = if month == 12 {
+                NaiveDate::from_ymd_opt(year + 1, 1, 1)?
+            } else {
+                NaiveDate::from_ymd_opt(year, month + 1, 1)?
+            };
+            (
+                date_fraction(start, 0),
+                date_fraction(end, 0),
+                false,
+            )
+        }
+        TimeSpec::Year { year } => {
+            let start = NaiveDate::from_ymd_opt(year, 1, 1)?;
+            let end = NaiveDate::from_ymd_opt(year + 1, 1, 1)?;
+            (
+                date_fraction(start, 0),
+                date_fraction(end, 0),
+                false,
+            )
+        }
+        TimeSpec::Unknown { .. } => return None,
+    };
+
+    if raw_end < 0.0 || raw_start > 1.0 {
+        return None;
+    }
+
+    Some(TimelineSpan {
+        start_fraction: raw_start.clamp(0.0, 1.0) as f32,
+        end_fraction: raw_end.clamp(0.0, 1.0) as f32,
+        point,
+    })
 }
 
 fn render_stream(
@@ -4258,6 +4478,59 @@ mod tests {
             summary: None,
             error: None,
         }
+    }
+
+    #[test]
+    fn timeline_span_positions_timed_and_day_precision_events() {
+        let window = crate::calendar::DateWindow {
+            start: NaiveDate::from_ymd_opt(2026, 10, 5).expect("start"),
+            end_exclusive: NaiveDate::from_ymd_opt(2026, 10, 6).expect("end"),
+        };
+
+        let timed = TemporalEvent::new(
+            "Noon",
+            TimeSpec::Floating {
+                start: window.start.and_hms_opt(12, 0, 0).expect("noon"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let timed_span = timeline_span(&timed, window, chrono_tz::UTC).expect("timed span");
+        assert!(timed_span.point);
+        assert!((timed_span.start_fraction - 0.5).abs() < 0.001);
+
+        let all_day = TemporalEvent::new(
+            "All day",
+            TimeSpec::AllDay {
+                start: window.start,
+                end_exclusive: None,
+            },
+        );
+        let day_span = timeline_span(&all_day, window, chrono_tz::UTC).expect("day span");
+        assert!(!day_span.point);
+        assert!((day_span.start_fraction - 0.0).abs() < 0.001);
+        assert!((day_span.end_fraction - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn timeline_span_preserves_month_precision_as_interval() {
+        let window = crate::calendar::DateWindow {
+            start: NaiveDate::from_ymd_opt(2026, 1, 1).expect("start"),
+            end_exclusive: NaiveDate::from_ymd_opt(2027, 1, 1).expect("end"),
+        };
+        let event = TemporalEvent::new(
+            "October",
+            TimeSpec::Month {
+                year: 2026,
+                month: 10,
+            },
+        );
+
+        let span = timeline_span(&event, window, chrono_tz::UTC).expect("month span");
+        assert!(!span.point);
+        assert!(span.end_fraction > span.start_fraction);
+        assert!(span.start_fraction > 0.7);
+        assert!(span.end_fraction < 0.95);
     }
 
     #[test]
