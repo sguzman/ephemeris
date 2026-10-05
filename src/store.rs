@@ -5651,4 +5651,42 @@ mod tests {
 
         assert_eq!(loaded.recurrence, event.recurrence);
     }
+
+    #[test]
+    fn daily_bymonthday_roundtrips_through_event_storage() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule, RecurrenceWeekday};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 1, 30).expect("day");
+        let mut event = TemporalEvent::new(
+            "Selected daily month-days",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: Some(6),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: vec![RecurrenceWeekday::Monday, RecurrenceWeekday::Friday],
+            by_month: vec![1, 3],
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: vec![1, -1],
+            by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        store.upsert_event(&event).expect("persist recurrence");
+        let loaded = store.event_by_id(event.id).expect("query").expect("event");
+
+        assert_eq!(loaded.recurrence, event.recurrence);
+    }
+
 }
