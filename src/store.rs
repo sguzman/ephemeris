@@ -3047,6 +3047,13 @@ mod tests {
             .expect("new timestamp");
 
         store
+            .link_taria_release_source("release:old", source.id, "projection:old")
+            .expect("old release source");
+        store
+            .link_taria_release_source("release:new", source.id, "projection:new")
+            .expect("new release source");
+
+        store
             .replace_taria_calendar_set(
                 &TariaCalendarSetRecord {
                     calendar_set_id: "calendar-set:old".to_string(),
@@ -3099,6 +3106,7 @@ mod tests {
         let history = store.taria_release_history().expect("history");
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].release_id, "release:new");
+        assert_eq!(history[0].source_count, 1);
         assert_eq!(history[0].resolved_member_event_count, 1);
 
         let diff = store
@@ -3107,6 +3115,14 @@ mod tests {
             .expect("previous release");
         assert_eq!(diff.from_release_id, "release:old");
         assert_eq!(diff.to_release_id, "release:new");
+        assert_eq!(
+            diff.added_source_projection_refs,
+            vec!["projection:new".to_string()]
+        );
+        assert_eq!(
+            diff.removed_source_projection_refs,
+            vec!["projection:old".to_string()]
+        );
         assert_eq!(
             diff.added_bundle_refs,
             vec!["bundle:temporal/finance-markets".to_string()]
