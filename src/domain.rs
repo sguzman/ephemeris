@@ -8537,5 +8537,4 @@ mod tests {
             vec![NaiveDate::from_ymd_opt(2426, 1, 31).expect("future January")]
         );
     }
-
 }
