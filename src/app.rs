@@ -354,6 +354,10 @@ impl EphemerisApp {
             ui.small(summary);
         }
 
+        let active_attempt_id = self
+            .taria_update_receiver
+            .as_ref()
+            .map(|(attempt_id, _)| *attempt_id);
         ui.collapsing(
             format!("Refresh history ({})", self.source_refresh_attempts.len()),
             |ui| {
@@ -365,6 +369,7 @@ impl EphemerisApp {
                     let status = match attempt.success {
                         Some(true) => "success",
                         Some(false) => "failed",
+                        None if active_attempt_id == Some(attempt.id) => "running",
                         None => "incomplete",
                     };
                     ui.strong(format!(
