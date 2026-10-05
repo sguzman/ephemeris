@@ -1386,8 +1386,7 @@ fn monthly_plain_weekday_candidates(
 
     let mut candidate_dates = Vec::new();
     for weekday in weekdays {
-        let first_offset =
-            (weekday.offset_from_monday() + 7 - month_start_weekday) % 7;
+        let first_offset = (weekday.offset_from_monday() + 7 - month_start_weekday) % 7;
         let mut candidate_date = active_month_start
             .checked_add_days(Days::new(first_offset))
             .ok_or(RecurrenceError::ArithmeticOverflow)?;
@@ -3191,7 +3190,7 @@ mod tests {
         let starts = occurrences
             .iter()
             .map(|occurrence| {
-                let TimeSpec::Instant { start_utc, .. } = occurrence.time else {
+                let TimeSpec::Instant { start_utc, .. } = &occurrence.time else {
                     panic!("instant occurrence");
                 };
                 (
