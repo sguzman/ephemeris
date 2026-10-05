@@ -1132,11 +1132,25 @@ impl TemporalEvent {
             }
 
             let candidates = recurrence_candidates_for_period(&self.time, rule, recurrence_period)?;
+            let empty_period_floor = if candidates.is_empty() {
+                Some(recurrence_period_floor_date(
+                    &self.time,
+                    rule,
+                    recurrence_period,
+                )?)
+            } else {
+                None
+            };
             recurrence_period = recurrence_period
                 .checked_add(1)
                 .ok_or(RecurrenceError::ArithmeticOverflow)?;
 
-            if candidates.is_empty() {
+            if let Some(period_floor) = empty_period_floor {
+                if period_floor >= end_exclusive
+                    || rule.until.is_some_and(|until| period_floor > until)
+                {
+                    break;
+                }
                 continue;
             }
 
@@ -1258,6 +1272,64 @@ fn validate_recurrence_time(time: &TimeSpec) -> Result<(), RecurrenceError> {
     }
 
     Ok(())
+}
+
+fn recurrence_period_floor_date(
+    base: &TimeSpec,
+    rule: &RecurrenceRule,
+    period: u32,
+) -> Result<NaiveDate, RecurrenceError> {
+    let base_date = recurrence_rule_date(base)?;
+
+    match rule.frequency {
+        RecurrenceFrequency::Daily => {
+            let day_offset = u64::from(rule.interval)
+                .checked_mul(u64::from(period))
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            base_date
+                .checked_add_days(Days::new(day_offset))
+                .ok_or(RecurrenceError::ArithmeticOverflow)
+        }
+        RecurrenceFrequency::Weekly => {
+            let base_weekday = u64::from(base_date.weekday().num_days_from_monday());
+            let days_since_week_start =
+                (base_weekday + 7 - rule.week_start.offset_from_monday()) % 7;
+            let week_start = base_date
+                .checked_sub_days(Days::new(days_since_week_start))
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            let day_offset = u64::from(rule.interval)
+                .checked_mul(u64::from(period))
+                .and_then(|weeks| weeks.checked_mul(7))
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            week_start
+                .checked_add_days(Days::new(day_offset))
+                .ok_or(RecurrenceError::ArithmeticOverflow)
+        }
+        RecurrenceFrequency::Monthly => {
+            let month_start = NaiveDate::from_ymd_opt(base_date.year(), base_date.month(), 1)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            let month_offset = rule
+                .interval
+                .checked_mul(period)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            add_months_preserving_day(month_start, month_offset)?
+                .ok_or(RecurrenceError::ArithmeticOverflow)
+        }
+        RecurrenceFrequency::Yearly => {
+            let year_offset = rule
+                .interval
+                .checked_mul(period)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            let year_offset =
+                i32::try_from(year_offset).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+            let active_year = base_date
+                .year()
+                .checked_add(year_offset)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            NaiveDate::from_ymd_opt(active_year, 1, 1)
+                .ok_or(RecurrenceError::ArithmeticOverflow)
+        }
+    }
 }
 
 fn recurrence_candidates_for_period(
@@ -6745,6 +6817,91 @@ mod tests {
             moved.id,
             occurrence_identity(event.id, &original).expect("stable identity")
         );
+    }
+
+
+    #[test]
+    fn empty_selector_periods_terminate_at_window_end() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Impossible yearly selector intersection",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: None,
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: vec![1],
+            by_month_day: Vec::new(),
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
+                53,
+                RecurrenceWeekday::Monday,
+            )],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2028, 1, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("empty selector set terminates");
+
+        assert!(occurrences.is_empty());
+    }
+
+    #[test]
+    fn empty_selector_periods_terminate_after_until() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Impossible bounded yearly selector intersection",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: None,
+            until: Some(NaiveDate::from_ymd_opt(2027, 12, 31).expect("until")),
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: vec![1],
+            by_month_day: Vec::new(),
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
+                53,
+                RecurrenceWeekday::Monday,
+            )],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2035, 1, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("UNTIL bounds empty selector set");
+
+        assert!(occurrences.is_empty());
     }
 
 }
