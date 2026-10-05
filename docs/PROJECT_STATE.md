@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the hardened Phase 8 recurrence-selector checkpoint, all **128** library tests pass. Verified implementation code checkpoint: `ab219f2937412ba5ebe0d5e9b51255ccec2f8d90`, with format, check, strict Clippy, and tests all green.
+At the hardened Phase 8 recurrence-selector checkpoint, all **141** library tests pass. Verified implementation code checkpoint: `732354bf5b0457c99093b7c1e118fce895682d22`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -91,7 +91,11 @@ Implemented:
 - ordinal weekday candidates resolved chronologically inside each active month, with missing fifth weekdays skipped and first-month candidates before DTSTART omitted;
 - when BYMONTHDAY and ordinal monthly BYDAY are both present, Ephemeris intersects their resolved civil-date sets before COUNT/EXDATE/override processing, matching filtering semantics rather than unioning unrelated candidates;
 - positive yearly BYMONTH selection for months 1-12, with duplicate/range/non-yearly validation;
-- chronological month generation within each active recurrence year, with first-year candidates before DTSTART omitted and DTSTART's civil day preserved where that date exists;
+- yearly BYMONTH + signed BYMONTHDAY composition, producing selected month/day candidates with positive or month-end-relative day selectors;
+- yearly BYMONTH + ordinal BYDAY composition, where ordinal weekdays are resolved inside each selected month rather than across the whole recurrence year;
+- when yearly BYMONTHDAY and ordinal BYDAY are both present, Ephemeris intersects their resolved civil-date sets independently inside each selected month before COUNT/EXDATE/override processing;
+- yearly BYMONTHDAY or ordinal BYDAY requires explicit BYMONTH context in this slice, avoiding implicit every-month or nth-weekday-of-year semantics;
+- first-year candidates before DTSTART are omitted, impossible civil dates/missing fifth weekdays are skipped, and BYMONTH alone continues to preserve DTSTART's civil day where valid;
 - deterministic occurrence UUID derived from the canonical event and original recurrence slot;
 - RDATE additions and EXDATE exclusions stored inside the existing schema-v14 recurrence JSON;
 - moved occurrence overrides that retain the original occurrence UUID/lineage while rendering at the replacement time;
@@ -107,7 +111,7 @@ Implemented:
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: broader yearly/month-oriented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond the implemented month-oriented combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
