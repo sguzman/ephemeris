@@ -683,6 +683,9 @@ impl RecurrenceRule {
                 return Err(RecurrenceError::DuplicateByMonthDay(*day));
             }
         }
+        if !self.by_week_no.is_empty() && !self.by_month_weekday.is_empty() {
+            return Err(RecurrenceError::OrdinalByWeekdayWithByWeekNo);
+        }
         if !self.by_month_weekday.is_empty()
             && self.frequency != RecurrenceFrequency::Monthly
             && !(self.frequency == RecurrenceFrequency::Yearly && !self.by_month.is_empty())
@@ -700,9 +703,6 @@ impl RecurrenceRule {
                     selector.weekday.as_str(),
                 ));
             }
-        }
-        if !self.by_week_no.is_empty() && !self.by_month_weekday.is_empty() {
-            return Err(RecurrenceError::OrdinalByWeekdayWithByWeekNo);
         }
         if !self.by_set_pos.is_empty() {
             let has_selector = !self.by_weekday.is_empty()
