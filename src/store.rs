@@ -3879,6 +3879,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -3938,6 +3939,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -3978,6 +3980,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4017,6 +4020,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4062,6 +4066,7 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
             ],
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4104,6 +4109,86 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
             ],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        store.upsert_event(&event).expect("save");
+        let loaded = store
+            .event_by_id(event.id)
+            .expect("load")
+            .expect("stored event");
+        assert_eq!(loaded.recurrence, event.recurrence);
+    }
+
+    #[test]
+    fn store_rejects_by_set_pos_without_other_selector() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Invalid BYSETPOS",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            count: None,
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            by_set_pos: vec![-1],
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let error = store
+            .upsert_event(&event)
+            .expect_err("selector-free BYSETPOS must not persist");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event recurrence definition")
+        );
+        assert_eq!(store.event_count().expect("event count"), 0);
+    }
+
+    #[test]
+    fn by_set_pos_roundtrips_through_event_storage() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Set-position selectors",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            count: Some(6),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: vec![1, 15, -1],
+            by_month_weekday: Vec::new(),
+            by_set_pos: vec![1, -1],
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4141,6 +4226,7 @@ mod tests {
             by_year_day: vec![1],
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4181,6 +4267,7 @@ mod tests {
             by_year_day: vec![1, 100, 212, -1],
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4220,6 +4307,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4265,6 +4353,7 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
             ],
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4302,6 +4391,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: vec![1],
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4342,6 +4432,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: vec![1, -1],
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4379,6 +4470,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: vec![15],
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4419,6 +4511,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: vec![-1, 1, 15, 31],
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4456,6 +4549,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4496,6 +4590,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4540,6 +4635,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
             overrides: vec![RecurrenceOverride {
@@ -4584,6 +4680,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: vec![RecurrenceOverride {
@@ -4631,6 +4728,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4679,6 +4777,7 @@ mod tests {
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
             rdates: vec![TimeSpec::DateOnly {
                 start: day + chrono::Duration::days(1),
                 end_exclusive: None,

@@ -2349,6 +2349,16 @@ impl EphemerisApp {
                         .join(", ");
                     inspector_row(ui, "Month weekdays", &selectors);
                 }
+                if !rule.by_set_pos.is_empty() {
+                    let mut positions = rule.by_set_pos.clone();
+                    positions.sort_unstable();
+                    let positions = positions
+                        .into_iter()
+                        .map(|position| position.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    inspector_row(ui, "Set positions", &positions);
+                }
                 inspector_row(ui, "RDATE additions", &rule.rdates.len().to_string());
                 inspector_row(ui, "EXDATE exclusions", &rule.exdates.len().to_string());
                 inspector_row(
