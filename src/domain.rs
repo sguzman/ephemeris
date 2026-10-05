@@ -6905,8 +6905,14 @@ mod tests {
 
         assert_eq!(local.len(), 3);
         assert!(local.iter().all(|date| date.format("%H:%M").to_string() == "09:00"));
-        assert_eq!(local[1].with_timezone(&Utc).hour(), 14);
-        assert_eq!(local[2].with_timezone(&Utc).hour(), 13);
+        assert_eq!(
+            local[1].with_timezone(&Utc).format("%H:%M").to_string(),
+            "14:00"
+        );
+        assert_eq!(
+            local[2].with_timezone(&Utc).format("%H:%M").to_string(),
+            "13:00"
+        );
     }
 
     #[test]
