@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::{Context, anyhow};
@@ -16,6 +17,7 @@ pub struct TariaImportReport {
     pub projection_ref: String,
     pub reconciled_set_ref: Option<String>,
     pub source_id: Uuid,
+    pub event_ids: BTreeSet<Uuid>,
     pub total_events: usize,
     pub created: usize,
     pub updated: usize,
@@ -148,11 +150,13 @@ pub fn import_reconciled_event_set_json(
     let suggested_focus = normalized.iter().filter_map(event_focus_date).min();
 
     let batch = store.import_taria_batch(&source, &mut normalized)?;
+    let event_ids = normalized.iter().map(|event| event.id).collect();
 
     Ok(TariaImportReport {
         projection_ref,
         reconciled_set_ref,
         source_id: source.id,
+        event_ids,
         total_events: normalized.len(),
         created: batch.created,
         updated: batch.updated,
@@ -301,11 +305,13 @@ pub fn import_compact_reconciled_event_index_json(
         .count();
     let suggested_focus = normalized.iter().filter_map(event_focus_date).min();
     let batch = store.import_taria_batch(&source, &mut normalized)?;
+    let event_ids = normalized.iter().map(|event| event.id).collect();
 
     Ok(TariaImportReport {
         projection_ref,
         reconciled_set_ref: None,
         source_id: source.id,
+        event_ids,
         total_events: normalized.len(),
         created: batch.created,
         updated: batch.updated,
