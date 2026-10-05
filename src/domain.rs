@@ -624,6 +624,13 @@ impl TemporalEvent {
 
         rule.validate()?;
 
+        if matches!(
+            self.time,
+            TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. }
+        ) {
+            return Err(RecurrenceError::UnsupportedTimeKind(self.time.kind_name()));
+        }
+
         if let TimeSpec::Instant {
             source_timezone: Some(raw),
             ..
@@ -748,11 +755,17 @@ fn shift_recurrence_time(
             let Some(shifted_start) = shift_date(*start, rule.frequency, steps)? else {
                 return Ok(None);
             };
-            let duration_days = end_exclusive.map(|end| (end - *start).num_days());
+            let shifted_end = match end_exclusive {
+                Some(end) => Some(
+                    shifted_start
+                        .checked_add_signed(Duration::days((*end - *start).num_days()))
+                        .ok_or(RecurrenceError::ArithmeticOverflow)?,
+                ),
+                None => None,
+            };
             Ok(Some(TimeSpec::DateOnly {
                 start: shifted_start,
-                end_exclusive: duration_days
-                    .and_then(|days| shifted_start.checked_add_signed(Duration::days(days))),
+                end_exclusive: shifted_end,
             }))
         }
         TimeSpec::AllDay {
@@ -762,11 +775,17 @@ fn shift_recurrence_time(
             let Some(shifted_start) = shift_date(*start, rule.frequency, steps)? else {
                 return Ok(None);
             };
-            let duration_days = end_exclusive.map(|end| (end - *start).num_days());
+            let shifted_end = match end_exclusive {
+                Some(end) => Some(
+                    shifted_start
+                        .checked_add_signed(Duration::days((*end - *start).num_days()))
+                        .ok_or(RecurrenceError::ArithmeticOverflow)?,
+                ),
+                None => None,
+            };
             Ok(Some(TimeSpec::AllDay {
                 start: shifted_start,
-                end_exclusive: duration_days
-                    .and_then(|days| shifted_start.checked_add_signed(Duration::days(days))),
+                end_exclusive: shifted_end,
             }))
         }
         TimeSpec::Floating {
@@ -777,10 +796,17 @@ fn shift_recurrence_time(
             let Some(shifted_start) = shift_naive_datetime(*start, rule.frequency, steps)? else {
                 return Ok(None);
             };
-            let duration = end.map(|end| end - *start);
+            let shifted_end = match end {
+                Some(end) => Some(
+                    shifted_start
+                        .checked_add_signed(*end - *start)
+                        .ok_or(RecurrenceError::ArithmeticOverflow)?,
+                ),
+                None => None,
+            };
             Ok(Some(TimeSpec::Floating {
                 start: shifted_start,
-                end: duration.and_then(|duration| shifted_start.checked_add_signed(duration)),
+                end: shifted_end,
                 source_timezone: source_timezone.clone(),
             }))
         }
@@ -803,10 +829,17 @@ fn shift_recurrence_time(
             let Some(shifted_start) = resolve_local_datetime(timezone, shifted_local) else {
                 return Ok(None);
             };
-            let duration = end_utc.map(|end| end - *start_utc);
+            let shifted_end = match end_utc {
+                Some(end) => Some(
+                    shifted_start
+                        .checked_add_signed(*end - *start_utc)
+                        .ok_or(RecurrenceError::ArithmeticOverflow)?,
+                ),
+                None => None,
+            };
             Ok(Some(TimeSpec::Instant {
                 start_utc: shifted_start,
-                end_utc: duration.and_then(|duration| shifted_start.checked_add_signed(duration)),
+                end_utc: shifted_end,
                 source_timezone: source_timezone.clone(),
             }))
         }
@@ -1077,6 +1110,28 @@ mod tests {
                 .to_string(),
             "09:00"
         );
+    }
+
+    #[test]
+    fn recurrence_validation_rejects_coarse_precision_before_persistence() {
+        for time in [
+            TimeSpec::Month {
+                year: 2026,
+                month: 10,
+            },
+            TimeSpec::Year { year: 2026 },
+            TimeSpec::Unknown {
+                original_value: Some("someday".to_string()),
+            },
+        ] {
+            let mut event = TemporalEvent::new("Unsupported recurrence", time);
+            event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Monthly));
+
+            assert!(matches!(
+                event.validate_recurrence(),
+                Err(RecurrenceError::UnsupportedTimeKind(_))
+            ));
+        }
     }
 
     #[test]
