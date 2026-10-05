@@ -23,9 +23,9 @@ cargo test
 
 At the hardened Phase 8 recurrence-selector checkpoint, all **141** library tests pass. Verified implementation code checkpoint: `732354bf5b0457c99093b7c1e118fce895682d22`, with format, check, strict Clippy, and tests all green.
 
-`main` is verified through DAILY BYMONTHDAY at `2a57e9ce2df2227acca1508a108ed7f8b4fec1e0`: format, check, strict Clippy, and all **229** library tests pass in GitHub Actions. The preceding finite YEARLY selector-reachability checkpoint is independently verified at `65ec4329f43dec9234c709683ce211e911998197` with **223** tests.
+`main` is verified through BYHOUR at `a3d24596ac0542e760bae1a9a17ad4e3972d7c4d`: format, check, strict Clippy, and all **241** library tests pass in GitHub Actions. The preceding DAILY BYMONTHDAY checkpoint is independently verified at `2a57e9ce2df2227acca1508a108ed7f8b4fec1e0` with **229** tests.
 
-A child staging slice adds BYHOUR expansion for floating/exact date-time recurrence and targets **241** library tests after explicit DAILY/WEEKLY/MONTHLY/YEARLY expansion coverage. It also upgrades BYSETPOS reachability to count hour-expanded candidates, uses full timestamp ordering for same-day override validation, and adds a frequency-aware empty-period horizon so permanently nonexistent local times cannot cause infinite expansion. The 241-test slice is pending fresh CI verification before promotion.
+BYHOUR expansion is verified across DAILY/WEEKLY/MONTHLY/YEARLY floating/exact date-time recurrence. It expands after the supported date selectors and before BYSETPOS, preserves DTSTART minute/second/duration and source-local DST semantics, counts hour-expanded candidates in reachability, uses full timestamp ordering for same-day override validation, and applies a frequency-aware empty-period horizon so permanently nonexistent local times cannot cause infinite expansion.
 
 DAILY reachability switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. YEARLY reachability likewise scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
