@@ -1934,18 +1934,20 @@ mod tests {
         let mut sourced_event = event();
         sourced_event.source_id = Some(source_id);
 
-        assert!(!matches_composed_or_overlay_with_saved_views_and_membership(
-            &EventQuery {
-                domain: Some("does-not-match".to_string()),
-                ..EventQuery::default()
-            },
-            std::slice::from_ref(&layer),
-            &[],
-            std::slice::from_ref(&referenced),
-            &sourced_event,
-            &test_context(),
-            None,
-        ));
+        assert!(
+            !matches_composed_or_overlay_with_saved_views_and_membership(
+                &EventQuery {
+                    domain: Some("does-not-match".to_string()),
+                    ..EventQuery::default()
+                },
+                std::slice::from_ref(&layer),
+                &[],
+                std::slice::from_ref(&referenced),
+                &sourced_event,
+                &test_context(),
+                None,
+            )
+        );
 
         let mut visible_reference = referenced;
         visible_reference.hidden_source_ids.clear();
