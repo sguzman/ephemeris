@@ -1360,10 +1360,7 @@ fn referenced_saved_view_matches(
     Some(matches)
 }
 
-pub fn saved_view_reference_cycle(
-    saved_views: &[SavedView],
-    root_id: Uuid,
-) -> Option<Vec<Uuid>> {
+pub fn saved_view_reference_cycle(saved_views: &[SavedView], root_id: Uuid) -> Option<Vec<Uuid>> {
     fn visit(
         saved_views: &[SavedView],
         id: Uuid,
@@ -1398,12 +1395,7 @@ pub fn saved_view_reference_cycle(
         None
     }
 
-    visit(
-        saved_views,
-        root_id,
-        &mut Vec::new(),
-        &mut BTreeSet::new(),
-    )
+    visit(saved_views, root_id, &mut Vec::new(), &mut BTreeSet::new())
 }
 
 #[cfg(test)]
