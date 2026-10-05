@@ -10321,11 +10321,8 @@ mod tests {
 
     #[test]
     fn byminute_override_targeting_distinguishes_same_hour_minutes() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-10-05T09:00:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-10-05T09:00:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let original = TimeSpec::Floating {
             start: NaiveDateTime::parse_from_str("2026-10-05T09:45:00", "%Y-%m-%dT%H:%M:%S")
                 .unwrap(),
