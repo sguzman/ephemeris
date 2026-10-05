@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, anyhow};
@@ -26,6 +26,7 @@ pub struct TariaWorkspaceUpdateReport {
     pub imported_artifacts: usize,
     pub skipped_artifacts: usize,
     pub imported_events: usize,
+    pub imported_event_ids: BTreeSet<uuid::Uuid>,
     pub created: usize,
     pub updated: usize,
     pub unchanged: usize,
@@ -234,6 +235,7 @@ pub fn update_taria_sources(
             imported_artifacts: 0,
             skipped_artifacts: 0,
             imported_events: 0,
+            imported_event_ids: BTreeSet::new(),
             created: 0,
             updated: 0,
             unchanged: 0,
@@ -278,6 +280,10 @@ pub fn update_taria_sources(
         report.resolved_calendar_memberships = report
             .resolved_calendar_memberships
             .min(report.calendar_memberships);
+        store.capture_taria_release_event_snapshots(
+            &report.release_id,
+            &report.imported_event_ids,
+        )?;
 
         Ok(report)
     })();
@@ -523,6 +529,9 @@ fn import_calendar_set_from_container(
 
 fn merge_import_report(aggregate: &mut TariaWorkspaceUpdateReport, imported: &TariaImportReport) {
     aggregate.imported_events += imported.total_events;
+    aggregate
+        .imported_event_ids
+        .extend(imported.event_ids.iter().copied());
     aggregate.created += imported.created;
     aggregate.updated += imported.updated;
     aggregate.unchanged += imported.unchanged;
