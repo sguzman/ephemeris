@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the configurable-Table checkpoint, all **52** library tests pass. Verified implementation code checkpoint: `0535afb3047007c9c9f7f07eb574d5df3e1788e0`, with format, check, strict Clippy, and tests all green.
+At the richer-simple-facets checkpoint, all **53** library tests pass. Verified implementation code checkpoint: `29f79fcf6a040f9d5700bafd7b254d1eb65dcee4`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -204,6 +204,10 @@ Current query surface:
 - text search
 - domain
 - jurisdiction
+- event type
+- institution
+- renderability
+- tag membership
 - lifecycle status
 - source visibility
 - current-release Taria bundle membership
@@ -243,7 +247,7 @@ Advanced queries support:
 - persistence through UI state and saved views
 - backward-compatible loading of older saved query JSON
 
-Simple facets remain convenient top-level filters and are ANDed with the advanced expression tree.
+Simple facets remain convenient top-level filters and are ANDed with the advanced expression tree. Domain, jurisdiction, event type, institution, renderability, tag membership, and lifecycle status are all first-class saved facets. Their option sets are derived from the loaded canonical corpus, and older serialized queries/UI state remain compatible through serde defaults.
 
 ### Saved views
 
@@ -440,7 +444,7 @@ Implemented:
 - SavedView capture/apply persistence;
 - SQLite saved-view persistence through schema v10 and the v9 -> v10 migration.
 
-The next programmable-view slice is richer facets, followed by saved-view inheritance/composition with cycle-safe semantics.
+The next programmable-view slice is saved-view inheritance/composition with cycle-safe semantics.
 
 ## Rule going forward
 
