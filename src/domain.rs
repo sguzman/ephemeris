@@ -576,6 +576,8 @@ pub struct RecurrenceRule {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub by_hour: Vec<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_minute: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub by_set_pos: Vec<i16>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rdates: Vec<TimeSpec>,
@@ -600,6 +602,7 @@ impl RecurrenceRule {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -725,6 +728,15 @@ impl RecurrenceRule {
                 return Err(RecurrenceError::DuplicateByHour(*hour));
             }
         }
+        let mut minutes = HashSet::new();
+        for minute in &self.by_minute {
+            if *minute > 59 {
+                return Err(RecurrenceError::InvalidByMinute(*minute));
+            }
+            if !minutes.insert(*minute) {
+                return Err(RecurrenceError::DuplicateByMinute(*minute));
+            }
+        }
         if !self.by_set_pos.is_empty() {
             let has_selector = !self.by_weekday.is_empty()
                 || !self.by_month.is_empty()
@@ -732,7 +744,8 @@ impl RecurrenceRule {
                 || !self.by_year_day.is_empty()
                 || !self.by_month_day.is_empty()
                 || !self.by_month_weekday.is_empty()
-                || !self.by_hour.is_empty();
+                || !self.by_hour.is_empty()
+                || !self.by_minute.is_empty();
             if !has_selector {
                 return Err(RecurrenceError::BySetPosRequiresSelector);
             }
@@ -818,6 +831,9 @@ pub enum RecurrenceError {
     ByHourRequiresDateTime(&'static str),
     InvalidByHour(u8),
     DuplicateByHour(u8),
+    ByMinuteRequiresDateTime(&'static str),
+    InvalidByMinute(u8),
+    DuplicateByMinute(u8),
     OrdinalByWeekdayRequiresMonthlyOrYearly,
     InvalidOrdinalByWeekday(i8),
     DuplicateOrdinalByWeekday(i8, &'static str),
@@ -904,6 +920,15 @@ impl fmt::Display for RecurrenceError {
             }
             Self::DuplicateByHour(hour) => {
                 write!(formatter, "duplicate BYHOUR value {hour}")
+            }
+            Self::ByMinuteRequiresDateTime(kind) => {
+                write!(formatter, "BYMINUTE requires a date-time recurrence base, got {kind}")
+            }
+            Self::InvalidByMinute(minute) => {
+                write!(formatter, "BYMINUTE value must be between 0 and 59, got {minute}")
+            }
+            Self::DuplicateByMinute(minute) => {
+                write!(formatter, "duplicate BYMINUTE value {minute}")
             }
             Self::OrdinalByWeekdayRequiresMonthlyOrYearly => {
                 formatter.write_str("ordinal BYDAY selection requires monthly or yearly recurrence")
@@ -1059,6 +1084,16 @@ impl TemporalEvent {
             )
         {
             return Err(RecurrenceError::ByHourRequiresDateTime(
+                self.time.kind_name(),
+            ));
+        }
+        if !rule.by_minute.is_empty()
+            && matches!(
+                &self.time,
+                TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. }
+            )
+        {
+            return Err(RecurrenceError::ByMinuteRequiresDateTime(
                 self.time.kind_name(),
             ));
         }
@@ -1306,15 +1341,22 @@ fn recurrence_candidates_for_period(
 ) -> Result<Vec<TimeSpec>, RecurrenceError> {
     let candidates = recurrence_candidates_before_set_pos(base, rule, period)?;
     let candidates = expand_by_hours(base, candidates, &rule.by_hour, period)?;
+    let candidates = expand_by_minutes(base, candidates, &rule.by_minute, period)?;
     Ok(apply_set_positions(candidates, &rule.by_set_pos))
 }
 
-fn recurrence_hour_multiplier(rule: &RecurrenceRule) -> usize {
-    if rule.by_hour.is_empty() {
+fn recurrence_time_multiplier(rule: &RecurrenceRule) -> usize {
+    let hours = if rule.by_hour.is_empty() {
         1
     } else {
         rule.by_hour.len()
-    }
+    };
+    let minutes = if rule.by_minute.is_empty() {
+        1
+    } else {
+        rule.by_minute.len()
+    };
+    hours * minutes
 }
 
 fn expand_by_hours(
@@ -1411,6 +1453,107 @@ fn with_recurrence_hour(
         }
         TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => Err(
             RecurrenceError::ByHourRequiresDateTime(candidate.kind_name()),
+        ),
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+            Err(RecurrenceError::UnsupportedTimeKind(candidate.kind_name()))
+        }
+    }
+}
+
+fn expand_by_minutes(
+    base: &TimeSpec,
+    candidates: Vec<TimeSpec>,
+    minutes: &[u8],
+    period: u32,
+) -> Result<Vec<TimeSpec>, RecurrenceError> {
+    if minutes.is_empty() || candidates.is_empty() {
+        return Ok(candidates);
+    }
+
+    let mut minutes = minutes.to_vec();
+    minutes.sort_unstable();
+    let mut expanded = Vec::with_capacity(candidates.len().saturating_mul(minutes.len()));
+
+    for candidate in candidates {
+        for minute in &minutes {
+            let Some(minute_candidate) = with_recurrence_minute(&candidate, *minute)? else {
+                continue;
+            };
+            if period == 0 && recurrence_start_cmp(&minute_candidate, base)? == Ordering::Less {
+                continue;
+            }
+            expanded.push(minute_candidate);
+        }
+    }
+
+    Ok(expanded)
+}
+
+fn with_recurrence_minute(
+    candidate: &TimeSpec,
+    minute: u8,
+) -> Result<Option<TimeSpec>, RecurrenceError> {
+    match candidate {
+        TimeSpec::Floating {
+            start,
+            end,
+            source_timezone,
+        } => {
+            let selected_time = start
+                .time()
+                .with_minute(u32::from(minute))
+                .ok_or(RecurrenceError::InvalidByMinute(minute))?;
+            let selected_start = NaiveDateTime::new(start.date(), selected_time);
+            let selected_end = match end {
+                Some(end) => Some(
+                    selected_start
+                        .checked_add_signed(*end - *start)
+                        .ok_or(RecurrenceError::ArithmeticOverflow)?,
+                ),
+                None => None,
+            };
+            Ok(Some(TimeSpec::Floating {
+                start: selected_start,
+                end: selected_end,
+                source_timezone: source_timezone.clone(),
+            }))
+        }
+        TimeSpec::Instant {
+            start_utc,
+            end_utc,
+            source_timezone,
+        } => {
+            let timezone = match source_timezone.as_deref() {
+                Some(raw) => raw
+                    .parse::<Tz>()
+                    .map_err(|_| RecurrenceError::InvalidSourceTimezone(raw.to_string()))?,
+                None => chrono_tz::UTC,
+            };
+            let local_start = start_utc.with_timezone(&timezone).naive_local();
+            let selected_time = local_start
+                .time()
+                .with_minute(u32::from(minute))
+                .ok_or(RecurrenceError::InvalidByMinute(minute))?;
+            let selected_local = NaiveDateTime::new(local_start.date(), selected_time);
+            let Some(selected_start) = resolve_local_datetime(timezone, selected_local) else {
+                return Ok(None);
+            };
+            let selected_end = match end_utc {
+                Some(end) => Some(
+                    selected_start
+                        .checked_add_signed(*end - *start_utc)
+                        .ok_or(RecurrenceError::ArithmeticOverflow)?,
+                ),
+                None => None,
+            };
+            Ok(Some(TimeSpec::Instant {
+                start_utc: selected_start,
+                end_utc: selected_end,
+                source_timezone: source_timezone.clone(),
+            }))
+        }
+        TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => Err(
+            RecurrenceError::ByMinuteRequiresDateTime(candidate.kind_name()),
         ),
         TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
             Err(RecurrenceError::UnsupportedTimeKind(candidate.kind_name()))
@@ -1578,7 +1721,7 @@ fn yearly_rule_has_reachable_candidate(
         || !rule.by_year_day.is_empty()
         || !rule.by_month_day.is_empty()
         || !rule.by_month_weekday.is_empty();
-    let hour_multiplier = recurrence_hour_multiplier(rule);
+    let hour_multiplier = recurrence_time_multiplier(rule);
     if !has_date_selector {
         return Ok(set_positions_select_any(hour_multiplier, &rule.by_set_pos));
     }
@@ -1637,7 +1780,7 @@ fn daily_rule_has_reachable_candidate(
     if rule.frequency != RecurrenceFrequency::Daily {
         return Ok(true);
     }
-    let hour_multiplier = recurrence_hour_multiplier(rule);
+    let hour_multiplier = recurrence_time_multiplier(rule);
     if rule.by_month.is_empty() && rule.by_month_day.is_empty() {
         return Ok(daily_byday_has_reachable_weekday(base, rule)?
             && set_positions_select_any(hour_multiplier, &rule.by_set_pos));
@@ -1772,7 +1915,7 @@ fn weekly_rule_has_reachable_candidate(
         let candidate_dates = weekly_selector_dates_for_week(base_date, rule, active_week_start)?;
         let candidate_count = candidate_dates
             .len()
-            .checked_mul(recurrence_hour_multiplier(rule))
+            .checked_mul(recurrence_time_multiplier(rule))
             .ok_or(RecurrenceError::ArithmeticOverflow)?;
         if set_positions_select_any(candidate_count, &rule.by_set_pos) {
             return Ok(true);
@@ -1862,7 +2005,7 @@ fn monthly_rule_has_reachable_candidate(
         let candidate_dates = monthly_selector_dates_for_month(base_date, rule, month_start)?;
         let candidate_count = candidate_dates
             .len()
-            .checked_mul(recurrence_hour_multiplier(rule))
+            .checked_mul(recurrence_time_multiplier(rule))
             .ok_or(RecurrenceError::ArithmeticOverflow)?;
         if set_positions_select_any(candidate_count, &rule.by_set_pos) {
             return Ok(true);
@@ -3176,6 +3319,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3237,6 +3381,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: vec![TimeSpec::DateOnly {
                 start: start + Duration::days(4),
@@ -3298,6 +3443,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3361,6 +3507,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3415,6 +3562,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3468,6 +3616,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -3511,6 +3660,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3557,6 +3707,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3605,6 +3756,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3652,6 +3804,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3732,6 +3885,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3802,6 +3956,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded],
@@ -3858,6 +4013,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3917,6 +4073,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3967,6 +4124,7 @@ mod tests {
             by_month_day: vec![5, 30],
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4030,6 +4188,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4105,6 +4264,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -4159,6 +4319,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4209,6 +4370,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4259,6 +4421,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4309,6 +4472,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4406,6 +4570,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4455,6 +4620,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4507,6 +4673,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4573,6 +4740,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -4627,6 +4795,7 @@ mod tests {
             by_month_day: vec![1, 15, 31],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4681,6 +4850,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: vec![1, -1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4732,6 +4902,7 @@ mod tests {
             by_month_day: vec![1, 15, 31],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: vec![1, -3, -1, 10],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4809,6 +4980,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4870,6 +5042,7 @@ mod tests {
             by_month_day: vec![1, 15, 31],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -4924,6 +5097,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4976,6 +5150,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5055,6 +5230,7 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
             ],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5108,6 +5284,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5174,6 +5351,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -5231,6 +5409,7 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
             ],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5304,6 +5483,7 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
             ],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5357,6 +5537,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5411,6 +5592,7 @@ mod tests {
             by_month_day: vec![-1, 1],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5472,6 +5654,7 @@ mod tests {
             by_month_day: vec![4],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5526,6 +5709,7 @@ mod tests {
             by_month_day: vec![1],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5592,6 +5776,7 @@ mod tests {
             by_month_day: vec![-1],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -5646,6 +5831,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5698,6 +5884,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5781,6 +5968,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5847,6 +6035,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded],
@@ -5910,6 +6099,7 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
             ],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5961,6 +6151,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(5, RecurrenceWeekday::Monday)],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6047,6 +6238,7 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
             ],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6101,6 +6293,7 @@ mod tests {
             by_month_day: vec![5, 15],
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6155,6 +6348,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Sunday)],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6221,6 +6415,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -6275,6 +6470,7 @@ mod tests {
             by_month_day: vec![-1, 1, -2],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6327,6 +6523,7 @@ mod tests {
             by_month_day: vec![1, -31],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6404,6 +6601,7 @@ mod tests {
             by_month_day: vec![-1],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -6458,6 +6656,7 @@ mod tests {
             by_month_day: vec![31, 1, 15],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6510,6 +6709,7 @@ mod tests {
             by_month_day: vec![1, 15],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6592,6 +6792,7 @@ mod tests {
             by_month_day: vec![1, 15],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6658,6 +6859,7 @@ mod tests {
             by_month_day: vec![1, 15],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded],
@@ -6718,6 +6920,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6767,6 +6970,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6813,6 +7017,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6975,6 +7180,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7026,6 +7232,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7079,6 +7286,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7135,6 +7343,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7185,6 +7394,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Tuesday)],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7238,6 +7448,7 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
             ],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7289,6 +7500,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(53, RecurrenceWeekday::Monday)],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7335,6 +7547,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7385,6 +7598,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7437,6 +7651,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(10, RecurrenceWeekday::Sunday)],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7511,6 +7726,7 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
             ],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -7569,6 +7785,7 @@ mod tests {
             by_month_day: vec![1, -1],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7624,6 +7841,7 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
             ],
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7676,6 +7894,7 @@ mod tests {
             by_month_day: vec![15],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7748,6 +7967,7 @@ mod tests {
             by_month_day: vec![1, -1],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -7812,6 +8032,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7870,6 +8091,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7935,6 +8157,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8013,6 +8236,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -8069,6 +8293,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8120,6 +8345,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8211,6 +8437,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -8268,6 +8495,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8319,6 +8547,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8457,6 +8686,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8508,6 +8738,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: vec![1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8618,6 +8849,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8690,6 +8922,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -8931,6 +9164,7 @@ mod tests {
             by_month_day: vec![1, -1],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8983,6 +9217,7 @@ mod tests {
             by_month_day: vec![2, 9, 16],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9065,6 +9300,7 @@ mod tests {
             by_month_day: vec![6, 9, 10],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9137,6 +9373,7 @@ mod tests {
             by_month_day: vec![1, -1],
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -9237,6 +9474,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9292,6 +9530,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9370,6 +9609,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
+            by_minute: Vec::new(),
             by_set_pos: vec![2],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9436,6 +9676,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -9499,6 +9740,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(2, RecurrenceWeekday::Sunday)],
             by_hour: vec![2],
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9541,6 +9783,7 @@ mod tests {
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9597,6 +9840,7 @@ mod tests {
             by_month_day: vec![1, 15],
             by_month_weekday: Vec::new(),
             by_hour: vec![8, 20],
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9653,6 +9897,7 @@ mod tests {
             by_month_day: vec![1],
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
+            by_minute: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
