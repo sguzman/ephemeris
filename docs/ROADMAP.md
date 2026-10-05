@@ -42,13 +42,14 @@ Still to deepen:
 
 ## Phase 2 - Canonical temporal core
 
-Status: **active / substantial foundation implemented**
+Status: **substantial foundation implemented; recurrence continued in Phase 8**
 
 Implemented:
 
 - SQLite schema and migrations
 - `TemporalEvent`
 - `TemporalSource`
+- `EventOccurrence` materialization with stable canonical-event lineage
 - stable local IDs
 - source-record identity
 - lifecycle status
@@ -57,11 +58,10 @@ Implemented:
 - explicit date-only/all-day/instant/floating/month/year/unresolved semantics
 - indexed date/source/status/domain querying
 - saved-view storage
+- recurrence foundation and exception-aware occurrence materialization, detailed under Phase 8
 
 Still required:
 
-- `EventOccurrence`
-- recurrence engine
 - dedicated provenance records/tables
 - general-purpose snapshot/history tables beyond the implemented Taria release snapshot model
 - annotations
