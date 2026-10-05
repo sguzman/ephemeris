@@ -20,21 +20,24 @@ Implemented layouts:
 
 - Grid
 - Agenda
+- Compact Agenda
 - chronological Stream
+- proportional Timeline
+- Density / heatmap
+- Summary / pivot foundation
 - dense Table
 
-Long-term additional layouts include:
+Long-term additional layout variants may include:
 
-- multi-day
-- compact agenda
-- continuous timeline
-- vertical timeline
-- density/heatmap
+- multi-day specialized surfaces
+- richer continuous/vertical timelines
 - interval/Gantt-like views where appropriate
 
-Date range and layout are independent. Table/Agenda/Stream/Grid consume the same canonical query result rather than defining separate event containers.
+Date range and layout are independent. All layouts consume the same canonical query result rather than defining separate event containers.
 
-Agenda and Table honor the configured grouping/sort presentation. Stream intentionally does not: Stream means canonical temporal sequence. It uses typed temporal ordering, renders date/precision markers, keeps color rules active, and preserves the user's stored grouping/sort settings so they resume unchanged when returning to Agenda/Table.
+Agenda, Compact Agenda, and Table honor configured grouping/sort presentation. Stream intentionally does not: Stream means canonical temporal sequence. Timeline likewise owns temporal placement across the active date window. Both preserve saved grouping/sort settings for later reuse.
+
+Density is aggregate: only events that genuinely occur on a day contribute to that day's intensity, while coarse-precision records remain explicitly unassigned to fake days. Summary is also aggregate and reuses GroupBy as its pivot dimension. Density/Summary preserve but do not apply per-event color rules.
 
 ## Dense-day behavior
 
@@ -183,7 +186,7 @@ Implemented direct shortcuts avoid text fields and currently include:
 - Left / Right: previous / next period
 - T: today
 - Y / Q / M / W / D: Year / Quarter / Month / Week / Day
-- G / A / S: Grid / Agenda / Stream
+- G / A / C / S / L / H / P: Grid / Agenda / Compact Agenda / Stream / Timeline / Density / Summary
 
 Target operations:
 
