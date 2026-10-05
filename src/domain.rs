@@ -1058,7 +1058,9 @@ impl TemporalEvent {
                 TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. }
             )
         {
-            return Err(RecurrenceError::ByHourRequiresDateTime(self.time.kind_name()));
+            return Err(RecurrenceError::ByHourRequiresDateTime(
+                self.time.kind_name(),
+            ));
         }
         let expected_kind = self.time.kind_name();
 
@@ -1334,9 +1336,7 @@ fn expand_by_hours(
             let Some(hour_candidate) = with_recurrence_hour(&candidate, *hour)? else {
                 continue;
             };
-            if period == 0
-                && recurrence_start_cmp(&hour_candidate, base)? == Ordering::Less
-            {
+            if period == 0 && recurrence_start_cmp(&hour_candidate, base)? == Ordering::Less {
                 continue;
             }
             expanded.push(hour_candidate);
@@ -1409,19 +1409,16 @@ fn with_recurrence_hour(
                 source_timezone: source_timezone.clone(),
             }))
         }
-        TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => {
-            Err(RecurrenceError::ByHourRequiresDateTime(candidate.kind_name()))
-        }
+        TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => Err(
+            RecurrenceError::ByHourRequiresDateTime(candidate.kind_name()),
+        ),
         TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
             Err(RecurrenceError::UnsupportedTimeKind(candidate.kind_name()))
         }
     }
 }
 
-fn recurrence_start_cmp(
-    left: &TimeSpec,
-    right: &TimeSpec,
-) -> Result<Ordering, RecurrenceError> {
+fn recurrence_start_cmp(left: &TimeSpec, right: &TimeSpec) -> Result<Ordering, RecurrenceError> {
     match (left, right) {
         (TimeSpec::DateOnly { start: left, .. }, TimeSpec::DateOnly { start: right, .. })
         | (TimeSpec::AllDay { start: left, .. }, TimeSpec::AllDay { start: right, .. }) => {
@@ -1438,12 +1435,12 @@ fn recurrence_start_cmp(
                 start_utc: right, ..
             },
         ) => Ok(left.cmp(right)),
-        _ if left.kind_name() != right.kind_name() => Err(
-            RecurrenceError::MismatchedExceptionTimeKind {
+        _ if left.kind_name() != right.kind_name() => {
+            Err(RecurrenceError::MismatchedExceptionTimeKind {
                 expected: right.kind_name(),
                 actual: left.kind_name(),
-            },
-        ),
+            })
+        }
         _ => Err(RecurrenceError::UnsupportedTimeKind(left.kind_name())),
     }
 }
@@ -1583,10 +1580,7 @@ fn yearly_rule_has_reachable_candidate(
         || !rule.by_month_weekday.is_empty();
     let hour_multiplier = recurrence_hour_multiplier(rule);
     if !has_date_selector {
-        return Ok(set_positions_select_any(
-            hour_multiplier,
-            &rule.by_set_pos,
-        ));
+        return Ok(set_positions_select_any(hour_multiplier, &rule.by_set_pos));
     }
 
     let base_date = recurrence_rule_date(base)?;
@@ -1610,8 +1604,11 @@ fn yearly_rule_has_reachable_candidate(
 
     for period in 1..=cycle_len {
         let period = u32::try_from(period).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
-        let date_candidates =
-            recurrence_candidates_before_set_pos(&representative_base, &representative_rule, period)?;
+        let date_candidates = recurrence_candidates_before_set_pos(
+            &representative_base,
+            &representative_rule,
+            period,
+        )?;
         let candidate_count = date_candidates
             .len()
             .checked_mul(hour_multiplier)
@@ -3025,9 +3022,7 @@ fn recurrence_period_lower_bound_date(
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
 
     match rule.frequency {
-        RecurrenceFrequency::Daily => {
-            Ok(base_date.checked_add_days(Days::new(u64::from(steps))))
-        }
+        RecurrenceFrequency::Daily => Ok(base_date.checked_add_days(Days::new(u64::from(steps))))
         RecurrenceFrequency::Weekly => {
             let base_weekday = u64::from(base_date.weekday().num_days_from_monday());
             let days_since_week_start =
@@ -9219,11 +9214,8 @@ mod tests {
 
     #[test]
     fn floating_daily_byhour_expands_and_filters_first_period() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-10-05T14:30:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-10-05T14:30:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let mut event = TemporalEvent::new(
             "Morning and evening",
             TimeSpec::Floating {
@@ -9267,11 +9259,7 @@ mod tests {
 
         assert_eq!(
             starts,
-            vec![
-                "2026-10-05 17:30",
-                "2026-10-06 09:30",
-                "2026-10-06 17:30",
-            ]
+            vec!["2026-10-05 17:30", "2026-10-06 09:30", "2026-10-06 17:30",]
         );
     }
 
@@ -9322,9 +9310,10 @@ mod tests {
         let local_starts = occurrences
             .iter()
             .map(|occurrence| match &occurrence.time {
-                TimeSpec::Instant { start_utc, .. } => {
-                    start_utc.with_timezone(&zone).format("%Y-%m-%d %H:%M").to_string()
-                }
+                TimeSpec::Instant { start_utc, .. } => start_utc
+                    .with_timezone(&zone)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string(),
                 other => panic!("expected instant, got {other:?}"),
             })
             .collect::<Vec<_>>();
@@ -9358,11 +9347,8 @@ mod tests {
 
     #[test]
     fn byhour_expands_before_bysetpos() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-10-05T08:15:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-10-05T08:15:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let mut event = TemporalEvent::new(
             "Second hour each day",
             TimeSpec::Floating {
@@ -9409,35 +9395,23 @@ mod tests {
 
     #[test]
     fn byhour_override_targeting_distinguishes_same_day_hours() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-10-05T08:00:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-10-05T08:00:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let original = TimeSpec::Floating {
-            start: NaiveDateTime::parse_from_str(
-                "2026-10-05T17:00:00",
-                "%Y-%m-%dT%H:%M:%S",
-            )
-            .unwrap(),
+            start: NaiveDateTime::parse_from_str("2026-10-05T17:00:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
             end: None,
             source_timezone: None,
         };
         let replacement = TimeSpec::Floating {
-            start: NaiveDateTime::parse_from_str(
-                "2026-10-05T18:00:00",
-                "%Y-%m-%dT%H:%M:%S",
-            )
-            .unwrap(),
+            start: NaiveDateTime::parse_from_str("2026-10-05T18:00:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
             end: None,
             source_timezone: None,
         };
         let excluded = TimeSpec::Floating {
-            start: NaiveDateTime::parse_from_str(
-                "2026-10-06T09:00:00",
-                "%Y-%m-%dT%H:%M:%S",
-            )
-            .unwrap(),
+            start: NaiveDateTime::parse_from_str("2026-10-06T09:00:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
             end: None,
             source_timezone: None,
         };
@@ -9472,7 +9446,9 @@ mod tests {
             }],
         });
 
-        event.validate_recurrence().expect("valid exact-hour override");
+        event
+            .validate_recurrence()
+            .expect("valid exact-hour override");
         let occurrences = event
             .occurrences_in_window(
                 NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
@@ -9521,10 +9497,7 @@ mod tests {
             by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
-                2,
-                RecurrenceWeekday::Sunday,
-            )],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(2, RecurrenceWeekday::Sunday)],
             by_hour: vec![2],
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
@@ -9543,14 +9516,10 @@ mod tests {
         assert!(occurrences.is_empty());
     }
 
-
     #[test]
     fn floating_weekly_byhour_expands_each_selected_weekday() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-10-05T08:30:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-10-05T08:30:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let mut event = TemporalEvent::new(
             "Weekly hours",
             TimeSpec::Floating {
@@ -9605,11 +9574,8 @@ mod tests {
 
     #[test]
     fn floating_monthly_byhour_expands_after_monthday_selection() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-01-01T10:15:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-01-01T10:15:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let mut event = TemporalEvent::new(
             "Monthly hours",
             TimeSpec::Floating {
@@ -9664,11 +9630,8 @@ mod tests {
 
     #[test]
     fn floating_yearly_byhour_expands_after_yearly_date_selection() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-03-01T10:45:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-03-01T10:45:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let mut event = TemporalEvent::new(
             "Yearly hours",
             TimeSpec::Floating {
@@ -9720,5 +9683,4 @@ mod tests {
             ]
         );
     }
-
 }
