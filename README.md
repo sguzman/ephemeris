@@ -38,7 +38,7 @@ Implemented:
 - event-native storage with no Taskwarrior mediation
 - distinct temporal semantics for date-only, all-day, exact instants, floating/local time, month precision, year precision, and unresolved time
 - Year, Quarter, Month, Week, and Day date ranges
-- Grid, Agenda, and dense Table as independent layouts
+- Grid, Agenda, chronological Stream, and dense Table as independent layouts
 - ordered user-defined Table columns with add, hide, reorder, and reset controls
 - source visibility controls plus a source inspector with identity, authority, locator, refresh metadata, properties, and canonical event counts
 - text, domain, jurisdiction, event-type, institution, renderability, tag, and lifecycle-status filtering
