@@ -174,9 +174,16 @@ An overlay can:
 
 Overlay union does not copy events.
 
-Future calendar algebra will extend this into explicit intersection/subtraction composition.
+Calendar algebra is implemented separately from overlays: ordered composition layers support union, intersection, and subtraction over embedded queries or cycle-safe SavedView references. Overlays remain the independently styled union surface applied afterward.
 
 ## Keyboard interaction
+
+Implemented direct shortcuts avoid text fields and currently include:
+
+- Left / Right: previous / next period
+- T: today
+- Y / Q / M / W / D: Year / Quarter / Month / Week / Day
+- G / A / S: Grid / Agenda / Stream
 
 Target operations:
 
