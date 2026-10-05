@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
-use chrono::{Datelike, Local, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate, Utc};
 use chrono_tz::Tz;
 use eframe::egui::{self, Color32, RichText};
 use uuid::Uuid;
@@ -29,6 +29,33 @@ use crate::taria_workspace::{
     TariaWorkspaceUpdateReport, detect_resourcearium_root, normalize_resourcearium_root,
     update_taria_sources as update_taria_workspace,
 };
+
+const TARIA_STALE_AFTER_HOURS: i64 = 7 * 24;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TariaRefreshHealth {
+    NeverRefreshed,
+    Running,
+    Healthy,
+    Stale,
+    Failed,
+    Interrupted,
+    Unknown,
+}
+
+impl TariaRefreshHealth {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::NeverRefreshed => "never refreshed",
+            Self::Running => "running",
+            Self::Healthy => "healthy",
+            Self::Stale => "stale",
+            Self::Failed => "failed",
+            Self::Interrupted => "interrupted",
+            Self::Unknown => "unknown",
+        }
+    }
+}
 
 pub struct EphemerisApp {
     store: TemporalStore,
@@ -358,6 +385,27 @@ impl EphemerisApp {
             .taria_update_receiver
             .as_ref()
             .map(|(attempt_id, _)| *attempt_id);
+        let refresh_health = taria_refresh_health(
+            &self.source_refresh_attempts,
+            active_attempt_id,
+            Utc::now(),
+        );
+        let health_color = match refresh_health {
+            TariaRefreshHealth::Healthy => Color32::LIGHT_GREEN,
+            TariaRefreshHealth::Running => Color32::LIGHT_BLUE,
+            TariaRefreshHealth::Stale | TariaRefreshHealth::Interrupted => Color32::YELLOW,
+            TariaRefreshHealth::Failed => Color32::LIGHT_RED,
+            TariaRefreshHealth::NeverRefreshed | TariaRefreshHealth::Unknown => Color32::GRAY,
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.small("Refresh health:");
+            ui.colored_label(health_color, refresh_health.label());
+            ui.small(format!(
+                "· stale after {} days without a successful refresh",
+                TARIA_STALE_AFTER_HOURS / 24
+            ));
+        });
+
         ui.collapsing(
             format!("Refresh history ({})", self.source_refresh_attempts.len()),
             |ui| {
@@ -3870,6 +3918,44 @@ fn short_bundle_label(bundle_ref: &str) -> String {
         .replace('-', " ")
 }
 
+fn taria_refresh_health(
+    attempts: &[SourceRefreshAttempt],
+    active_attempt_id: Option<Uuid>,
+    now: DateTime<Utc>,
+) -> TariaRefreshHealth {
+    if active_attempt_id.is_some() {
+        return TariaRefreshHealth::Running;
+    }
+
+    let Some(latest) = attempts
+        .iter()
+        .find(|attempt| attempt.refresh_kind == "taria_workspace")
+    else {
+        return TariaRefreshHealth::NeverRefreshed;
+    };
+
+    match latest.success {
+        None => TariaRefreshHealth::Interrupted,
+        Some(false) => TariaRefreshHealth::Failed,
+        Some(true) => {
+            let Some(completed_at) = latest.completed_at.as_deref() else {
+                return TariaRefreshHealth::Unknown;
+            };
+            let Ok(completed_at) = DateTime::parse_from_rfc3339(completed_at) else {
+                return TariaRefreshHealth::Unknown;
+            };
+            let completed_at = completed_at.with_timezone(&Utc);
+            if now.signed_duration_since(completed_at)
+                > ChronoDuration::hours(TARIA_STALE_AFTER_HOURS)
+            {
+                TariaRefreshHealth::Stale
+            } else {
+                TariaRefreshHealth::Healthy
+            }
+        }
+    }
+}
+
 fn snapshot_time_label(raw: Option<&str>, timezone: Tz) -> String {
     let Some(raw) = raw else {
         return "—".to_string();
@@ -4022,3 +4108,76 @@ fn status_color(status: EventStatus) -> Color32 {
         EventStatus::Unknown => Color32::GRAY,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refresh_attempt(
+        id: Uuid,
+        success: Option<bool>,
+        completed_at: Option<&str>,
+    ) -> SourceRefreshAttempt {
+        SourceRefreshAttempt {
+            id,
+            refresh_kind: "taria_workspace".to_string(),
+            target: "bootstrap".to_string(),
+            started_at: "2026-10-01T00:00:00Z".to_string(),
+            completed_at: completed_at.map(ToOwned::to_owned),
+            success,
+            release_id: None,
+            summary: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn taria_refresh_health_distinguishes_running_failure_interruption_and_staleness() {
+        let now = DateTime::parse_from_rfc3339("2026-10-10T00:00:00Z")
+            .expect("now")
+            .with_timezone(&Utc);
+        let active_id = Uuid::new_v4();
+
+        assert_eq!(
+            taria_refresh_health(&[], None, now),
+            TariaRefreshHealth::NeverRefreshed
+        );
+        assert_eq!(
+            taria_refresh_health(&[], Some(active_id), now),
+            TariaRefreshHealth::Running
+        );
+        assert_eq!(
+            taria_refresh_health(
+                &[refresh_attempt(Uuid::new_v4(), Some(false), Some("2026-10-09T00:00:00Z"))],
+                None,
+                now,
+            ),
+            TariaRefreshHealth::Failed
+        );
+        assert_eq!(
+            taria_refresh_health(
+                &[refresh_attempt(Uuid::new_v4(), None, None)],
+                None,
+                now,
+            ),
+            TariaRefreshHealth::Interrupted
+        );
+        assert_eq!(
+            taria_refresh_health(
+                &[refresh_attempt(Uuid::new_v4(), Some(true), Some("2026-10-09T00:00:00Z"))],
+                None,
+                now,
+            ),
+            TariaRefreshHealth::Healthy
+        );
+        assert_eq!(
+            taria_refresh_health(
+                &[refresh_attempt(Uuid::new_v4(), Some(true), Some("2026-10-01T00:00:00Z"))],
+                None,
+                now,
+            ),
+            TariaRefreshHealth::Stale
+        );
+    }
+}
+
