@@ -3232,6 +3232,41 @@ fn render_timeline(
     });
     ui.separator();
 
+    ui.horizontal(|ui| {
+        ui.add_sized([220.0, 24.0], egui::Label::new(""));
+        let desired = egui::vec2(ui.available_width().max(80.0), 24.0);
+        let (rect, _) = ui.allocate_exact_size(desired, egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        let y = rect.top() + 5.0;
+        painter.line_segment(
+            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+            egui::Stroke::new(1.0, Color32::GRAY),
+        );
+
+        for (fraction, label) in timeline_ticks(view, window) {
+            let x = rect.left() + rect.width() * fraction.clamp(0.0, 1.0);
+            painter.line_segment(
+                [egui::pos2(x, y - 3.0), egui::pos2(x, y + 4.0)],
+                egui::Stroke::new(1.0, Color32::GRAY),
+            );
+
+            let align = if fraction <= 0.01 {
+                egui::Align2::LEFT_TOP
+            } else if fraction >= 0.99 {
+                egui::Align2::RIGHT_TOP
+            } else {
+                egui::Align2::CENTER_TOP
+            };
+            painter.text(
+                egui::pos2(x, y + 6.0),
+                align,
+                label,
+                egui::FontId::monospace(10.0),
+                Color32::GRAY,
+            );
+        }
+    });
+
     let mut action = None;
     for (event, span) in positioned {
         ui.horizontal(|ui| {
@@ -3289,6 +3324,73 @@ fn render_timeline(
     }
 
     action
+}
+
+fn timeline_ticks(
+    view: CalendarView,
+    window: crate::calendar::DateWindow,
+) -> Vec<(f32, String)> {
+    let total_days = (window.end_exclusive - window.start).num_days();
+    if total_days <= 0 {
+        return Vec::new();
+    }
+
+    let date_fraction = |date: NaiveDate| {
+        ((date - window.start).num_days() as f32 / total_days as f32).clamp(0.0, 1.0)
+    };
+
+    match view {
+        CalendarView::Year | CalendarView::Quarter => {
+            let mut ticks = Vec::new();
+            let mut year = window.start.year();
+            let mut month = window.start.month();
+
+            loop {
+                let Some(date) = NaiveDate::from_ymd_opt(year, month, 1) else {
+                    break;
+                };
+                if date >= window.end_exclusive {
+                    break;
+                }
+                ticks.push((date_fraction(date), date.format("%b").to_string()));
+
+                if month == 12 {
+                    month = 1;
+                    year += 1;
+                } else {
+                    month += 1;
+                }
+            }
+            ticks
+        }
+        CalendarView::Month => (0..5)
+            .filter_map(|week| {
+                let date = window
+                    .start
+                    .checked_add_signed(chrono::Duration::days(i64::from(week) * 7))?;
+                (date < window.end_exclusive)
+                    .then(|| (date_fraction(date), date.day().to_string()))
+            })
+            .collect(),
+        CalendarView::Week => (0..7)
+            .filter_map(|day| {
+                let date = window
+                    .start
+                    .checked_add_signed(chrono::Duration::days(i64::from(day)))?;
+                Some((
+                    date_fraction(date),
+                    date.format("%a %-d").to_string(),
+                ))
+            })
+            .collect(),
+        CalendarView::Day => vec![
+            (0.0, "00:00".to_string()),
+            (0.25, "06:00".to_string()),
+            (0.5, "12:00".to_string()),
+            (0.75, "18:00".to_string()),
+            (1.0, "24:00".to_string()),
+        ],
+    }
 }
 
 fn timeline_span(
@@ -4483,6 +4585,26 @@ mod tests {
             summary: None,
             error: None,
         }
+    }
+
+    #[test]
+    fn timeline_ticks_follow_active_calendar_scale() {
+        let year = crate::calendar::DateWindow {
+            start: NaiveDate::from_ymd_opt(2026, 1, 1).expect("year start"),
+            end_exclusive: NaiveDate::from_ymd_opt(2027, 1, 1).expect("year end"),
+        };
+        let year_ticks = timeline_ticks(CalendarView::Year, year);
+        assert_eq!(year_ticks.len(), 12);
+        assert_eq!(year_ticks.first().map(|(_, label)| label.as_str()), Some("Jan"));
+        assert_eq!(year_ticks.last().map(|(_, label)| label.as_str()), Some("Dec"));
+
+        let day = crate::calendar::DateWindow {
+            start: NaiveDate::from_ymd_opt(2026, 10, 5).expect("day start"),
+            end_exclusive: NaiveDate::from_ymd_opt(2026, 10, 6).expect("day end"),
+        };
+        let day_ticks = timeline_ticks(CalendarView::Day, day);
+        assert_eq!(day_ticks.len(), 5);
+        assert_eq!(day_ticks[2], (0.5, "12:00".to_string()));
     }
 
     #[test]
