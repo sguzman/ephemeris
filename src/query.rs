@@ -55,6 +55,14 @@ pub struct EventQuery {
     #[serde(default)]
     pub jurisdiction: Option<String>,
     #[serde(default)]
+    pub event_type: Option<String>,
+    #[serde(default)]
+    pub institution: Option<String>,
+    #[serde(default)]
+    pub renderability: Option<String>,
+    #[serde(default)]
+    pub tag: Option<String>,
+    #[serde(default)]
     pub status: Option<EventStatus>,
     #[serde(default)]
     pub expression: Option<QueryExpr>,
@@ -65,6 +73,10 @@ impl EventQuery {
         self.text.trim().is_empty()
             && self.domain.is_none()
             && self.jurisdiction.is_none()
+            && self.event_type.is_none()
+            && self.institution.is_none()
+            && self.renderability.is_none()
+            && self.tag.is_none()
             && self.status.is_none()
             && self.expression.is_none()
     }
@@ -87,6 +99,30 @@ impl EventQuery {
 
         if let Some(jurisdiction) = self.jurisdiction.as_deref()
             && event.jurisdiction.as_deref() != Some(jurisdiction)
+        {
+            return false;
+        }
+
+        if let Some(event_type) = self.event_type.as_deref()
+            && event.event_type.as_deref() != Some(event_type)
+        {
+            return false;
+        }
+
+        if let Some(institution) = self.institution.as_deref()
+            && event.institution.as_deref() != Some(institution)
+        {
+            return false;
+        }
+
+        if let Some(renderability) = self.renderability.as_deref()
+            && event.renderability.as_deref() != Some(renderability)
+        {
+            return false;
+        }
+
+        if let Some(tag) = self.tag.as_deref()
+            && !event.tags.iter().any(|event_tag| event_tag == tag)
         {
             return false;
         }
@@ -1242,7 +1278,9 @@ mod tests {
         );
         event.domain = Some("elections".to_string());
         event.jurisdiction = Some("US-CA".to_string());
+        event.event_type = Some("election".to_string());
         event.institution = Some("California Secretary of State".to_string());
+        event.renderability = Some("ready".to_string());
         event.status = EventStatus::Confirmed;
         event.importance = Some(90);
         event.tags = vec!["state".to_string(), "general".to_string()];
@@ -1273,11 +1311,33 @@ mod tests {
             text: "general".to_string(),
             domain: Some("elections".to_string()),
             jurisdiction: Some("US-CA".to_string()),
+            event_type: Some("election".to_string()),
+            institution: Some("California Secretary of State".to_string()),
+            renderability: Some("ready".to_string()),
+            tag: Some("general".to_string()),
             status: Some(EventStatus::Confirmed),
             expression: None,
         };
 
         assert!(query.matches(&event(), &test_context()));
+    }
+
+    #[test]
+    fn richer_simple_facets_match_exact_event_dimensions() {
+        let matching = EventQuery {
+            event_type: Some("election".to_string()),
+            institution: Some("California Secretary of State".to_string()),
+            renderability: Some("ready".to_string()),
+            tag: Some("state".to_string()),
+            ..EventQuery::default()
+        };
+        assert!(matching.matches(&event(), &test_context()));
+
+        let wrong_tag = EventQuery {
+            tag: Some("federal".to_string()),
+            ..EventQuery::default()
+        };
+        assert!(!wrong_tag.matches(&event(), &test_context()));
     }
 
     #[test]
