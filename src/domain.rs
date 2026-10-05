@@ -763,6 +763,11 @@ impl TemporalEvent {
         };
 
         self.validate_recurrence()?;
+        let window = RecurrenceExpansionWindow {
+            start,
+            end_exclusive,
+            display_timezone,
+        };
 
         let mut occurrences = Vec::new();
         let mut seen_occurrence_ids = HashSet::new();
@@ -796,15 +801,12 @@ impl TemporalEvent {
             generated_keys.insert(recurrence_key(&time)?);
 
             if let Some(occurrence) = materialize_recurrence_occurrence(
-                self.id,
-                self.status,
+                self,
                 rule,
                 time,
                 Some(recurrence_index),
                 RecurrenceOccurrenceOrigin::Rule,
-                start,
-                end_exclusive,
-                display_timezone,
+                window,
             )? && seen_occurrence_ids.insert(occurrence.id)
             {
                 occurrences.push(occurrence);
@@ -818,15 +820,12 @@ impl TemporalEvent {
         for rdate in &rule.rdates {
             generated_keys.insert(recurrence_key(rdate)?);
             if let Some(occurrence) = materialize_recurrence_occurrence(
-                self.id,
-                self.status,
+                self,
                 rule,
                 rdate.clone(),
                 None,
                 RecurrenceOccurrenceOrigin::RDate,
-                start,
-                end_exclusive,
-                display_timezone,
+                window,
             )? && seen_occurrence_ids.insert(occurrence.id)
             {
                 occurrences.push(occurrence);
@@ -839,15 +838,12 @@ impl TemporalEvent {
                 continue;
             }
             if let Some(occurrence) = materialize_recurrence_occurrence(
-                self.id,
-                self.status,
+                self,
                 rule,
                 occurrence_override.original.clone(),
                 None,
                 RecurrenceOccurrenceOrigin::DetachedOverride,
-                start,
-                end_exclusive,
-                display_timezone,
+                window,
             )? && seen_occurrence_ids.insert(occurrence.id)
             {
                 occurrences.push(occurrence);
@@ -904,16 +900,20 @@ fn validate_recurrence_time(time: &TimeSpec) -> Result<(), RecurrenceError> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RecurrenceExpansionWindow {
+    start: NaiveDate,
+    end_exclusive: NaiveDate,
+    display_timezone: Tz,
+}
+
 fn materialize_recurrence_occurrence(
-    event_id: Uuid,
-    base_status: EventStatus,
+    event: &TemporalEvent,
     rule: &RecurrenceRule,
     original_time: TimeSpec,
     recurrence_index: Option<u32>,
     origin: RecurrenceOccurrenceOrigin,
-    start: NaiveDate,
-    end_exclusive: NaiveDate,
-    display_timezone: Tz,
+    window: RecurrenceExpansionWindow,
 ) -> Result<Option<EventOccurrence>, RecurrenceError> {
     let key = recurrence_key(&original_time)?;
 
@@ -924,7 +924,7 @@ fn materialize_recurrence_occurrence(
     }
 
     let mut time = original_time.clone();
-    let mut status = base_status;
+    let mut status = event.status;
     let mut override_applied = false;
     let mut cancelled_by_override = false;
 
@@ -944,13 +944,13 @@ fn materialize_recurrence_occurrence(
         break;
     }
 
-    if !time.overlaps_date_window(start, end_exclusive, display_timezone) {
+    if !time.overlaps_date_window(window.start, window.end_exclusive, window.display_timezone) {
         return Ok(None);
     }
 
     Ok(Some(EventOccurrence {
-        id: occurrence_identity(event_id, &original_time)?,
-        event_id,
+        id: occurrence_identity(event.id, &original_time)?,
+        event_id: event.id,
         recurrence_index,
         origin,
         original_time,
