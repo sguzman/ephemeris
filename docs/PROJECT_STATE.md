@@ -23,11 +23,9 @@ cargo test
 
 At the hardened Phase 8 recurrence-selector checkpoint, all **141** library tests pass. Verified implementation code checkpoint: `732354bf5b0457c99093b7c1e118fce895682d22`, with format, check, strict Clippy, and tests all green.
 
-`main` is verified through finite YEARLY selector reachability at `65ec4329f43dec9234c709683ce211e911998197`: format, check, strict Clippy, and all **223** library tests pass in GitHub Actions. The preceding WEEKLY BYMONTH checkpoint is independently verified at `c0918d9fb23fae27c4c3dc769954158f37b6ae1e` with **218** tests.
+`main` is verified through DAILY BYMONTHDAY at `2a57e9ce2df2227acca1508a108ed7f8b4fec1e0`: format, check, strict Clippy, and all **229** library tests pass in GitHub Actions. The preceding finite YEARLY selector-reachability checkpoint is independently verified at `65ec4329f43dec9234c709683ce211e911998197` with **223** tests.
 
-A child staging slice at code/persistence checkpoint `4c220f4c90f36cd1980c09f50ace3523d7575616` adds DAILY BYMONTHDAY limiting and targets **229** library tests. DAILY reachability now switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. The 229-test slice is pending fresh CI verification before promotion.
-
-YEARLY reachability scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
+DAILY reachability switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. YEARLY reachability likewise scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
 ## Implemented architecture
 
