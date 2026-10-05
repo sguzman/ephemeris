@@ -1028,6 +1028,8 @@ pub struct CompositionLayer {
     #[serde(default)]
     pub operator: CompositionOperator,
     #[serde(default)]
+    pub saved_view_id: Option<Uuid>,
+    #[serde(default)]
     pub query: EventQuery,
 }
 
@@ -1043,6 +1045,7 @@ impl CompositionLayer {
         membership: Option<&EventMembership>,
     ) -> bool {
         self.enabled
+            && self.saved_view_id.is_none()
             && self
                 .query
                 .matches_with_membership(event, context, membership)
@@ -1067,7 +1070,10 @@ pub fn matches_composed_query_with_membership(
 ) -> bool {
     let mut included = base.matches_with_membership(event, context, membership);
 
-    for layer in layers.iter().filter(|layer| layer.enabled) {
+    for layer in layers
+        .iter()
+        .filter(|layer| layer.enabled && layer.saved_view_id.is_none())
+    {
         let layer_matches = layer
             .query
             .matches_with_membership(event, context, membership);
@@ -1250,6 +1256,154 @@ pub struct SavedView {
     pub table_columns: Vec<TableColumn>,
     pub display_timezone: String,
     pub week_start_monday: bool,
+}
+
+
+pub fn matches_composed_or_overlay_with_saved_views_and_membership(
+    base: &EventQuery,
+    composition_layers: &[CompositionLayer],
+    overlays: &[Overlay],
+    saved_views: &[SavedView],
+    event: &TemporalEvent,
+    context: &QueryContext,
+    membership: Option<&EventMembership>,
+) -> bool {
+    let mut visiting = BTreeSet::new();
+    matches_composed_or_overlay_with_references(
+        base,
+        composition_layers,
+        overlays,
+        saved_views,
+        event,
+        context,
+        membership,
+        &mut visiting,
+    )
+}
+
+fn matches_composed_or_overlay_with_references(
+    base: &EventQuery,
+    composition_layers: &[CompositionLayer],
+    overlays: &[Overlay],
+    saved_views: &[SavedView],
+    event: &TemporalEvent,
+    context: &QueryContext,
+    membership: Option<&EventMembership>,
+    visiting: &mut BTreeSet<Uuid>,
+) -> bool {
+    let mut included = base.matches_with_membership(event, context, membership);
+
+    for layer in composition_layers.iter().filter(|layer| layer.enabled) {
+        let layer_matches = if let Some(saved_view_id) = layer.saved_view_id {
+            referenced_saved_view_matches(
+                saved_view_id,
+                saved_views,
+                event,
+                context,
+                membership,
+                visiting,
+            )
+        } else {
+            Some(
+                layer
+                    .query
+                    .matches_with_membership(event, context, membership),
+            )
+        };
+
+        let Some(layer_matches) = layer_matches else {
+            continue;
+        };
+
+        included = match layer.operator {
+            CompositionOperator::Union => included || layer_matches,
+            CompositionOperator::Intersect => included && layer_matches,
+            CompositionOperator::Subtract => included && !layer_matches,
+        };
+    }
+
+    included
+        || overlays
+            .iter()
+            .any(|overlay| overlay.matches_with_membership(event, context, membership))
+}
+
+fn referenced_saved_view_matches(
+    saved_view_id: Uuid,
+    saved_views: &[SavedView],
+    event: &TemporalEvent,
+    context: &QueryContext,
+    membership: Option<&EventMembership>,
+    visiting: &mut BTreeSet<Uuid>,
+) -> Option<bool> {
+    let view = saved_views.iter().find(|view| view.id == saved_view_id)?;
+
+    if !visiting.insert(saved_view_id) {
+        return None;
+    }
+
+    let matches = event
+        .source_id
+        .is_none_or(|source_id| !view.hidden_source_ids.contains(&source_id))
+        && matches_composed_or_overlay_with_references(
+            &view.query,
+            &view.composition_layers,
+            &view.overlays,
+            saved_views,
+            event,
+            context,
+            membership,
+            visiting,
+        );
+
+    visiting.remove(&saved_view_id);
+    Some(matches)
+}
+
+pub fn saved_view_reference_cycle(
+    saved_views: &[SavedView],
+    root_id: Uuid,
+) -> Option<Vec<Uuid>> {
+    fn visit(
+        saved_views: &[SavedView],
+        id: Uuid,
+        stack: &mut Vec<Uuid>,
+        visited: &mut BTreeSet<Uuid>,
+    ) -> Option<Vec<Uuid>> {
+        if let Some(position) = stack.iter().position(|candidate| *candidate == id) {
+            let mut cycle = stack[position..].to_vec();
+            cycle.push(id);
+            return Some(cycle);
+        }
+
+        if !visited.insert(id) {
+            return None;
+        }
+
+        let Some(view) = saved_views.iter().find(|view| view.id == id) else {
+            return None;
+        };
+
+        stack.push(id);
+        for referenced_id in view
+            .composition_layers
+            .iter()
+            .filter_map(|layer| layer.saved_view_id)
+        {
+            if let Some(cycle) = visit(saved_views, referenced_id, stack, visited) {
+                return Some(cycle);
+            }
+        }
+        stack.pop();
+        None
+    }
+
+    visit(
+        saved_views,
+        root_id,
+        &mut Vec::new(),
+        &mut BTreeSet::new(),
+    )
 }
 
 #[cfg(test)]
@@ -1555,6 +1709,7 @@ mod tests {
                 name: "Add California".to_string(),
                 enabled: true,
                 operator: CompositionOperator::Union,
+                saved_view_id: None,
                 query: EventQuery {
                     jurisdiction: Some("US-CA".to_string()),
                     ..EventQuery::default()
@@ -1565,6 +1720,7 @@ mod tests {
                 name: "Require confirmed".to_string(),
                 enabled: true,
                 operator: CompositionOperator::Intersect,
+                saved_view_id: None,
                 query: EventQuery {
                     status: Some(EventStatus::Confirmed),
                     ..EventQuery::default()
@@ -1575,6 +1731,7 @@ mod tests {
                 name: "Exclude federal".to_string(),
                 enabled: true,
                 operator: CompositionOperator::Subtract,
+                saved_view_id: None,
                 query: EventQuery {
                     expression: Some(QueryExpr::Predicate(QueryPredicate::Text {
                         field: TextField::Tags,
@@ -1615,6 +1772,7 @@ mod tests {
             name: "Disabled exclusion".to_string(),
             enabled: false,
             operator: CompositionOperator::Subtract,
+            saved_view_id: None,
             query: EventQuery {
                 jurisdiction: Some("US-CA".to_string()),
                 ..EventQuery::default()
@@ -1688,6 +1846,139 @@ mod tests {
     }
 
     #[test]
+    fn composition_layer_can_reference_saved_view_logical_set() {
+        let referenced = SavedView {
+            id: Uuid::new_v4(),
+            name: "California".to_string(),
+            query: EventQuery {
+                jurisdiction: Some("US-CA".to_string()),
+                ..EventQuery::default()
+            },
+            hidden_source_ids: BTreeSet::new(),
+            calendar_view: CalendarView::Month,
+            calendar_layout: CalendarLayout::Grid,
+            group_by: GroupBy::Date,
+            sort_rules: vec![SortRule::default()],
+            color_by: ColorBy::Status,
+            color_rules: Vec::new(),
+            composition_layers: Vec::new(),
+            overlays: Vec::new(),
+            table_columns: default_table_columns(),
+            display_timezone: "America/Mexico_City".to_string(),
+            week_start_monday: false,
+        };
+
+        let layer = CompositionLayer {
+            id: Uuid::new_v4(),
+            name: "Reuse California".to_string(),
+            enabled: true,
+            operator: CompositionOperator::Union,
+            saved_view_id: Some(referenced.id),
+            query: EventQuery {
+                domain: Some("does-not-match".to_string()),
+                ..EventQuery::default()
+            },
+        };
+
+        assert!(matches_composed_or_overlay_with_saved_views_and_membership(
+            &EventQuery {
+                domain: Some("does-not-match".to_string()),
+                ..EventQuery::default()
+            },
+            &[layer],
+            &[],
+            &[referenced],
+            &event(),
+            &test_context(),
+            None,
+        ));
+    }
+
+    #[test]
+    fn missing_saved_view_reference_is_a_no_op() {
+        let layer = CompositionLayer {
+            id: Uuid::new_v4(),
+            name: "Missing".to_string(),
+            enabled: true,
+            operator: CompositionOperator::Subtract,
+            saved_view_id: Some(Uuid::new_v4()),
+            query: EventQuery::default(),
+        };
+
+        assert!(matches_composed_or_overlay_with_saved_views_and_membership(
+            &EventQuery {
+                jurisdiction: Some("US-CA".to_string()),
+                ..EventQuery::default()
+            },
+            &[layer],
+            &[],
+            &[],
+            &event(),
+            &test_context(),
+            None,
+        ));
+    }
+
+    #[test]
+    fn saved_view_reference_cycles_are_detected_and_runtime_safe() {
+        let a_id = Uuid::new_v4();
+        let b_id = Uuid::new_v4();
+
+        let make_view = |id, name: &str, referenced_id| SavedView {
+            id,
+            name: name.to_string(),
+            query: EventQuery {
+                jurisdiction: Some("US-CA".to_string()),
+                ..EventQuery::default()
+            },
+            hidden_source_ids: BTreeSet::new(),
+            calendar_view: CalendarView::Month,
+            calendar_layout: CalendarLayout::Grid,
+            group_by: GroupBy::Date,
+            sort_rules: vec![SortRule::default()],
+            color_by: ColorBy::Status,
+            color_rules: Vec::new(),
+            composition_layers: vec![CompositionLayer {
+                id: Uuid::new_v4(),
+                name: "Reference".to_string(),
+                enabled: true,
+                operator: CompositionOperator::Union,
+                saved_view_id: Some(referenced_id),
+                query: EventQuery::default(),
+            }],
+            overlays: Vec::new(),
+            table_columns: default_table_columns(),
+            display_timezone: "America/Mexico_City".to_string(),
+            week_start_monday: false,
+        };
+
+        let a = make_view(a_id, "A", b_id);
+        let b = make_view(b_id, "B", a_id);
+        let views = vec![a.clone(), b];
+
+        let cycle = saved_view_reference_cycle(&views, a_id).expect("cycle");
+        assert_eq!(cycle.first(), Some(&a_id));
+        assert_eq!(cycle.last(), Some(&a_id));
+
+        assert!(matches_composed_or_overlay_with_saved_views_and_membership(
+            &EventQuery::default(),
+            &[CompositionLayer {
+                id: Uuid::new_v4(),
+                name: "A".to_string(),
+                enabled: true,
+                operator: CompositionOperator::Intersect,
+                saved_view_id: Some(a.id),
+                query: EventQuery::default(),
+            }],
+            &[],
+            &views,
+            &event(),
+            &test_context(),
+            None,
+        ));
+    }
+
+    #[test]
     fn saved_view_keeps_independent_presentation_dimensions() {
         let view = SavedView {
             id: Uuid::new_v4(),
@@ -1722,6 +2013,7 @@ mod tests {
                 name: "Exclude cancelled".to_string(),
                 enabled: true,
                 operator: CompositionOperator::Subtract,
+                saved_view_id: None,
                 query: EventQuery {
                     status: Some(EventStatus::Cancelled),
                     ..EventQuery::default()
