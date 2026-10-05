@@ -25,6 +25,8 @@ At the hardened Phase 8 recurrence-selector checkpoint, all **141** library test
 
 `main` is verified through DAILY BYMONTHDAY at `2a57e9ce2df2227acca1508a108ed7f8b4fec1e0`: format, check, strict Clippy, and all **229** library tests pass in GitHub Actions. The preceding finite YEARLY selector-reachability checkpoint is independently verified at `65ec4329f43dec9234c709683ce211e911998197` with **223** tests.
 
+A child staging slice at code/persistence checkpoint `5178f109bd5adc09fb702b6de5b7e15f384f14b4` adds BYHOUR expansion for floating/exact date-time recurrence and targets **238** library tests. It also upgrades BYSETPOS reachability to count hour-expanded candidates, uses full timestamp ordering for same-day override validation, and adds a frequency-aware empty-period horizon so permanently nonexistent local times cannot cause infinite expansion. The 238-test slice is pending fresh CI verification before promotion.
+
 DAILY reachability switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. YEARLY reachability likewise scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
 ## Implemented architecture
@@ -117,7 +119,8 @@ Implemented:
 - signed yearly BYYEARDAY selection for `-366..=-1` and `1..=366`, with zero/out-of-range/duplicate/non-yearly validation;
 - positive BYYEARDAY values count from January 1 and negative values count backward from year-end (`-1` = December 31); day 366 is skipped in non-leap years rather than coerced;
 - when BYYEARDAY is combined with BYMONTH, plain/ordinal BYDAY, and existing month-scoped selectors, those selectors filter the resolved year-day set before COUNT/EXDATE/override processing; plain and ordinal BYDAY forms remain one unioned BYDAY family;
-- generic signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied to each recurrence interval's fully resolved BY-selector candidate set before COUNT is consumed; DAILY/WEEKLY/MONTHLY/YEARLY reachability checks account for candidate-set cardinality so permanently impossible positions terminate;
+- BYHOUR expansion for `0..=23` on floating/exact date-time bases, preserving DTSTART minute/second/duration and source-local DST semantics; DATE/all-day bases are rejected;
+- generic signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied to each recurrence interval's fully resolved BY-selector candidate set after BYHOUR expansion and before COUNT is consumed; DAILY/WEEKLY/MONTHLY/YEARLY reachability checks account for hour-expanded candidate-set cardinality so permanently impossible positions terminate;
 - BYSETPOS requires at least one supported BY selector, rejects zero/out-of-range/duplicate positions, ignores positions outside the current candidate-set size, and deduplicates alias positions that resolve to the same slot;
 - BYSETPOS is shared by visible expansion and override-target validation, preserving original-slot identity and exception semantics;
 - first-year candidates before DTSTART are omitted, impossible civil dates/missing fifth weekdays are skipped, and BYMONTH alone continues to preserve DTSTART's civil day where valid;
@@ -132,11 +135,11 @@ Implemented:
 - preservation of all-day/range duration;
 - exact/source-timezone recurrence by source wall clock across DST;
 - invalid calendar dates in monthly/yearly series are skipped rather than coerced;
-- recurrence definitions, daily-BYDAY/BYMONTH/BYMONTHDAY, monthly-BYMONTH/BYMONTHDAY, weekly/monthly/yearly-plain-BYDAY/WKST/BYWEEKNO/BYYEARDAY/yearly-BYMONTHDAY/monthly-ordinal-BYDAY/yearly-BYMONTH/BYSETPOS selector constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
+- recurrence definitions, daily-BYDAY/BYMONTH/BYMONTHDAY, monthly-BYMONTH/BYMONTHDAY, weekly/monthly/yearly-plain-BYDAY/WKST/BYWEEKNO/BYYEARDAY/yearly-BYMONTHDAY/monthly-ordinal-BYDAY/yearly-BYMONTH/BYHOUR/BYSETPOS selector constraints, DATE-vs-date-time BYHOUR compatibility, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond daily/weekly/monthly/yearly plain BYDAY, all-frequency BYMONTH, daily/monthly/yearly BYMONTHDAY, month/year-scoped ordinal BYDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond daily/weekly/monthly/yearly plain BYDAY, all-frequency BYMONTH, daily/monthly/yearly BYMONTHDAY, month/year-scoped ordinal BYDAY, BYWEEKNO/BYYEARDAY/BYHOUR/BYSETPOS, and the implemented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
