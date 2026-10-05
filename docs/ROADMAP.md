@@ -384,6 +384,7 @@ Implemented recurrence foundation:
 - signed yearly BYYEARDAY selection for `-366..=-1` and `1..=366`, including leap-year invalid-date skipping and filtering by existing yearly month-scoped selectors
 - signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied generically after the supported BY-selector candidate set is resolved within each recurrence interval
 - active-window occurrence expansion rather than eager infinite materialization
+- empty selector intervals terminate against recurrence-period civil floors at the view horizon/UNTIL, preventing permanently empty selector intersections from spinning indefinitely
 - deterministic occurrence identity and canonical-event lineage
 - date-only / all-day / floating / exact-time recurrence
 - source-wall-clock preservation for zoned exact recurrence across DST
