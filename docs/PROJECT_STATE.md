@@ -84,8 +84,9 @@ Implemented:
 - weekly multi-day BYDAY selection with duplicate/non-weekly validation;
 - explicit WKST recurrence-week anchoring for weekly BYDAY, independent from the user's display-week preference;
 - chronological weekday generation within each WKST-anchored active recurrence week, with first-week candidates before DTSTART omitted;
-- positive monthly BYMONTHDAY selection for civil days 1-31, with duplicate/range/non-monthly validation;
-- chronological day-of-month generation within each active month, with first-month candidates before DTSTART omitted and impossible civil dates skipped;
+- signed monthly BYMONTHDAY selection for civil days `-31..=-1` and `1..=31`, with zero/duplicate/range/non-monthly validation;
+- positive BYMONTHDAY values count from month start, negative values count backward from month end (`-1` = last day), and selector aliases resolving to the same civil date are deduplicated;
+- chronological resolved-date generation within each active month, with first-month candidates before DTSTART omitted and impossible civil dates skipped;
 - positive yearly BYMONTH selection for months 1-12, with duplicate/range/non-yearly validation;
 - chronological month generation within each active recurrence year, with first-year candidates before DTSTART omitted and DTSTART's civil day preserved where that date exists;
 - deterministic occurrence UUID derived from the canonical event and original recurrence slot;
@@ -103,7 +104,7 @@ Implemented:
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: broader RRULE dimensions (for example negative BYMONTHDAY, ordinal/month-oriented BYDAY, and selector combinations), richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: broader RRULE dimensions (for example ordinal/month-oriented BYDAY and selector combinations), richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
