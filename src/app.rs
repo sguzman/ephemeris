@@ -1795,6 +1795,8 @@ impl EphemerisApp {
                 if source.kind == crate::domain::SourceKind::Taria {
                     let posture = if self.state.taria_last_release_id.is_none() {
                         "No adopted release"
+                    } else if self.taria_current_source_ids.is_empty() {
+                        "No current-release source links recorded"
                     } else if self.taria_current_source_ids.contains(&source.id) {
                         "Current adopted release"
                     } else {
