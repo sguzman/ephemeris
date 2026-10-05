@@ -1529,15 +1529,23 @@ impl EphemerisApp {
 
         let mut presentation_changed = false;
 
-        egui::ComboBox::from_id_salt("presentation.group")
-            .selected_text(self.state.group_by.label())
-            .show_ui(ui, |ui| {
-                for group_by in GroupBy::ALL {
-                    presentation_changed |= ui
-                        .selectable_value(&mut self.state.group_by, group_by, group_by.label())
-                        .changed();
-                }
-            });
+        let stream_chronology_locked = self.state.calendar_layout == CalendarLayout::Stream;
+        if stream_chronology_locked {
+            ui.small(
+                "Stream owns chronological order and date/precision markers. Saved grouping and sort rules are preserved for Agenda/Table but do not alter Stream.",
+            );
+        }
+        ui.add_enabled_ui(!stream_chronology_locked, |ui| {
+            egui::ComboBox::from_id_salt("presentation.group")
+                .selected_text(self.state.group_by.label())
+                .show_ui(ui, |ui| {
+                    for group_by in GroupBy::ALL {
+                        presentation_changed |= ui
+                            .selectable_value(&mut self.state.group_by, group_by, group_by.label())
+                            .changed();
+                    }
+                });
+        });
 
         ui.strong("Color rules");
         ui.small("Rules are evaluated top to bottom; the first enabled match wins.");
@@ -1915,42 +1923,48 @@ impl EphemerisApp {
 
         ui.separator();
         ui.strong("Sort rules");
-        let mut remove_sort = None;
-        let can_remove_sort = self.state.sort_rules.len() > 1;
-        for (index, rule) in self.state.sort_rules.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                egui::ComboBox::from_id_salt(("presentation.sort.field", index))
-                    .selected_text(rule.field.label())
-                    .show_ui(ui, |ui| {
-                        for field in SortField::ALL {
-                            presentation_changed |= ui
-                                .selectable_value(&mut rule.field, field, field.label())
-                                .changed();
-                        }
-                    });
-                egui::ComboBox::from_id_salt(("presentation.sort.direction", index))
-                    .selected_text(rule.direction.label())
-                    .show_ui(ui, |ui| {
-                        for direction in SortDirection::ALL {
-                            presentation_changed |= ui
-                                .selectable_value(&mut rule.direction, direction, direction.label())
-                                .changed();
-                        }
-                    });
-                if can_remove_sort && ui.small_button("×").clicked() {
-                    remove_sort = Some(index);
-                }
-            });
-        }
+        ui.add_enabled_ui(!stream_chronology_locked, |ui| {
+            let mut remove_sort = None;
+            let can_remove_sort = self.state.sort_rules.len() > 1;
+            for (index, rule) in self.state.sort_rules.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt(("presentation.sort.field", index))
+                        .selected_text(rule.field.label())
+                        .show_ui(ui, |ui| {
+                            for field in SortField::ALL {
+                                presentation_changed |= ui
+                                    .selectable_value(&mut rule.field, field, field.label())
+                                    .changed();
+                            }
+                        });
+                    egui::ComboBox::from_id_salt(("presentation.sort.direction", index))
+                        .selected_text(rule.direction.label())
+                        .show_ui(ui, |ui| {
+                            for direction in SortDirection::ALL {
+                                presentation_changed |= ui
+                                    .selectable_value(
+                                        &mut rule.direction,
+                                        direction,
+                                        direction.label(),
+                                    )
+                                    .changed();
+                            }
+                        });
+                    if can_remove_sort && ui.small_button("×").clicked() {
+                        remove_sort = Some(index);
+                    }
+                });
+            }
 
-        if let Some(index) = remove_sort {
-            self.state.sort_rules.remove(index);
-            presentation_changed = true;
-        }
-        if ui.button("Add sort key").clicked() {
-            self.state.sort_rules.push(SortRule::default());
-            presentation_changed = true;
-        }
+            if let Some(index) = remove_sort {
+                self.state.sort_rules.remove(index);
+                presentation_changed = true;
+            }
+            if ui.button("Add sort key").clicked() {
+                self.state.sort_rules.push(SortRule::default());
+                presentation_changed = true;
+            }
+        });
 
         if presentation_changed {
             self.state.active_saved_view_id = None;
