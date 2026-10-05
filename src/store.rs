@@ -5511,4 +5511,42 @@ mod tests {
 
         assert_eq!(loaded.recurrence, event.recurrence);
     }
+
+    #[test]
+    fn yearly_bymonthday_without_bymonth_roundtrips_through_event_storage() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 1, 20).expect("day");
+        let mut event = TemporalEvent::new(
+            "First and last day",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: Some(6),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: vec![1, -1],
+            by_month_weekday: Vec::new(),
+            by_set_pos: vec![-1],
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        store.upsert_event(&event).expect("persist recurrence");
+        let loaded = store.event_by_id(event.id).expect("query").expect("event");
+
+        assert_eq!(loaded.recurrence, event.recurrence);
+    }
+
 }
