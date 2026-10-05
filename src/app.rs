@@ -441,11 +441,12 @@ impl EphemerisApp {
                         .is_some_and(|release_id| release_id == release.release_id);
                     let prefix = if current { "Current · " } else { "" };
                     ui.small(format!(
-                        "{prefix}{} · {} · {} · {} sources · {} bundles · {} calendars · {} member events",
+                        "{prefix}{} · {} · {} · {} sources · {} event snapshots · {} bundles · {} calendars · {} member events",
                         release.release_id,
                         release.channel,
                         release.status,
                         release.source_count,
+                        release.snapshot_event_count,
                         release.bundle_count,
                         release.projected_calendar_count,
                         release.resolved_member_event_count
@@ -460,9 +461,14 @@ impl EphemerisApp {
                         diff.from_release_id
                     ));
                     ui.small(format!(
-                        "Sources +{} / -{} · calendar-member events +{} / -{} · bundles +{} / -{} · projected calendars +{} / -{}",
+                        "Sources +{} / -{} · canonical events +{} / -{} · moved {} · newly cancelled {} · status changes {} · calendar-member events +{} / -{} · bundles +{} / -{} · projected calendars +{} / -{}",
                         diff.added_source_projection_refs.len(),
                         diff.removed_source_projection_refs.len(),
+                        diff.added_snapshot_event_ids.len(),
+                        diff.removed_snapshot_event_ids.len(),
+                        diff.moved_event_ids.len(),
+                        diff.newly_cancelled_event_ids.len(),
+                        diff.status_changed_event_ids.len(),
                         diff.added_member_event_ids.len(),
                         diff.removed_member_event_ids.len(),
                         diff.added_bundle_refs.len(),
@@ -508,7 +514,7 @@ impl EphemerisApp {
                 }
 
                 ui.small(
-                    "Event deltas currently mean resolved CalendarSet membership presence. Field-level historical event diffs require snapshot history.",
+                    "Canonical event deltas come from immutable per-release snapshots; CalendarSet member-event deltas remain a separate membership view.",
                 );
             },
         );
