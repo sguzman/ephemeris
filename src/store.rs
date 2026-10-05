@@ -128,11 +128,8 @@ pub struct TariaReleaseDiff {
 
 #[derive(Debug, Clone)]
 struct StoredTariaEventSnapshot {
-    event_id: Uuid,
-    normalized_title: String,
     status: String,
     time_json: String,
-    snapshot_json: String,
 }
 
 pub struct TemporalStore {
@@ -864,7 +861,7 @@ impl TemporalStore {
     ) -> anyhow::Result<HashMap<Uuid, StoredTariaEventSnapshot>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT event_id, normalized_title, status, time_json, snapshot_json
+            SELECT event_id, status, time_json
             FROM taria_release_event_snapshots
             WHERE release_id = ?1
             ORDER BY event_id
@@ -880,11 +877,8 @@ impl TemporalStore {
             snapshots.insert(
                 event_id,
                 StoredTariaEventSnapshot {
-                    event_id,
-                    normalized_title: row.get(1)?,
-                    status: row.get(2)?,
-                    time_json: row.get(3)?,
-                    snapshot_json: row.get(4)?,
+                    status: row.get(1)?,
+                    time_json: row.get(2)?,
                 },
             );
         }
@@ -1847,6 +1841,20 @@ impl TemporalStore {
 
 fn i64_to_u64(value: i64, label: &str) -> anyhow::Result<u64> {
     u64::try_from(value).with_context(|| format!("{label} cannot be represented as u64"))
+}
+
+fn canonical_event_snapshot_json(event: &TemporalEvent) -> anyhow::Result<String> {
+    let mut value =
+        serde_json::to_value(event).context("failed to encode canonical event snapshot")?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("canonical event snapshot must encode as a JSON object"))?;
+
+    for local_field in ["source_id", "source_record_key", "created_at", "updated_at"] {
+        object.remove(local_field);
+    }
+
+    serde_json::to_string(&value).context("failed to serialize canonical event snapshot")
 }
 
 fn set_added(
