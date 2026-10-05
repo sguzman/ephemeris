@@ -2263,6 +2263,27 @@ impl EphemerisApp {
             if let Some(raw) = event.raw_title.as_deref() {
                 inspector_row(ui, "Raw title", raw);
             }
+
+            if let Some(rule) = event.recurrence.as_ref() {
+                ui.separator();
+                ui.strong("Recurrence");
+                inspector_row(ui, "Frequency", rule.frequency.as_str());
+                inspector_row(ui, "Interval", &rule.interval.to_string());
+                inspector_row(
+                    ui,
+                    "Count",
+                    &rule
+                        .count
+                        .map_or_else(|| "unbounded".to_string(), |count| count.to_string()),
+                );
+                inspector_row(
+                    ui,
+                    "Until",
+                    &rule
+                        .until
+                        .map_or_else(|| "unbounded".to_string(), |until| until.to_string()),
+                );
+            }
             if let Some(value) = event.event_type.as_deref() {
                 inspector_row(ui, "Type", value);
             }
