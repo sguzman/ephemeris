@@ -5720,4 +5720,63 @@ mod tests {
 
         assert_eq!(loaded.recurrence, event.recurrence);
     }
+
+    #[test]
+    fn byhour_roundtrips_through_event_storage() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let start = NaiveDateTime::parse_from_str(
+            "2026-10-05T08:15:00",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        .expect("start");
+        let mut event = TemporalEvent::new(
+            "Timed recurrence",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(4);
+        rule.by_hour = vec![9, 17];
+        rule.by_set_pos = vec![2];
+        event.recurrence = Some(rule);
+
+        store.upsert_event(&event).expect("persist BYHOUR");
+        let loaded = store.event_by_id(event.id).expect("query").expect("event");
+
+        assert_eq!(loaded.recurrence, event.recurrence);
+    }
+
+    #[test]
+    fn store_rejects_byhour_on_date_only_recurrence() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Invalid date-only BYHOUR",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.by_hour = vec![9];
+        event.recurrence = Some(rule);
+
+        let error = store
+            .upsert_event(&event)
+            .expect_err("DATE-valued recurrence must reject BYHOUR");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event recurrence definition")
+        );
+        assert_eq!(store.event_count().expect("event count"), 0);
+    }
+
 }
