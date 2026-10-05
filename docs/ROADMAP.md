@@ -182,6 +182,12 @@ Still required:
 - compact agenda modes
 - richer layout customization
 
+## Deferred UI/layout debt
+
+The native egui shell needs a dedicated responsive-layout pass after the current programmable-view work. A 2026-10-05 real-app screenshot demonstrated a severe failure mode at constrained width: Sources/Inspector and presentation controls can squeeze the calendar into a narrow strip, controls/text overlap, labels wrap into near-vertical fragments, and the resulting surface is functionally unreadable.
+
+This is explicitly tracked as a product bug, not accepted polish. The later layout pass should establish minimum/maximum side-panel widths, sane collapse/scroll behavior, non-overlapping toolbar/presentation controls, and a protected minimum width for the calendar canvas.
+
 ## Phase 5 - Query and saved views
 
 Status: **active**
