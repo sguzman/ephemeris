@@ -25,7 +25,7 @@ At the hardened Phase 8 recurrence-selector checkpoint, all **141** library test
 
 `main` is now at `1ecc4ba42ec358dd70bc7ef14c2221a5c4fa5da6`, containing the prepared Phase 8 selector stack through yearly plain BYDAY and targeting **183** library tests. Fresh CI verification is still pending; the 141-test checkpoint above remains the last verified gate until GitHub-hosted Actions runners recover.
 
-A fast-forward child staging slice at code checkpoint `4dc5f203845a637ebfdbedac97a7e147f02677e5` extends ordinal BYDAY to whole-year scope and targets **190** library tests. A further child code checkpoint at `9c9e81fcd682d296d9f1fe1e3cf7100e51fa1ad6` adds YEARLY BYMONTHDAY without explicit BYMONTH and targets **195** library tests. Both remain unverified while GitHub-hosted Actions runners are degraded.
+A fast-forward child staging slice at code checkpoint `4dc5f203845a637ebfdbedac97a7e147f02677e5` extends ordinal BYDAY to whole-year scope and targets **190** library tests. A further child code checkpoint at `d373f2d5a79ba90cd7671f0e1d6ea7da6f39dc82` adds YEARLY BYMONTHDAY without explicit BYMONTH and targets **195** library tests. The next child code checkpoint at `eb6d58f46e80d8e134464a988440794a3176c4dd` adds DAILY BYDAY filtering and targets **200** library tests. All remain unverified while GitHub-hosted Actions runners are degraded.
 
 ## Implemented architecture
 
@@ -85,7 +85,8 @@ Implemented:
 - positive interval;
 - optional occurrence count;
 - optional inclusive civil-date `until` bound;
-- weekly multi-day BYDAY selection with duplicate/non-weekly validation;
+- daily BYDAY filtering over active interval dates, with skipped weekdays not consuming COUNT;
+- weekly multi-day BYDAY selection with duplicate validation;
 - explicit WKST recurrence-week anchoring for weekly BYDAY, independent from the user's display-week preference;
 - chronological weekday generation within each WKST-anchored active recurrence week, with first-week candidates before DTSTART omitted;
 - plain monthly BYDAY selection, expanding every matching weekday inside each active month while leaving WKST semantically inactive for monthly rules;
@@ -126,11 +127,11 @@ Implemented:
 - preservation of all-day/range duration;
 - exact/source-timezone recurrence by source wall clock across DST;
 - invalid calendar dates in monthly/yearly series are skipped rather than coerced;
-- recurrence definitions, weekly/monthly/yearly-plain-BYDAY/WKST/BYWEEKNO/BYYEARDAY/BYMONTHDAY/monthly-ordinal-BYDAY/BYMONTH/BYSETPOS selector constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
+- recurrence definitions, daily/weekly/monthly/yearly-plain-BYDAY/WKST/BYWEEKNO/BYYEARDAY/BYMONTHDAY/monthly-ordinal-BYDAY/BYMONTH/BYSETPOS selector constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond weekly/monthly/yearly plain BYDAY, month/year-scoped ordinal BYDAY, monthly/yearly BYMONTHDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond daily/weekly/monthly/yearly plain BYDAY, month/year-scoped ordinal BYDAY, monthly/yearly BYMONTHDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
