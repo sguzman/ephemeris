@@ -57,11 +57,17 @@ impl TariaRefreshHealth {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OccurrenceContext {
+    event_id: Uuid,
+    recurrence_index: u32,
+}
+
 pub struct EphemerisApp {
     store: TemporalStore,
     state: PersistedUiState,
     events: Vec<TemporalEvent>,
-    occurrence_parent_ids: HashMap<Uuid, Uuid>,
+    occurrence_contexts: HashMap<Uuid, OccurrenceContext>,
     unplaced_events: Vec<TemporalEvent>,
     sources: Vec<TemporalSource>,
     source_event_counts: HashMap<Uuid, u64>,
@@ -107,7 +113,7 @@ impl EphemerisApp {
             store,
             state,
             events: Vec::new(),
-            occurrence_parent_ids: HashMap::new(),
+            occurrence_contexts: HashMap::new(),
             unplaced_events: Vec::new(),
             sources: Vec::new(),
             source_event_counts: HashMap::new(),
@@ -770,10 +776,9 @@ impl EphemerisApp {
     }
 
     fn canonical_event_id(&self, event_id: Uuid) -> Uuid {
-        self.occurrence_parent_ids
+        self.occurrence_contexts
             .get(&event_id)
-            .copied()
-            .unwrap_or(event_id)
+            .map_or(event_id, |occurrence| occurrence.event_id)
     }
 
     fn reload(&mut self) -> anyhow::Result<()> {
@@ -804,7 +809,7 @@ impl EphemerisApp {
         }
 
         self.events.clear();
-        self.occurrence_parent_ids.clear();
+        self.occurrence_contexts.clear();
         for event in candidates.into_values() {
             if event.recurrence.is_some() {
                 for occurrence in
@@ -813,7 +818,13 @@ impl EphemerisApp {
                     let mut materialized = event.clone();
                     materialized.id = occurrence.id;
                     materialized.time = occurrence.time;
-                    self.occurrence_parent_ids.insert(materialized.id, event.id);
+                    self.occurrence_contexts.insert(
+                        materialized.id,
+                        OccurrenceContext {
+                            event_id: event.id,
+                            recurrence_index: occurrence.recurrence_index,
+                        },
+                    );
                     self.events.push(materialized);
                 }
             } else {
@@ -2199,7 +2210,7 @@ impl EphemerisApp {
                                     rules: &self.state.color_rules,
                                     overlays: &self.state.overlays,
                                     memberships: &self.taria_memberships,
-                                    occurrence_parent_ids: &self.occurrence_parent_ids,
+                                    occurrence_contexts: &self.occurrence_contexts,
                                     query_context: QueryContext::for_timezone(self.timezone()),
                                 },
                             )),
@@ -2337,7 +2348,12 @@ impl EphemerisApp {
 
             ui.separator();
             let canonical_id = self.canonical_event_id(event.id);
-            if canonical_id != event.id {
+            if let Some(occurrence) = self.occurrence_contexts.get(&event.id) {
+                inspector_row(
+                    ui,
+                    "Occurrence",
+                    &(occurrence.recurrence_index.saturating_add(1)).to_string(),
+                );
                 inspector_row(ui, "Occurrence ID", &event.id.to_string());
                 inspector_row(ui, "Event ID", &canonical_id.to_string());
             } else {
@@ -2435,7 +2451,7 @@ impl eframe::App for EphemerisApp {
                                     rules: &self.state.color_rules,
                                     overlays: &self.state.overlays,
                                     memberships: &self.taria_memberships,
-                                    occurrence_parent_ids: &self.occurrence_parent_ids,
+                                    occurrence_contexts: &self.occurrence_contexts,
                                     query_context: QueryContext::for_timezone(timezone),
                                 },
                             },
@@ -3181,7 +3197,7 @@ struct ColorPresentation<'a> {
     rules: &'a [ColorRule],
     overlays: &'a [Overlay],
     memberships: &'a HashMap<Uuid, EventMembership>,
-    occurrence_parent_ids: &'a HashMap<Uuid, Uuid>,
+    occurrence_contexts: &'a HashMap<Uuid, OccurrenceContext>,
     query_context: QueryContext,
 }
 
@@ -4316,10 +4332,9 @@ fn date_group_label(event: &TemporalEvent, timezone: Tz) -> String {
 
 fn event_color(event: &TemporalEvent, colors: ColorPresentation<'_>) -> Color32 {
     let canonical_id = colors
-        .occurrence_parent_ids
+        .occurrence_contexts
         .get(&event.id)
-        .copied()
-        .unwrap_or(event.id);
+        .map_or(event.id, |occurrence| occurrence.event_id);
     let membership = colors.memberships.get(&canonical_id);
 
     if let Some(overlay) = colors
