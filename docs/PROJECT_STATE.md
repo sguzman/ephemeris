@@ -453,6 +453,7 @@ Refresh-attempt history and health are also persisted:
 - an app crash/restart can therefore leave an explicit incomplete attempt rather than erasing the attempt;
 - the UI distinguishes running from orphaned/incomplete attempts;
 - Taria refresh health is explicit: never-refreshed, running, healthy, stale, failed, interrupted, or unknown;
+- upgraded pre-v13 databases with an adopted release but no attempt history are reported as unknown/legacy rather than falsely "never refreshed";
 - the current local Taria policy marks a successful refresh stale after 7 days without another successful refresh, and the threshold is shown in the UI.
 
 Calendar algebra is also now editable in the GUI.
