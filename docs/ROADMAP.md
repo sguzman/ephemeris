@@ -191,6 +191,10 @@ Implemented:
 - text search
 - domain facet
 - jurisdiction facet
+- event-type facet
+- institution facet
+- renderability facet
+- exact tag-membership facet
 - lifecycle-status facet
 - source visibility as independent dimension
 - canonical `EventQuery` model
@@ -276,8 +280,7 @@ The composition-layer GUI editor is implemented: layers can be enabled/disabled,
 
 Next programmable-view work:
 
-- richer facets
-- saved-view inheritance with cycle-safe semantics
+- saved-view inheritance/composition with cycle-safe semantics
 
 Exit criterion remains:
 
