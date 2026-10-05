@@ -385,8 +385,12 @@ impl EphemerisApp {
             .taria_update_receiver
             .as_ref()
             .map(|(attempt_id, _)| *attempt_id);
-        let refresh_health =
-            taria_refresh_health(&self.source_refresh_attempts, active_attempt_id, Utc::now());
+        let refresh_health = taria_refresh_health(
+            &self.source_refresh_attempts,
+            active_attempt_id,
+            self.taria_release_status.is_some(),
+            Utc::now(),
+        );
         let health_color = match refresh_health {
             TariaRefreshHealth::Healthy => Color32::LIGHT_GREEN,
             TariaRefreshHealth::Running => Color32::LIGHT_BLUE,
@@ -3918,6 +3922,7 @@ fn short_bundle_label(bundle_ref: &str) -> String {
 fn taria_refresh_health(
     attempts: &[SourceRefreshAttempt],
     active_attempt_id: Option<Uuid>,
+    has_adopted_release: bool,
     now: DateTime<Utc>,
 ) -> TariaRefreshHealth {
     if active_attempt_id.is_some() {
@@ -3928,7 +3933,11 @@ fn taria_refresh_health(
         .iter()
         .find(|attempt| attempt.refresh_kind == "taria_workspace")
     else {
-        return TariaRefreshHealth::NeverRefreshed;
+        return if has_adopted_release {
+            TariaRefreshHealth::Unknown
+        } else {
+            TariaRefreshHealth::NeverRefreshed
+        };
     };
 
     match latest.success {
@@ -4136,11 +4145,15 @@ mod tests {
         let active_id = Uuid::new_v4();
 
         assert_eq!(
-            taria_refresh_health(&[], None, now),
+            taria_refresh_health(&[], None, false, now),
             TariaRefreshHealth::NeverRefreshed
         );
         assert_eq!(
-            taria_refresh_health(&[], Some(active_id), now),
+            taria_refresh_health(&[], None, true, now),
+            TariaRefreshHealth::Unknown
+        );
+        assert_eq!(
+            taria_refresh_health(&[], Some(active_id), false, now),
             TariaRefreshHealth::Running
         );
         assert_eq!(
@@ -4151,12 +4164,18 @@ mod tests {
                     Some("2026-10-09T00:00:00Z")
                 )],
                 None,
+                false,
                 now,
             ),
             TariaRefreshHealth::Failed
         );
         assert_eq!(
-            taria_refresh_health(&[refresh_attempt(Uuid::new_v4(), None, None)], None, now,),
+            taria_refresh_health(
+                &[refresh_attempt(Uuid::new_v4(), None, None)],
+                None,
+                false,
+                now,
+            ),
             TariaRefreshHealth::Interrupted
         );
         assert_eq!(
@@ -4167,6 +4186,7 @@ mod tests {
                     Some("2026-10-09T00:00:00Z")
                 )],
                 None,
+                false,
                 now,
             ),
             TariaRefreshHealth::Healthy
@@ -4179,6 +4199,7 @@ mod tests {
                     Some("2026-10-01T00:00:00Z")
                 )],
                 None,
+                false,
                 now,
             ),
             TariaRefreshHealth::Stale
