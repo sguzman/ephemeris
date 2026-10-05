@@ -373,6 +373,7 @@ Implemented recurrence foundation:
 - daily BYMONTH limiting over active interval days, including composition with daily BYDAY and finite Gregorian-cycle reachability detection
 - weekly BYMONTH limiting after weekly BYDAY expansion, including cross-month week filtering before BYSETPOS and finite 400-year / 20,871-week reachability detection
 - monthly BYMONTH limiting over active recurrence months, with a 4,800-month Gregorian-cycle reachability guard shared across monthly BYDAY/BYMONTHDAY/ordinal-BYDAY/BYSETPOS candidate semantics
+- yearly selector reachability over the finite 400-year Gregorian cycle, covering permanently empty BYMONTH/BYMONTHDAY/BYYEARDAY/BYDAY/BYWEEKNO/BYSETPOS combinations without weakening first-year DTSTART filtering
 - weekly multi-day BYDAY selection with explicit WKST recurrence-week anchoring
 - monthly plain BYDAY expansion for every matching weekday in the active month, including composition with ordinal BYDAY, BYMONTHDAY filtering, and BYSETPOS
 - signed monthly BYMONTHDAY selection for `-31..=-1` and `1..=31`, including month-end-relative selectors, resolved-date ordering/deduplication, and impossible-date skipping
