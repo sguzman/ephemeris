@@ -3143,16 +3143,7 @@ fn render_stream(
     colors: ColorPresentation<'_>,
 ) -> Option<CalendarAction> {
     let mut ordered = events.iter().collect::<Vec<_>>();
-    ordered.sort_by(|left, right| {
-        agenda_sort_date(left, timezone)
-            .cmp(&agenda_sort_date(right, timezone))
-            .then_with(|| {
-                left.display_time_label(timezone)
-                    .cmp(&right.display_time_label(timezone))
-            })
-            .then_with(|| left.normalized_title.cmp(&right.normalized_title))
-            .then_with(|| left.id.cmp(&right.id))
-    });
+    ordered.sort_by(|left, right| compare_stream_events(left, right, timezone));
 
     let mut action = None;
     let mut previous_marker: Option<String> = None;
@@ -3423,6 +3414,38 @@ fn grouped_events<'a>(
 }
 fn sort_events(events: &mut [TemporalEvent], timezone: Tz, sort_rules: &[SortRule]) {
     events.sort_by(|left, right| compare_events(left, right, timezone, sort_rules));
+}
+
+fn compare_stream_events(
+    left: &TemporalEvent,
+    right: &TemporalEvent,
+    timezone: Tz,
+) -> std::cmp::Ordering {
+    agenda_sort_date(left, timezone)
+        .cmp(&agenda_sort_date(right, timezone))
+        .then_with(|| stream_precision_rank(&left.time).cmp(&stream_precision_rank(&right.time)))
+        .then_with(|| {
+            stream_clock_time(&left.time, timezone).cmp(&stream_clock_time(&right.time, timezone))
+        })
+        .then_with(|| left.normalized_title.cmp(&right.normalized_title))
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+const fn stream_precision_rank(time: &TimeSpec) -> u8 {
+    match time {
+        TimeSpec::Year { .. } | TimeSpec::Month { .. } => 0,
+        TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => 1,
+        TimeSpec::Instant { .. } | TimeSpec::Floating { .. } => 2,
+        TimeSpec::Unknown { .. } => 3,
+    }
+}
+
+fn stream_clock_time(time: &TimeSpec, timezone: Tz) -> Option<chrono::NaiveTime> {
+    match time {
+        TimeSpec::Instant { start_utc, .. } => Some(start_utc.with_timezone(&timezone).time()),
+        TimeSpec::Floating { start, .. } => Some(start.time()),
+        _ => None,
+    }
 }
 
 fn compare_events(
@@ -4221,6 +4244,53 @@ mod tests {
             summary: None,
             error: None,
         }
+    }
+
+    #[test]
+    fn chronological_stream_orders_precision_and_clock_time_semantically() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+
+        let month = TemporalEvent::new(
+            "Month precision",
+            TimeSpec::Month {
+                year: 2026,
+                month: 10,
+            },
+        );
+        let date_only = TemporalEvent::new(
+            "Date only",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let later = TemporalEvent::new(
+            "Later",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(14, 0, 0).expect("later"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let earlier = TemporalEvent::new(
+            "Earlier",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("earlier"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+
+        let mut events = vec![later, date_only, earlier, month];
+        events.sort_by(|left, right| compare_stream_events(left, right, chrono_tz::UTC));
+
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.normalized_title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Month precision", "Date only", "Earlier", "Later"]
+        );
     }
 
     #[test]
