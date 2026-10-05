@@ -58,7 +58,7 @@ override_applied
 cancelled_by_override
 ```
 
-The persisted recurrence definition also carries RDATE additions, EXDATE exclusions, and occurrence overrides keyed by original occurrence time. A moved occurrence retains identity/lineage to the original recurrence slot; its replacement time is presentation/effective state, not a new identity. A cancelled override remains an occurrence with cancelled status, while EXDATE removes the slot from materialization.
+The persisted recurrence definition also carries weekly `by_weekday` selection, RDATE additions, EXDATE exclusions, and occurrence overrides keyed by original occurrence time. A moved occurrence retains identity/lineage to the original recurrence slot; its replacement time is presentation/effective state, not a new identity. A cancelled override remains an occurrence with cancelled status, while EXDATE removes the slot from materialization.
 
 ### TemporalSource
 

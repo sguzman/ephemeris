@@ -37,7 +37,7 @@ Implemented:
 - canonical `TemporalEvent` and `TemporalSource` types
 - event-native storage with no Taskwarrior mediation
 - distinct temporal semantics for date-only, all-day, exact instants, floating/local time, month precision, year precision, and unresolved time
-- persisted recurrence definitions with daily/weekly/monthly/yearly frequency, interval, count, until bounds, RDATE additions, EXDATE exclusions, and moved/cancelled occurrence overrides
+- persisted recurrence definitions with daily/weekly/monthly/yearly frequency, interval, count, until bounds, weekly multi-day BYDAY selection, RDATE additions, EXDATE exclusions, and moved/cancelled occurrence overrides
 - query-window recurrence expansion with deterministic original-slot occurrence identity instead of eager infinite materialization
 - recurrence support for date-only, all-day, floating, and exact/source-timezone events, including source-wall-clock preservation across DST and moved instances that enter the active window
 - Year, Quarter, Month, Week, and Day date ranges
@@ -89,7 +89,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified Phase 8 recurrence-exception code checkpoint at 2026-10-05 is `1ae5f63f9751b62e893aee10ba288de7cc513d6e`: format, compile, strict Clippy, and **90 library tests** all pass.
+The verified Phase 8 recurrence/BYDAY code checkpoint at 2026-10-05 is `5fd4e719b06a5747462aae257e0c7e47a876affe`: format, compile, strict Clippy, and **97 library tests** all pass.
 
 ## Product boundary
 

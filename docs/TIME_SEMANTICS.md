@@ -79,22 +79,25 @@ Current canonical recurrence definitions support:
 - positive interval;
 - optional count;
 - optional inclusive civil-date `until`;
+- weekly multi-day BYDAY weekday selection;
 - RDATE additions;
 - EXDATE exclusions;
 - per-occurrence moved and cancelled overrides;
 - date-only, all-day, floating, and exact/source-timezone base events.
 
-Month/year/unresolved precision cannot be a recurrence base and is rejected before persistence. Exception timestamps must use the same temporal kind as the series, duplicate overrides are rejected, and one original occurrence slot cannot simultaneously be EXDATE-excluded and overridden. An override's original slot must also resolve to a real RRULE-generated or RDATE-added occurrence; detached overrides cannot manufacture phantom occurrences.
+Month/year/unresolved precision cannot be a recurrence base and is rejected before persistence. BYDAY is currently supported only for weekly recurrence and duplicate weekdays are rejected. Exception timestamps must use the same temporal kind as the series, duplicate overrides are rejected, and one original occurrence slot cannot simultaneously be EXDATE-excluded and overridden. An override's original slot must also resolve to a real RRULE-generated or RDATE-added occurrence; detached overrides cannot manufacture phantom occurrences.
 
 Exact recurrence with a retained source timezone advances in source-local wall-clock time, then resolves each occurrence back to UTC. This preserves a series such as 09:00 America/New_York across DST rather than preserving a fixed UTC hour. Nonexistent local times are skipped; ambiguous local times resolve deterministically to the earlier instant.
 
-Monthly/yearly recurrence preserves the original calendar day. An invalid target date is skipped rather than coerced to month-end. Count applies to valid RRULE-generated occurrences; RDATE additions do not consume the RRULE count, and EXDATE is applied after candidate generation.
+Weekly BYDAY recurrence currently uses Monday as the recurrence-week anchor. Selected weekdays are generated in Monday-to-Sunday order regardless of storage/input order. In the first active recurrence week, selected weekdays earlier than DTSTART are omitted; DTSTART itself is an RRULE occurrence only when its weekday is selected. `interval = N` therefore means every Nth Monday-anchored recurrence week. This fixed recurrence anchor is separate from the user's view/display week-start preference.
+
+Monthly/yearly recurrence preserves the original calendar day. An invalid target date is skipped rather than coerced to month-end. Count applies to valid RRULE-generated occurrences across selected BYDAY weekdays; RDATE additions do not consume the RRULE count, and EXDATE is applied after candidate generation.
 
 Conceptually, the visible occurrence set is built from RRULE candidates plus RDATE additions, with EXDATE removing matching original slots and occurrence overrides transforming matching slots. A moved override changes the rendered time without changing the identity of the original slot. A cancelled override remains materialized with cancelled lifecycle status; cancellation is therefore not equivalent to EXDATE disappearance.
 
 Still required for fuller interoperable recurrence semantics:
 
-- broader RRULE dimensions beyond the current frequency/interval/count/until subset;
+- broader RRULE dimensions beyond the current frequency/interval/count/until/weekly-BYDAY subset, including explicit WKST and month-oriented selectors;
 - richer recurrence/exception authoring and editing;
 - source-adapter mapping for external recurrence-exception representations.
 
@@ -152,7 +155,7 @@ All-day events group by civil date semantics, not by arbitrary UTC midnight conv
 
 ## Week semantics
 
-Week start is a view/user preference, not canonical event data.
+Week start for rendering/grouping is a view/user preference, not canonical event data. This is distinct from RRULE week calculation: the current weekly BYDAY engine uses a fixed Monday recurrence-week anchor until explicit WKST support is implemented.
 
 Derived fields may include:
 

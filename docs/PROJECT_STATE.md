@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the hardened Phase 8 recurrence-exception checkpoint, all **90** library tests pass. Verified implementation code checkpoint: `1ae5f63f9751b62e893aee10ba288de7cc513d6e`, with format, check, strict Clippy, and tests all green.
+At the hardened Phase 8 recurrence/BYDAY checkpoint, all **97** library tests pass. Verified implementation code checkpoint: `5fd4e719b06a5747462aae257e0c7e47a876affe`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
@@ -81,6 +81,9 @@ Implemented:
 - positive interval;
 - optional occurrence count;
 - optional inclusive civil-date `until` bound;
+- weekly multi-day BYDAY selection with duplicate/non-weekly validation;
+- Monday-anchored recurrence weeks for the current BYDAY implementation, independent from the user's display-week preference;
+- chronological weekday generation within each active recurrence week, with first-week candidates before DTSTART omitted;
 - deterministic occurrence UUID derived from the canonical event and original recurrence slot;
 - RDATE additions and EXDATE exclusions stored inside the existing schema-v14 recurrence JSON;
 - moved occurrence overrides that retain the original occurrence UUID/lineage while rendering at the replacement time;
@@ -92,7 +95,7 @@ Implemented:
 - preservation of all-day/range duration;
 - exact/source-timezone recurrence by source wall clock across DST;
 - invalid calendar dates in monthly/yearly series are skipped rather than coerced;
-- recurrence definitions, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
+- recurrence definitions, BYDAY frequency/duplicate constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 

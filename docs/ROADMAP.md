@@ -369,6 +369,7 @@ Implemented recurrence foundation:
 - recurrence definitions persisted on canonical events in schema v14
 - daily / weekly / monthly / yearly frequency
 - interval, count, and inclusive-until bounds
+- weekly multi-day BYDAY selection with Monday-anchored recurrence weeks
 - active-window occurrence expansion rather than eager infinite materialization
 - deterministic occurrence identity and canonical-event lineage
 - date-only / all-day / floating / exact-time recurrence
@@ -384,7 +385,7 @@ Implemented recurrence foundation:
 
 Next Phase 8 work:
 
-- broader RRULE dimensions and recurrence-exception interoperability
+- broader RRULE dimensions (including explicit WKST/month selectors) and recurrence-exception interoperability
 - richer recurrence/exception authoring and editing
 - relations
 - collections/sequences
