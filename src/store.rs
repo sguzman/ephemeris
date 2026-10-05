@@ -5726,11 +5726,8 @@ mod tests {
         use crate::domain::{RecurrenceFrequency, RecurrenceRule};
 
         let store = TemporalStore::open_in_memory().expect("store");
-        let start = NaiveDateTime::parse_from_str(
-            "2026-10-05T08:15:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-10-05T08:15:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let mut event = TemporalEvent::new(
             "Timed recurrence",
             TimeSpec::Floating {
@@ -5778,5 +5775,4 @@ mod tests {
         );
         assert_eq!(store.event_count().expect("event count"), 0);
     }
-
 }
