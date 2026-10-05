@@ -1787,6 +1787,22 @@ impl TemporalStore {
         Ok(events)
     }
 
+    pub fn recurring_events(&self) -> anyhow::Result<Vec<TemporalEvent>> {
+        let sql = event_select_sql(
+            r#"
+            WHERE recurrence_json IS NOT NULL
+            ORDER BY normalized_title COLLATE NOCASE, id
+            "#,
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query([])?;
+        let mut events = Vec::new();
+        while let Some(row) = rows.next()? {
+            events.push(decode_event(row)?);
+        }
+        Ok(events)
+    }
+
     pub fn import_batch(
         &self,
         source: &TemporalSource,
@@ -3829,6 +3845,41 @@ mod tests {
     fn schema_bootstraps_at_current_version() {
         let store = TemporalStore::open_in_memory().expect("store");
         assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn recurring_events_are_retrievable_outside_base_window() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let start = NaiveDate::from_ymd_opt(2020, 1, 1).expect("start");
+        let mut recurring = TemporalEvent::new(
+            "Long-lived recurrence",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        recurring.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            count: None,
+            until: None,
+        });
+        store.upsert_event(&recurring).expect("save recurring");
+
+        let ordinary = TemporalEvent::new(
+            "Ordinary",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        store.upsert_event(&ordinary).expect("save ordinary");
+
+        let loaded = store.recurring_events().expect("recurring events");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, recurring.id);
     }
 
     #[test]
