@@ -1458,25 +1458,23 @@ fn monthly_rule_has_reachable_candidate(
     let cycle_year = 2000_i32
         .checked_add(base_date.year().rem_euclid(400))
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
-    let year_offset = u64::try_from(cycle_year - 2000)
-        .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+    let year_offset =
+        u64::try_from(cycle_year - 2000).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
     let mut month_index = year_offset
         .checked_mul(12)
         .and_then(|months| months.checked_add(u64::from(base_date.month0())))
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
     let step = u64::from(rule.interval) % GREGORIAN_CYCLE_MONTHS;
-    let cycle_len =
-        GREGORIAN_CYCLE_MONTHS / greatest_common_divisor(GREGORIAN_CYCLE_MONTHS, step);
+    let cycle_len = GREGORIAN_CYCLE_MONTHS / greatest_common_divisor(GREGORIAN_CYCLE_MONTHS, step);
 
     for _ in 0..cycle_len {
         let year = 2000_i32
             .checked_add(
-                i32::try_from(month_index / 12)
-                    .map_err(|_| RecurrenceError::ArithmeticOverflow)?,
+                i32::try_from(month_index / 12).map_err(|_| RecurrenceError::ArithmeticOverflow)?,
             )
             .ok_or(RecurrenceError::ArithmeticOverflow)?;
-        let month = u32::try_from(month_index % 12 + 1)
-            .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+        let month =
+            u32::try_from(month_index % 12 + 1).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
         let month_start =
             NaiveDate::from_ymd_opt(year, month, 1).ok_or(RecurrenceError::ArithmeticOverflow)?;
         let candidate_dates = monthly_selector_dates_for_month(base_date, rule, month_start)?;
@@ -1511,8 +1509,7 @@ fn monthly_selector_dates_for_month(
         weekdays.sort_by_key(|weekday| weekday.offset_from_monday());
 
         for weekday in weekdays {
-            let first_offset =
-                (weekday.offset_from_monday() + 7 - month_start_weekday) % 7;
+            let first_offset = (weekday.offset_from_monday() + 7 - month_start_weekday) % 7;
             let mut candidate_date = month_start
                 .checked_add_days(Days::new(first_offset))
                 .ok_or(RecurrenceError::ArithmeticOverflow)?;
@@ -7914,5 +7911,4 @@ mod tests {
                 .is_empty()
         );
     }
-
 }
