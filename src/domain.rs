@@ -1053,7 +1053,10 @@ impl TemporalEvent {
         rule.validate()?;
         validate_recurrence_time(&self.time)?;
         if !rule.by_hour.is_empty()
-            && matches!(self.time, TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. })
+            && matches!(
+                &self.time,
+                TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. }
+            )
         {
             return Err(RecurrenceError::ByHourRequiresDateTime(self.time.kind_name()));
         }
