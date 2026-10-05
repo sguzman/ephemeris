@@ -460,7 +460,9 @@ impl EphemerisApp {
                         diff.from_release_id
                     ));
                     ui.small(format!(
-                        "Calendar-member events +{} / -{} · bundles +{} / -{} · projected calendars +{} / -{}",
+                        "Sources +{} / -{} · calendar-member events +{} / -{} · bundles +{} / -{} · projected calendars +{} / -{}",
+                        diff.added_source_projection_refs.len(),
+                        diff.removed_source_projection_refs.len(),
                         diff.added_member_event_ids.len(),
                         diff.removed_member_event_ids.len(),
                         diff.added_bundle_refs.len(),
@@ -469,6 +471,18 @@ impl EphemerisApp {
                         diff.removed_calendar_ids.len()
                     ));
 
+                    if !diff.added_source_projection_refs.is_empty() {
+                        ui.small(format!(
+                            "Added sources: {}",
+                            diff.added_source_projection_refs.join(", ")
+                        ));
+                    }
+                    if !diff.removed_source_projection_refs.is_empty() {
+                        ui.small(format!(
+                            "Removed sources: {}",
+                            diff.removed_source_projection_refs.join(", ")
+                        ));
+                    }
                     if !diff.added_bundle_refs.is_empty() {
                         ui.small(format!(
                             "Added bundles: {}",
