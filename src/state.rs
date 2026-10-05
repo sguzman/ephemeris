@@ -273,11 +273,7 @@ mod tests {
             })),
             group_by: GroupBy::Jurisdiction,
             color_by: ColorBy::EventType,
-            table_columns: vec![
-                TableColumn::Title,
-                TableColumn::Date,
-                TableColumn::Status,
-            ],
+            table_columns: vec![TableColumn::Title, TableColumn::Date, TableColumn::Status],
             ..PersistedUiState::default()
         };
 
@@ -292,11 +288,7 @@ mod tests {
         assert_eq!(loaded.color_by, ColorBy::EventType);
         assert_eq!(
             loaded.table_columns,
-            vec![
-                TableColumn::Title,
-                TableColumn::Date,
-                TableColumn::Status,
-            ]
+            vec![TableColumn::Title, TableColumn::Date, TableColumn::Status,]
         );
         assert!(loaded.color_rules.is_empty());
         assert!(loaded.overlays.is_empty());
