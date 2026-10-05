@@ -10,16 +10,18 @@ pub enum CalendarLayout {
     CompactAgenda,
     Stream,
     Timeline,
+    Density,
     Table,
 }
 
 impl CalendarLayout {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Grid,
         Self::Agenda,
         Self::CompactAgenda,
         Self::Stream,
         Self::Timeline,
+        Self::Density,
         Self::Table,
     ];
 
@@ -30,6 +32,7 @@ impl CalendarLayout {
             Self::CompactAgenda => "Compact",
             Self::Stream => "Stream",
             Self::Timeline => "Timeline",
+            Self::Density => "Density",
             Self::Table => "Table",
         }
     }
@@ -41,6 +44,7 @@ impl CalendarLayout {
             Self::CompactAgenda => "compact_agenda",
             Self::Stream => "stream",
             Self::Timeline => "timeline",
+            Self::Density => "density",
             Self::Table => "table",
         }
     }
@@ -51,6 +55,7 @@ impl CalendarLayout {
             "compact_agenda" => Self::CompactAgenda,
             "stream" => Self::Stream,
             "timeline" => Self::Timeline,
+            "density" => Self::Density,
             "table" => Self::Table,
             _ => Self::Grid,
         }
