@@ -734,7 +734,8 @@ impl TemporalEvent {
             if exdate_keys.contains(&key) {
                 return Err(RecurrenceError::ConflictingException(key));
             }
-            if !recurrence_generates_original_time(&self.time, rule, &occurrence_override.original)? {
+            if !recurrence_generates_original_time(&self.time, rule, &occurrence_override.original)?
+            {
                 return Err(RecurrenceError::UnknownOverrideTarget(key));
             }
         }
