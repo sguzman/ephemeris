@@ -5461,12 +5461,8 @@ mod tests {
         });
 
         store.upsert_event(&event).expect("persist recurrence");
-        let loaded = store
-            .event_by_id(event.id)
-            .expect("query")
-            .expect("event");
+        let loaded = store.event_by_id(event.id).expect("query").expect("event");
 
         assert_eq!(loaded.recurrence, event.recurrence);
     }
-
 }

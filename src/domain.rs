@@ -6300,10 +6300,7 @@ mod tests {
             by_week_no: Vec::new(),
             by_year_day: vec![61, 62, 63, 64, 65, 66, 67],
             by_month_day: Vec::new(),
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
-                1,
-                RecurrenceWeekday::Tuesday,
-            )],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Tuesday)],
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6330,5 +6327,4 @@ mod tests {
             ]
         );
     }
-
 }
