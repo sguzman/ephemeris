@@ -847,8 +847,9 @@ impl fmt::Display for RecurrenceError {
             Self::DuplicateByMonth(month) => {
                 write!(formatter, "duplicate BYMONTH value {month}")
             }
-            Self::ByWeekNoRequiresYearly => formatter
-                .write_str("BYWEEKNO selection is supported only for yearly recurrence"),
+            Self::ByWeekNoRequiresYearly => {
+                formatter.write_str("BYWEEKNO selection is supported only for yearly recurrence")
+            }
             Self::InvalidByWeekNo(week_no) => {
                 write!(
                     formatter,
@@ -858,8 +859,9 @@ impl fmt::Display for RecurrenceError {
             Self::DuplicateByWeekNo(week_no) => {
                 write!(formatter, "duplicate BYWEEKNO value {week_no}")
             }
-            Self::ByYearDayRequiresYearly => formatter
-                .write_str("BYYEARDAY selection is supported only for yearly recurrence"),
+            Self::ByYearDayRequiresYearly => {
+                formatter.write_str("BYYEARDAY selection is supported only for yearly recurrence")
+            }
             Self::InvalidByYearDay(day) => {
                 write!(
                     formatter,
@@ -869,8 +871,9 @@ impl fmt::Display for RecurrenceError {
             Self::DuplicateByYearDay(day) => {
                 write!(formatter, "duplicate BYYEARDAY value {day}")
             }
-            Self::ByMonthDayRequiresMonthlyOrYearly => formatter
-                .write_str("BYMONTHDAY selection requires monthly or yearly recurrence"),
+            Self::ByMonthDayRequiresMonthlyOrYearly => {
+                formatter.write_str("BYMONTHDAY selection requires monthly or yearly recurrence")
+            }
             Self::InvalidByMonthDay(day) => {
                 write!(
                     formatter,
@@ -895,9 +898,8 @@ impl fmt::Display for RecurrenceError {
                     "duplicate ordinal BYDAY selector {ordinal} {weekday}"
                 )
             }
-            Self::OrdinalByWeekdayWithByWeekNo => formatter.write_str(
-                "ordinal BYDAY selectors cannot be combined with yearly BYWEEKNO",
-            ),
+            Self::OrdinalByWeekdayWithByWeekNo => formatter
+                .write_str("ordinal BYDAY selectors cannot be combined with yearly BYWEEKNO"),
             Self::BySetPosRequiresSelector => {
                 formatter.write_str("BYSETPOS requires at least one other BY selector")
             }
@@ -6895,7 +6897,11 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(local.len(), 3);
-        assert!(local.iter().all(|date| date.format("%H:%M").to_string() == "09:00"));
+        assert!(
+            local
+                .iter()
+                .all(|date| date.format("%H:%M").to_string() == "09:00")
+        );
         assert_eq!(
             local[1].with_timezone(&Utc).format("%H:%M").to_string(),
             "14:00"
@@ -6974,5 +6980,4 @@ mod tests {
             occurrence_identity(event.id, &original).expect("stable identity")
         );
     }
-
 }
