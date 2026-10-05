@@ -71,34 +71,46 @@ Tests should cover:
 
 ## Recurrence
 
-Full recurrence semantics are a long-term requirement:
+The first recurrence engine slice is implemented.
 
-- RRULE
-- RDATE
-- EXDATE
-- recurrence exceptions
-- moved occurrences
-- cancelled occurrences
-- DTSTART semantics
-- all-day recurrence
-- floating recurrence
-- timezone-bound recurrence
+Current canonical recurrence definitions support:
 
-The system must distinguish recurrence definitions from materialized occurrences.
+- daily, weekly, monthly, and yearly frequency;
+- positive interval;
+- optional count;
+- optional inclusive civil-date `until`;
+- date-only, all-day, floating, and exact/source-timezone base events.
+
+Month/year/unresolved precision cannot be a recurrence base and is rejected before persistence.
+
+Exact recurrence with a retained source timezone advances in source-local wall-clock time, then resolves each occurrence back to UTC. This preserves a series such as 09:00 America/New_York across DST rather than preserving a fixed UTC hour. Nonexistent local times are skipped; ambiguous local times resolve deterministically to the earlier instant.
+
+Monthly/yearly recurrence preserves the original calendar day. An invalid target date is skipped rather than coerced to month-end. Count applies to valid generated rule occurrences.
+
+Still required for fuller interoperable recurrence semantics:
+
+- RDATE;
+- EXDATE;
+- recurrence exceptions;
+- moved occurrences;
+- cancelled occurrences;
+- broader RRULE dimensions beyond the current frequency/interval/count/until subset.
+
+The system distinguishes the persisted recurrence definition from materialized view occurrences.
 
 ## Expansion strategy
 
-Do not eagerly materialize infinite recurrence.
+Infinite recurrence is not eagerly materialized.
 
-A recurrence engine should expand within query/view horizons and cache/materialize only when justified.
+Ephemeris retrieves recurring canonical events independently of the base date-window query, then expands each series only inside the active Year/Quarter/Month/Week/Day horizon. Materialized occurrences carry deterministic occurrence UUIDs, canonical event lineage, and recurrence index.
 
-Identity for each occurrence must remain stable enough for:
+Identity is derived from canonical event identity plus the original occurrence time. It is therefore stable across repeated expansion and is intended to support future:
 
-- annotations
-- exceptions
-- moved instances
-- source refresh
-- diffing
+- annotations;
+- exceptions;
+- moved instances;
+- source refresh;
+- diffing.
 
 ## Rescheduling
 
