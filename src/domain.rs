@@ -9543,4 +9543,182 @@ mod tests {
         assert!(occurrences.is_empty());
     }
 
+
+    #[test]
+    fn floating_weekly_byhour_expands_each_selected_weekday() {
+        let start = NaiveDateTime::parse_from_str(
+            "2026-10-05T08:30:00",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        .expect("start");
+        let mut event = TemporalEvent::new(
+            "Weekly hours",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            count: Some(4),
+            until: None,
+            week_start: RecurrenceWeekday::Monday,
+            by_weekday: vec![RecurrenceWeekday::Monday, RecurrenceWeekday::Wednesday],
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            by_hour: vec![9, 17],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 8).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            starts,
+            vec![
+                "2026-10-05 09:30",
+                "2026-10-05 17:30",
+                "2026-10-07 09:30",
+                "2026-10-07 17:30",
+            ]
+        );
+    }
+
+    #[test]
+    fn floating_monthly_byhour_expands_after_monthday_selection() {
+        let start = NaiveDateTime::parse_from_str(
+            "2026-01-01T10:15:00",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        .expect("start");
+        let mut event = TemporalEvent::new(
+            "Monthly hours",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            count: Some(4),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: vec![1, 15],
+            by_month_weekday: Vec::new(),
+            by_hour: vec![8, 20],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 2, 2).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            starts,
+            vec![
+                "2026-01-01 20:15",
+                "2026-01-15 08:15",
+                "2026-01-15 20:15",
+                "2026-02-01 08:15",
+            ]
+        );
+    }
+
+    #[test]
+    fn floating_yearly_byhour_expands_after_yearly_date_selection() {
+        let start = NaiveDateTime::parse_from_str(
+            "2026-03-01T10:45:00",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        .expect("start");
+        let mut event = TemporalEvent::new(
+            "Yearly hours",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: Some(4),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: vec![3],
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: vec![1],
+            by_month_weekday: Vec::new(),
+            by_hour: vec![9, 17],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2028, 4, 1).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            starts,
+            vec![
+                "2026-03-01 17:45",
+                "2027-03-01 09:45",
+                "2027-03-01 17:45",
+                "2028-03-01 09:45",
+            ]
+        );
+    }
+
 }
