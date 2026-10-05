@@ -2304,8 +2304,7 @@ impl EphemerisApp {
                         .collect::<Vec<_>>()
                         .join(", ");
                     inspector_row(ui, "Weekdays", &weekdays);
-                    if rule.frequency == RecurrenceFrequency::Weekly
-                        || !rule.by_week_no.is_empty()
+                    if rule.frequency == RecurrenceFrequency::Weekly || !rule.by_week_no.is_empty()
                     {
                         inspector_row(ui, "Week start", rule.week_start.short_label());
                     }

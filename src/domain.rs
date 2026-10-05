@@ -1593,8 +1593,7 @@ fn recurrence_week_one_start(
     let january_four =
         NaiveDate::from_ymd_opt(year, 1, 4).ok_or(RecurrenceError::ArithmeticOverflow)?;
     let january_four_weekday = u64::from(january_four.weekday().num_days_from_monday());
-    let days_since_week_start =
-        (january_four_weekday + 7 - week_start.offset_from_monday()) % 7;
+    let days_since_week_start = (january_four_weekday + 7 - week_start.offset_from_monday()) % 7;
     january_four
         .checked_sub_days(Days::new(days_since_week_start))
         .ok_or(RecurrenceError::ArithmeticOverflow)
@@ -1609,8 +1608,7 @@ fn recurrence_weeks_in_year(
         .checked_add(1)
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
     let next = recurrence_week_one_start(next_year, week_start)?;
-    i16::try_from((next - current).num_days() / 7)
-        .map_err(|_| RecurrenceError::ArithmeticOverflow)
+    i16::try_from((next - current).num_days() / 7).map_err(|_| RecurrenceError::ArithmeticOverflow)
 }
 
 fn resolve_week_number_start(
@@ -1673,8 +1671,8 @@ fn yearly_week_number_candidates(
             .collect::<Vec<_>>()
     };
 
-    let selected_months = (!rule.by_month.is_empty())
-        .then(|| rule.by_month.iter().copied().collect::<HashSet<_>>());
+    let selected_months =
+        (!rule.by_month.is_empty()).then(|| rule.by_month.iter().copied().collect::<HashSet<_>>());
     let selected_year_days = if rule.by_year_day.is_empty() {
         None
     } else {
@@ -1688,8 +1686,7 @@ fn yearly_week_number_candidates(
 
     let mut candidate_dates = Vec::new();
     for week_no in &rule.by_week_no {
-        let Some(week_start) =
-            resolve_week_number_start(active_year, *week_no, rule.week_start)?
+        let Some(week_start) = resolve_week_number_start(active_year, *week_no, rule.week_start)?
         else {
             continue;
         };
@@ -3106,10 +3103,7 @@ mod tests {
             by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: vec![5, 30],
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
-                -1,
-                RecurrenceWeekday::Friday,
-            )],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)],
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
