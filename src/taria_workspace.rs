@@ -833,6 +833,13 @@ channels:
         assert_eq!(store.taria_release_count().expect("release count"), 1);
         assert_eq!(
             store
+                .taria_source_ids_for_release(Some("temporal-bundle-release:test"))
+                .expect("release sources")
+                .len(),
+            2
+        );
+        assert_eq!(
+            store
                 .taria_calendar_membership_count()
                 .expect("membership count"),
             2
@@ -943,6 +950,13 @@ channels:
         assert_eq!(store.event_count().expect("canonical event count"), 1);
         assert_eq!(
             store
+                .taria_source_ids_for_release(Some("temporal-bundle-release:production:test"))
+                .expect("release sources")
+                .len(),
+            2
+        );
+        assert_eq!(
+            store
                 .taria_calendar_membership_count()
                 .expect("membership count"),
             2
@@ -1023,6 +1037,12 @@ channels:
         assert!(error.to_string().contains("integrity mismatch"));
         assert_eq!(store.event_count().expect("events"), 0);
         assert_eq!(store.taria_release_count().expect("releases"), 0);
+        assert!(
+            store
+                .taria_source_ids_for_release(Some("temporal-bundle-release:atomic-test"))
+                .expect("release sources")
+                .is_empty()
+        );
         assert_eq!(
             store
                 .taria_calendar_membership_count()
