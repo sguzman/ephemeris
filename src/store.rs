@@ -4101,11 +4101,11 @@ mod tests {
             }],
             overrides: vec![RecurrenceOverride {
                 original: TimeSpec::DateOnly {
-                    start: day + chrono::Duration::days(28),
+                    start: day + chrono::Duration::days(16),
                     end_exclusive: None,
                 },
                 replacement: Some(TimeSpec::DateOnly {
-                    start: day + chrono::Duration::days(29),
+                    start: day + chrono::Duration::days(17),
                     end_exclusive: None,
                 }),
                 cancelled: false,
