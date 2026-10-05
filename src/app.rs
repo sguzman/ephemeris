@@ -2305,6 +2305,16 @@ impl EphemerisApp {
                     inspector_row(ui, "Weekdays", &weekdays);
                     inspector_row(ui, "Week start", rule.week_start.short_label());
                 }
+                if !rule.by_month.is_empty() {
+                    let mut months = rule.by_month.clone();
+                    months.sort_unstable();
+                    let months = months
+                        .into_iter()
+                        .map(|month| month.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    inspector_row(ui, "Months", &months);
+                }
                 if !rule.by_month_day.is_empty() {
                     let mut month_days = rule.by_month_day.clone();
                     month_days.sort_unstable();
