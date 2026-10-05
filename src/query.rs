@@ -1258,7 +1258,6 @@ pub struct SavedView {
     pub week_start_monday: bool,
 }
 
-
 pub fn matches_composed_or_overlay_with_saved_views_and_membership(
     base: &EventQuery,
     composition_layers: &[CompositionLayer],
