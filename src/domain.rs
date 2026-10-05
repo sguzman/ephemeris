@@ -9968,11 +9968,8 @@ mod tests {
 
     #[test]
     fn floating_daily_byminute_preserves_hour_second_and_filters_first_period() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-10-05T14:20:30",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-10-05T14:20:30", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let mut event = TemporalEvent::new(
             "Quarter minutes",
             TimeSpec::Floating {
@@ -10027,11 +10024,8 @@ mod tests {
 
     #[test]
     fn byhour_byminute_cartesian_expansion_precedes_bysetpos() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-10-05T08:10:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-10-05T08:10:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let mut event = TemporalEvent::new(
             "Third time each day",
             TimeSpec::Floating {
@@ -10156,11 +10150,8 @@ mod tests {
 
     #[test]
     fn floating_weekly_byminute_expands_each_selected_weekday() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-10-05T09:00:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-10-05T09:00:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let mut event = TemporalEvent::new(
             "Weekly minutes",
             TimeSpec::Floating {
@@ -10216,11 +10207,8 @@ mod tests {
 
     #[test]
     fn floating_monthly_byminute_expands_after_monthday_selection() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-01-01T08:20:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-01-01T08:20:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let mut event = TemporalEvent::new(
             "Monthly minutes",
             TimeSpec::Floating {
@@ -10276,11 +10264,8 @@ mod tests {
 
     #[test]
     fn floating_yearly_byminute_expands_after_yearly_date_selection() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-03-01T09:20:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("start");
+        let start = NaiveDateTime::parse_from_str("2026-03-01T09:20:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
         let mut event = TemporalEvent::new(
             "Yearly minutes",
             TimeSpec::Floating {
@@ -10342,29 +10327,20 @@ mod tests {
         )
         .expect("start");
         let original = TimeSpec::Floating {
-            start: NaiveDateTime::parse_from_str(
-                "2026-10-05T09:45:00",
-                "%Y-%m-%dT%H:%M:%S",
-            )
-            .unwrap(),
+            start: NaiveDateTime::parse_from_str("2026-10-05T09:45:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
             end: None,
             source_timezone: None,
         };
         let replacement = TimeSpec::Floating {
-            start: NaiveDateTime::parse_from_str(
-                "2026-10-05T10:00:00",
-                "%Y-%m-%dT%H:%M:%S",
-            )
-            .unwrap(),
+            start: NaiveDateTime::parse_from_str("2026-10-05T10:00:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
             end: None,
             source_timezone: None,
         };
         let excluded = TimeSpec::Floating {
-            start: NaiveDateTime::parse_from_str(
-                "2026-10-06T09:15:00",
-                "%Y-%m-%dT%H:%M:%S",
-            )
-            .unwrap(),
+            start: NaiveDateTime::parse_from_str("2026-10-06T09:15:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
             end: None,
             source_timezone: None,
         };
@@ -10427,7 +10403,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn byminute_defaults_when_missing_from_legacy_recurrence_json() {
         let rule: RecurrenceRule =
@@ -10436,5 +10411,4 @@ mod tests {
         assert!(rule.by_minute.is_empty());
         assert_eq!(rule.interval, 1);
     }
-
 }
