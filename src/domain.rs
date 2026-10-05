@@ -6672,7 +6672,7 @@ mod tests {
         assert_eq!(local[1].date_naive(), NaiveDate::from_ymd_opt(2027, 3, 7).unwrap());
         assert_eq!(local[0].format("%H:%M").to_string(), "09:00");
         assert_eq!(local[1].format("%H:%M").to_string(), "09:00");
-        assert_ne!(local[0].offset().fix().local_minus_utc(), local[1].offset().fix().local_minus_utc());
+        assert_ne!(local[0].offset().to_string(), local[1].offset().to_string());
     }
 
     #[test]
