@@ -7,16 +7,18 @@ pub enum CalendarLayout {
     #[default]
     Grid,
     Agenda,
+    Stream,
     Table,
 }
 
 impl CalendarLayout {
-    pub const ALL: [Self; 3] = [Self::Grid, Self::Agenda, Self::Table];
+    pub const ALL: [Self; 4] = [Self::Grid, Self::Agenda, Self::Stream, Self::Table];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Grid => "Grid",
             Self::Agenda => "Agenda",
+            Self::Stream => "Stream",
             Self::Table => "Table",
         }
     }
@@ -25,6 +27,7 @@ impl CalendarLayout {
         match self {
             Self::Grid => "grid",
             Self::Agenda => "agenda",
+            Self::Stream => "stream",
             Self::Table => "table",
         }
     }
@@ -32,6 +35,7 @@ impl CalendarLayout {
     pub fn parse(raw: &str) -> Self {
         match raw {
             "agenda" => Self::Agenda,
+            "stream" => Self::Stream,
             "table" => Self::Table,
             _ => Self::Grid,
         }
@@ -212,11 +216,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn calendar_layout_roundtrips_table_name() {
-        assert_eq!(
-            CalendarLayout::parse(CalendarLayout::Table.as_str()),
-            CalendarLayout::Table
-        );
+    fn calendar_layout_roundtrips_persisted_names() {
+        for layout in CalendarLayout::ALL {
+            assert_eq!(CalendarLayout::parse(layout.as_str()), layout);
+        }
     }
 
     #[test]
