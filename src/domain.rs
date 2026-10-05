@@ -2826,7 +2826,6 @@ mod tests {
             duplicate.validate(),
             Err(RecurrenceError::DuplicateOrdinalByWeekday(-1, "friday"))
         ));
-
     }
 
     #[test]
@@ -2901,10 +2900,7 @@ mod tests {
             by_weekday: Vec::new(),
             by_month: Vec::new(),
             by_month_day: vec![5, 15],
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
-                1,
-                RecurrenceWeekday::Monday,
-            )],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: vec![RecurrenceOverride {
@@ -2917,7 +2913,9 @@ mod tests {
             }],
         });
 
-        event.validate_recurrence().expect("valid intersection target");
+        event
+            .validate_recurrence()
+            .expect("valid intersection target");
         let occurrences = event
             .occurrences_in_window(
                 start,
