@@ -130,6 +130,8 @@ Still required for fuller interoperable recurrence semantics:
 - richer recurrence/exception authoring and editing;
 - source-adapter mapping for external recurrence-exception representations.
 
+Empty selector periods are bounded independently of candidate materialization. For each recurrence interval, Ephemeris derives a monotonic civil-period floor (day, WKST-anchored week, month start, or year start). If a selector intersection yields no candidates and that floor has reached the active view's exclusive end, or has moved beyond inclusive UNTIL, RRULE expansion stops. This prevents impossible selector combinations from looping forever while leaving detached moved-override materialization on its existing exception path.
+
 The system distinguishes the persisted recurrence definition from materialized view occurrences.
 
 ## Expansion strategy
