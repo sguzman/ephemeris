@@ -266,7 +266,6 @@ impl TemporalStore {
         Ok(sources)
     }
 
-
     pub fn source_event_counts(&self) -> anyhow::Result<HashMap<Uuid, u64>> {
         let mut stmt = self.conn.prepare(
             r#"
@@ -282,8 +281,9 @@ impl TemporalStore {
         while let Some(row) = rows.next()? {
             let raw_source_id: String = row.get(0)?;
             let count: i64 = row.get(1)?;
-            let source_id = Uuid::parse_str(&raw_source_id)
-                .with_context(|| format!("invalid source id in temporal_events: {raw_source_id}"))?;
+            let source_id = Uuid::parse_str(&raw_source_id).with_context(|| {
+                format!("invalid source id in temporal_events: {raw_source_id}")
+            })?;
             let count =
                 u64::try_from(count).context("source event count cannot be represented as u64")?;
             counts.insert(source_id, count);
@@ -3094,8 +3094,7 @@ mod tests {
     #[test]
     fn source_event_counts_cover_all_canonical_events() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let first =
-            TemporalSource::new("First source", SourceKind::Ics, SourceAuthority::Official);
+        let first = TemporalSource::new("First source", SourceKind::Ics, SourceAuthority::Official);
         let second =
             TemporalSource::new("Second source", SourceKind::Taria, SourceAuthority::Derived);
         store.upsert_source(&first).expect("first source");
