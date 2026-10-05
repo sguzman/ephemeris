@@ -81,7 +81,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation code checkpoint at 2026-10-05 is `29f79fcf6a040f9d5700bafd7b254d1eb65dcee4`: format, compile, strict Clippy, and **53 library tests** all pass. Documentation synchronization follows that green code checkpoint.
+The verified implementation code checkpoint at 2026-10-05 is `0de0c447f0742de6d3ce8c0955b42d8a2a1d090d`: format, compile, strict Clippy, and **58 library tests** all pass. Documentation synchronization follows that green code checkpoint.
 
 ## Product boundary
 
