@@ -699,7 +699,10 @@ impl fmt::Display for RecurrenceError {
                 "BYMONTHDAY selection is currently supported only for monthly recurrence",
             ),
             Self::InvalidByMonthDay(day) => {
-                write!(formatter, "BYMONTHDAY value must be between 1 and 31, got {day}")
+                write!(
+                    formatter,
+                    "BYMONTHDAY value must be between 1 and 31, got {day}"
+                )
             }
             Self::DuplicateByMonthDay(day) => {
                 write!(formatter, "duplicate BYMONTHDAY value {day}")
@@ -1118,7 +1121,8 @@ fn monthly_recurrence_candidates(
         .interval
         .checked_mul(period)
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
-    let Some(active_month_start) = add_months_preserving_day(base_month_start, month_offset)? else {
+    let Some(active_month_start) = add_months_preserving_day(base_month_start, month_offset)?
+    else {
         return Ok(Vec::new());
     };
 
