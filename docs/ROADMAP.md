@@ -371,6 +371,7 @@ Implemented recurrence foundation:
 - interval, count, and inclusive-until bounds
 - daily BYDAY filtering over active interval days
 - daily BYMONTH limiting over active interval days, including composition with daily BYDAY and finite Gregorian-cycle reachability detection
+- signed daily BYMONTHDAY limiting for `-31..=-1` and `1..=31`, intersecting with daily BYMONTH/BYDAY and sharing the finite Gregorian-cycle reachability guard
 - weekly BYMONTH limiting after weekly BYDAY expansion, including cross-month week filtering before BYSETPOS and finite 400-year / 20,871-week reachability detection
 - monthly BYMONTH limiting over active recurrence months, with a 4,800-month Gregorian-cycle reachability guard shared across monthly BYDAY/BYMONTHDAY/ordinal-BYDAY/BYSETPOS candidate semantics
 - yearly selector reachability over the finite 400-year Gregorian cycle, covering permanently empty BYMONTH/BYMONTHDAY/BYYEARDAY/BYDAY/BYWEEKNO/BYSETPOS combinations without weakening first-year DTSTART filtering
@@ -404,7 +405,7 @@ Implemented recurrence foundation:
 
 Next Phase 8 work:
 
-- broader RRULE dimensions and selector families beyond daily/weekly/monthly/yearly plain BYDAY, all-frequency BYMONTH, month/year-scoped ordinal BYDAY, yearly/monthly BYMONTHDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations plus recurrence-exception interoperability
+- broader RRULE dimensions and selector families beyond daily/weekly/monthly/yearly plain BYDAY, all-frequency BYMONTH, daily/monthly/yearly BYMONTHDAY, month/year-scoped ordinal BYDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations plus recurrence-exception interoperability
 - richer recurrence/exception authoring and editing
 - relations
 - collections/sequences
