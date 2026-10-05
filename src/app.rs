@@ -2380,6 +2380,16 @@ impl EphemerisApp {
                         .join(", ");
                     inspector_row(ui, "Hours", &hours);
                 }
+                if !rule.by_minute.is_empty() {
+                    let mut minutes = rule.by_minute.clone();
+                    minutes.sort_unstable();
+                    let minutes = minutes
+                        .into_iter()
+                        .map(|minute| format!("{minute:02}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    inspector_row(ui, "Minutes", &minutes);
+                }
                 if !rule.by_set_pos.is_empty() {
                     let mut positions = rule.by_set_pos.clone();
                     positions.sort_unstable();
