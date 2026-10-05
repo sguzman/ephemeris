@@ -969,13 +969,14 @@ channels:
                 .expect("snapshot count"),
             1
         );
-        assert_eq!(
-            store
-                .taria_source_ids_for_release(Some("temporal-bundle-release:production:test"))
-                .expect("release sources")
-                .len(),
-            2
-        );
+        let release_source_ids = store
+            .taria_source_ids_for_release(Some("temporal-bundle-release:production:test"))
+            .expect("release sources");
+        assert_eq!(release_source_ids.len(), 2);
+        let source_event_counts = store.source_event_counts().expect("source event counts");
+        for source_id in release_source_ids {
+            assert_eq!(source_event_counts.get(&source_id), Some(&1));
+        }
         assert_eq!(
             store
                 .taria_calendar_membership_count()
