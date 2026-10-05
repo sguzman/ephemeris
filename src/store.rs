@@ -122,12 +122,29 @@ pub struct TariaReleaseDiff {
     pub moved_event_ids: Vec<Uuid>,
     pub status_changed_event_ids: Vec<Uuid>,
     pub newly_cancelled_event_ids: Vec<Uuid>,
+    pub event_changes: Vec<TariaEventChangeDetail>,
     pub added_member_event_ids: Vec<Uuid>,
     pub removed_member_event_ids: Vec<Uuid>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TariaEventChangeDetail {
+    pub event_id: Uuid,
+    pub title: String,
+    pub added: bool,
+    pub removed: bool,
+    pub moved: bool,
+    pub status_changed: bool,
+    pub newly_cancelled: bool,
+    pub from_status: Option<String>,
+    pub to_status: Option<String>,
+    pub from_time_json: Option<String>,
+    pub to_time_json: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 struct StoredTariaEventSnapshot {
+    normalized_title: String,
     status: String,
     time_json: String,
 }
@@ -862,7 +879,7 @@ impl TemporalStore {
     ) -> anyhow::Result<HashMap<Uuid, StoredTariaEventSnapshot>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT event_id, status, time_json
+            SELECT event_id, normalized_title, status, time_json
             FROM taria_release_event_snapshots
             WHERE release_id = ?1
             ORDER BY event_id
@@ -878,8 +895,9 @@ impl TemporalStore {
             snapshots.insert(
                 event_id,
                 StoredTariaEventSnapshot {
-                    status: row.get(1)?,
-                    time_json: row.get(2)?,
+                    normalized_title: row.get(1)?,
+                    status: row.get(2)?,
+                    time_json: row.get(3)?,
                 },
             );
         }
@@ -1331,21 +1349,82 @@ impl TemporalStore {
         let mut moved_event_ids = Vec::new();
         let mut status_changed_event_ids = Vec::new();
         let mut newly_cancelled_event_ids = Vec::new();
+        let mut event_changes = Vec::new();
+
+        for event_id in to_snapshot_ids.difference(&from_snapshot_ids) {
+            let to = &to_snapshots[event_id];
+            event_changes.push(TariaEventChangeDetail {
+                event_id: *event_id,
+                title: to.normalized_title.clone(),
+                added: true,
+                removed: false,
+                moved: false,
+                status_changed: false,
+                newly_cancelled: false,
+                from_status: None,
+                to_status: Some(to.status.clone()),
+                from_time_json: None,
+                to_time_json: Some(to.time_json.clone()),
+            });
+        }
+
+        for event_id in from_snapshot_ids.difference(&to_snapshot_ids) {
+            let from = &from_snapshots[event_id];
+            event_changes.push(TariaEventChangeDetail {
+                event_id: *event_id,
+                title: from.normalized_title.clone(),
+                added: false,
+                removed: true,
+                moved: false,
+                status_changed: false,
+                newly_cancelled: false,
+                from_status: Some(from.status.clone()),
+                to_status: None,
+                from_time_json: Some(from.time_json.clone()),
+                to_time_json: None,
+            });
+        }
 
         for event_id in from_snapshot_ids.intersection(&to_snapshot_ids) {
             let from = &from_snapshots[event_id];
             let to = &to_snapshots[event_id];
+            let moved = from.time_json != to.time_json;
+            let status_changed = from.status != to.status;
+            let newly_cancelled =
+                status_changed && to.status == EventStatus::Cancelled.as_str();
 
-            if from.time_json != to.time_json {
+            if moved {
                 moved_event_ids.push(*event_id);
             }
-            if from.status != to.status {
+            if status_changed {
                 status_changed_event_ids.push(*event_id);
-                if to.status == EventStatus::Cancelled.as_str() {
-                    newly_cancelled_event_ids.push(*event_id);
-                }
+            }
+            if newly_cancelled {
+                newly_cancelled_event_ids.push(*event_id);
+            }
+            if moved || status_changed || from.normalized_title != to.normalized_title {
+                event_changes.push(TariaEventChangeDetail {
+                    event_id: *event_id,
+                    title: to.normalized_title.clone(),
+                    added: false,
+                    removed: false,
+                    moved,
+                    status_changed,
+                    newly_cancelled,
+                    from_status: Some(from.status.clone()),
+                    to_status: Some(to.status.clone()),
+                    from_time_json: Some(from.time_json.clone()),
+                    to_time_json: Some(to.time_json.clone()),
+                });
             }
         }
+
+        event_changes.sort_by(|left, right| {
+            left.title
+                .to_ascii_lowercase()
+                .cmp(&right.title.to_ascii_lowercase())
+                .then_with(|| left.event_id.cmp(&right.event_id))
+        });
 
         Ok(TariaReleaseDiff {
             from_release_id: from_release_id.to_string(),
@@ -1367,6 +1446,7 @@ impl TemporalStore {
             moved_event_ids,
             status_changed_event_ids,
             newly_cancelled_event_ids,
+            event_changes,
             added_member_event_ids: set_added(&from_events, &to_events)
                 .into_iter()
                 .map(|value| Uuid::parse_str(&value).context("invalid stored event UUID"))
@@ -3474,6 +3554,35 @@ mod tests {
         assert_eq!(diff.moved_event_ids, vec![changing.id]);
         assert_eq!(diff.status_changed_event_ids, vec![changing.id]);
         assert_eq!(diff.newly_cancelled_event_ids, vec![changing.id]);
+        assert_eq!(diff.event_changes.len(), 3);
+
+        let added_change = diff
+            .event_changes
+            .iter()
+            .find(|change| change.event_id == added.id)
+            .expect("added detail");
+        assert!(added_change.added);
+        assert_eq!(added_change.title, "Added event");
+
+        let removed_change = diff
+            .event_changes
+            .iter()
+            .find(|change| change.event_id == removed.id)
+            .expect("removed detail");
+        assert!(removed_change.removed);
+        assert_eq!(removed_change.title, "Removed event");
+
+        let changed = diff
+            .event_changes
+            .iter()
+            .find(|change| change.event_id == changing.id)
+            .expect("changed detail");
+        assert!(changed.moved);
+        assert!(changed.status_changed);
+        assert!(changed.newly_cancelled);
+        assert_eq!(changed.from_status.as_deref(), Some("confirmed"));
+        assert_eq!(changed.to_status.as_deref(), Some("cancelled"));
+        assert_ne!(changed.from_time_json, changed.to_time_json);
     }
 
     #[test]
