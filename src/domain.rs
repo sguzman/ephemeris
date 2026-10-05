@@ -2558,10 +2558,8 @@ mod tests {
     #[test]
     fn yearly_ordinal_byday_requires_explicit_by_month_context() {
         let mut invalid = RecurrenceRule::new(RecurrenceFrequency::Yearly);
-        invalid.by_month_weekday = vec![RecurrenceOrdinalWeekday::new(
-            -1,
-            RecurrenceWeekday::Friday,
-        )];
+        invalid.by_month_weekday =
+            vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)];
         assert!(matches!(
             invalid.validate(),
             Err(RecurrenceError::OrdinalByWeekdayRequiresMonthContext)
@@ -2642,10 +2640,7 @@ mod tests {
             by_weekday: Vec::new(),
             by_month: vec![1, 7],
             by_month_day: Vec::new(),
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
-                1,
-                RecurrenceWeekday::Monday,
-            )],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
