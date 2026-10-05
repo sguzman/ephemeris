@@ -1258,6 +1258,13 @@ pub struct SavedView {
     pub week_start_monday: bool,
 }
 
+struct SavedViewMatchContext<'a> {
+    saved_views: &'a [SavedView],
+    event: &'a TemporalEvent,
+    query_context: &'a QueryContext,
+    membership: Option<&'a EventMembership>,
+}
+
 pub fn matches_composed_or_overlay_with_saved_views_and_membership(
     base: &EventQuery,
     composition_layers: &[CompositionLayer],
@@ -1267,15 +1274,18 @@ pub fn matches_composed_or_overlay_with_saved_views_and_membership(
     context: &QueryContext,
     membership: Option<&EventMembership>,
 ) -> bool {
+    let evaluation = SavedViewMatchContext {
+        saved_views,
+        event,
+        query_context: context,
+        membership,
+    };
     let mut visiting = BTreeSet::new();
     matches_composed_or_overlay_with_references(
         base,
         composition_layers,
         overlays,
-        saved_views,
-        event,
-        context,
-        membership,
+        &evaluation,
         &mut visiting,
     )
 }
@@ -1284,30 +1294,24 @@ fn matches_composed_or_overlay_with_references(
     base: &EventQuery,
     composition_layers: &[CompositionLayer],
     overlays: &[Overlay],
-    saved_views: &[SavedView],
-    event: &TemporalEvent,
-    context: &QueryContext,
-    membership: Option<&EventMembership>,
+    evaluation: &SavedViewMatchContext<'_>,
     visiting: &mut BTreeSet<Uuid>,
 ) -> bool {
-    let mut included = base.matches_with_membership(event, context, membership);
+    let mut included = base.matches_with_membership(
+        evaluation.event,
+        evaluation.query_context,
+        evaluation.membership,
+    );
 
     for layer in composition_layers.iter().filter(|layer| layer.enabled) {
         let layer_matches = if let Some(saved_view_id) = layer.saved_view_id {
-            referenced_saved_view_matches(
-                saved_view_id,
-                saved_views,
-                event,
-                context,
-                membership,
-                visiting,
-            )
+            referenced_saved_view_matches(saved_view_id, evaluation, visiting)
         } else {
-            Some(
-                layer
-                    .query
-                    .matches_with_membership(event, context, membership),
-            )
+            Some(layer.query.matches_with_membership(
+                evaluation.event,
+                evaluation.query_context,
+                evaluation.membership,
+            ))
         };
 
         let Some(layer_matches) = layer_matches else {
@@ -1322,36 +1326,38 @@ fn matches_composed_or_overlay_with_references(
     }
 
     included
-        || overlays
-            .iter()
-            .any(|overlay| overlay.matches_with_membership(event, context, membership))
+        || overlays.iter().any(|overlay| {
+            overlay.matches_with_membership(
+                evaluation.event,
+                evaluation.query_context,
+                evaluation.membership,
+            )
+        })
 }
 
 fn referenced_saved_view_matches(
     saved_view_id: Uuid,
-    saved_views: &[SavedView],
-    event: &TemporalEvent,
-    context: &QueryContext,
-    membership: Option<&EventMembership>,
+    evaluation: &SavedViewMatchContext<'_>,
     visiting: &mut BTreeSet<Uuid>,
 ) -> Option<bool> {
-    let view = saved_views.iter().find(|view| view.id == saved_view_id)?;
+    let view = evaluation
+        .saved_views
+        .iter()
+        .find(|view| view.id == saved_view_id)?;
 
     if !visiting.insert(saved_view_id) {
         return None;
     }
 
-    let matches = event
+    let matches = evaluation
+        .event
         .source_id
         .is_none_or(|source_id| !view.hidden_source_ids.contains(&source_id))
         && matches_composed_or_overlay_with_references(
             &view.query,
             &view.composition_layers,
             &view.overlays,
-            saved_views,
-            event,
-            context,
-            membership,
+            evaluation,
             visiting,
         );
 
@@ -1376,9 +1382,7 @@ pub fn saved_view_reference_cycle(saved_views: &[SavedView], root_id: Uuid) -> O
             return None;
         }
 
-        let Some(view) = saved_views.iter().find(|view| view.id == id) else {
-            return None;
-        };
+        let view = saved_views.iter().find(|view| view.id == id)?;
 
         stack.push(id);
         for referenced_id in view
