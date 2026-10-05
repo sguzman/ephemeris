@@ -11,7 +11,7 @@ use crate::calendar::CalendarLayout;
 use crate::domain::{
     EventStatus, SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
 };
-use crate::query::{EventMembership, SavedView};
+use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
 const SCHEMA_VERSION: i64 = 10;
 
@@ -288,6 +288,29 @@ impl TemporalStore {
     }
 
     pub fn upsert_saved_view(&self, view: &SavedView) -> anyhow::Result<()> {
+        let mut prospective = self.list_saved_views()?;
+        if let Some(index) = prospective.iter().position(|saved| saved.id == view.id) {
+            prospective[index] = view.clone();
+        } else {
+            prospective.push(view.clone());
+        }
+
+        if let Some(cycle) = saved_view_reference_cycle(&prospective, view.id) {
+            let names = cycle
+                .into_iter()
+                .map(|id| {
+                    prospective
+                        .iter()
+                        .find(|saved| saved.id == id)
+                        .map_or_else(|| id.to_string(), |saved| saved.name.clone())
+                })
+                .collect::<Vec<_>>();
+            anyhow::bail!(
+                "saved-view composition cycle rejected: {}",
+                names.join(" -> ")
+            );
+        }
+
         let query_json =
             serde_json::to_string(&view.query).context("failed to encode saved-view query")?;
         let hidden_source_ids_json = serde_json::to_string(&view.hidden_source_ids)
@@ -3269,6 +3292,54 @@ mod tests {
         assert_eq!(loaded[0].sort_rules.len(), 1);
         store.delete_saved_view(view.id).expect("delete");
         assert!(store.list_saved_views().expect("list").is_empty());
+    }
+
+    #[test]
+    fn saved_view_store_rejects_reference_cycle() {
+        use crate::calendar::CalendarView;
+        use crate::query::{
+            ColorBy, CompositionLayer, CompositionOperator, EventQuery, GroupBy, SavedView,
+            SortRule, default_table_columns,
+        };
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let a_id = Uuid::new_v4();
+        let b_id = Uuid::new_v4();
+
+        let make_view = |id, name: &str, referenced_id| SavedView {
+            id,
+            name: name.to_string(),
+            query: EventQuery::default(),
+            hidden_source_ids: std::collections::BTreeSet::new(),
+            calendar_view: CalendarView::Month,
+            calendar_layout: CalendarLayout::Grid,
+            group_by: GroupBy::Date,
+            sort_rules: vec![SortRule::default()],
+            color_by: ColorBy::Status,
+            color_rules: Vec::new(),
+            composition_layers: vec![CompositionLayer {
+                id: Uuid::new_v4(),
+                name: "Reference".to_string(),
+                enabled: true,
+                operator: CompositionOperator::Union,
+                saved_view_id: Some(referenced_id),
+                query: EventQuery::default(),
+            }],
+            overlays: Vec::new(),
+            table_columns: default_table_columns(),
+            display_timezone: "America/Mexico_City".to_string(),
+            week_start_monday: false,
+        };
+
+        store
+            .upsert_saved_view(&make_view(a_id, "A", b_id))
+            .expect("dangling forward reference is allowed");
+
+        let error = store
+            .upsert_saved_view(&make_view(b_id, "B", a_id))
+            .expect_err("cycle must be rejected");
+        assert!(error.to_string().contains("composition cycle rejected"));
+        assert_eq!(store.list_saved_views().expect("views").len(), 1);
     }
 
     #[test]
