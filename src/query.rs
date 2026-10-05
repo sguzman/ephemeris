@@ -1886,6 +1886,84 @@ mod tests {
     }
 
     #[test]
+    fn saved_view_reference_reuses_overlay_and_source_visibility() {
+        let source_id = Uuid::new_v4();
+        let mut hidden_sources = BTreeSet::new();
+        hidden_sources.insert(source_id);
+
+        let referenced = SavedView {
+            id: Uuid::new_v4(),
+            name: "Overlay-backed".to_string(),
+            query: EventQuery {
+                domain: Some("does-not-match".to_string()),
+                ..EventQuery::default()
+            },
+            hidden_source_ids: hidden_sources,
+            calendar_view: CalendarView::Month,
+            calendar_layout: CalendarLayout::Grid,
+            group_by: GroupBy::Date,
+            sort_rules: vec![SortRule::default()],
+            color_by: ColorBy::Status,
+            color_rules: Vec::new(),
+            composition_layers: Vec::new(),
+            overlays: vec![Overlay {
+                id: Uuid::new_v4(),
+                name: "California".to_string(),
+                enabled: true,
+                query: EventQuery {
+                    jurisdiction: Some("US-CA".to_string()),
+                    ..EventQuery::default()
+                },
+                color_by: ColorBy::Jurisdiction,
+                color_rules: Vec::new(),
+            }],
+            table_columns: default_table_columns(),
+            display_timezone: "America/Mexico_City".to_string(),
+            week_start_monday: false,
+        };
+
+        let layer = CompositionLayer {
+            id: Uuid::new_v4(),
+            name: "Reference".to_string(),
+            enabled: true,
+            operator: CompositionOperator::Union,
+            saved_view_id: Some(referenced.id),
+            query: EventQuery::default(),
+        };
+
+        let mut sourced_event = event();
+        sourced_event.source_id = Some(source_id);
+
+        assert!(!matches_composed_or_overlay_with_saved_views_and_membership(
+            &EventQuery {
+                domain: Some("does-not-match".to_string()),
+                ..EventQuery::default()
+            },
+            std::slice::from_ref(&layer),
+            &[],
+            std::slice::from_ref(&referenced),
+            &sourced_event,
+            &test_context(),
+            None,
+        ));
+
+        let mut visible_reference = referenced;
+        visible_reference.hidden_source_ids.clear();
+        assert!(matches_composed_or_overlay_with_saved_views_and_membership(
+            &EventQuery {
+                domain: Some("does-not-match".to_string()),
+                ..EventQuery::default()
+            },
+            &[layer],
+            &[],
+            &[visible_reference],
+            &sourced_event,
+            &test_context(),
+            None,
+        ));
+    }
+
+    #[test]
     fn missing_saved_view_reference_is_a_no_op() {
         let layer = CompositionLayer {
             id: Uuid::new_v4(),
