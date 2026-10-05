@@ -33,6 +33,14 @@ pub struct PersistedUiState {
     #[serde(default)]
     pub jurisdiction_filter: Option<String>,
     #[serde(default)]
+    pub event_type_filter: Option<String>,
+    #[serde(default)]
+    pub institution_filter: Option<String>,
+    #[serde(default)]
+    pub renderability_filter: Option<String>,
+    #[serde(default)]
+    pub tag_filter: Option<String>,
+    #[serde(default)]
     pub status_filter: Option<EventStatus>,
     #[serde(default)]
     pub query_expression: Option<QueryExpr>,
@@ -82,6 +90,10 @@ impl Default for PersistedUiState {
             search_query: String::new(),
             domain_filter: None,
             jurisdiction_filter: None,
+            event_type_filter: None,
+            institution_filter: None,
+            renderability_filter: None,
+            tag_filter: None,
             status_filter: None,
             query_expression: None,
             group_by: GroupBy::Date,
@@ -169,6 +181,10 @@ impl PersistedUiState {
             text: self.search_query.clone(),
             domain: self.domain_filter.clone(),
             jurisdiction: self.jurisdiction_filter.clone(),
+            event_type: self.event_type_filter.clone(),
+            institution: self.institution_filter.clone(),
+            renderability: self.renderability_filter.clone(),
+            tag: self.tag_filter.clone(),
             status: self.status_filter,
             expression: self.query_expression.clone(),
         }
@@ -178,6 +194,10 @@ impl PersistedUiState {
         self.search_query.clone_from(&query.text);
         self.domain_filter.clone_from(&query.domain);
         self.jurisdiction_filter.clone_from(&query.jurisdiction);
+        self.event_type_filter.clone_from(&query.event_type);
+        self.institution_filter.clone_from(&query.institution);
+        self.renderability_filter.clone_from(&query.renderability);
+        self.tag_filter.clone_from(&query.tag);
         self.status_filter = query.status;
         self.query_expression.clone_from(&query.expression);
     }
@@ -186,6 +206,10 @@ impl PersistedUiState {
         self.search_query.clear();
         self.domain_filter = None;
         self.jurisdiction_filter = None;
+        self.event_type_filter = None;
+        self.institution_filter = None;
+        self.renderability_filter = None;
+        self.tag_filter = None;
         self.status_filter = None;
         self.query_expression = None;
         self.active_saved_view_id = None;
@@ -267,6 +291,10 @@ mod tests {
             calendar_layout: CalendarLayout::Agenda,
             display_timezone: "UTC".to_string(),
             domain_filter: Some("elections".to_string()),
+            event_type_filter: Some("election".to_string()),
+            institution_filter: Some("California Secretary of State".to_string()),
+            renderability_filter: Some("ready".to_string()),
+            tag_filter: Some("general".to_string()),
             query_expression: Some(QueryExpr::Predicate(crate::query::QueryPredicate::Exists {
                 field: crate::query::PresenceField::Institution,
                 exists: true,
@@ -284,6 +312,13 @@ mod tests {
         assert_eq!(loaded.calendar_layout, CalendarLayout::Agenda);
         assert_eq!(loaded.display_timezone, "UTC");
         assert_eq!(loaded.domain_filter.as_deref(), Some("elections"));
+        assert_eq!(loaded.event_type_filter.as_deref(), Some("election"));
+        assert_eq!(
+            loaded.institution_filter.as_deref(),
+            Some("California Secretary of State")
+        );
+        assert_eq!(loaded.renderability_filter.as_deref(), Some("ready"));
+        assert_eq!(loaded.tag_filter.as_deref(), Some("general"));
         assert_eq!(loaded.group_by, GroupBy::Jurisdiction);
         assert_eq!(loaded.color_by, ColorBy::EventType);
         assert_eq!(
