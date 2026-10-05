@@ -3312,11 +3312,7 @@ fn render_summary(
     None
 }
 
-fn summary_rows(
-    events: &[TemporalEvent],
-    timezone: Tz,
-    group_by: GroupBy,
-) -> Vec<SummaryRow> {
+fn summary_rows(events: &[TemporalEvent], timezone: Tz, group_by: GroupBy) -> Vec<SummaryRow> {
     if group_by == GroupBy::None {
         let dates = events
             .iter()
@@ -4969,10 +4965,7 @@ mod tests {
             .expect("politics row");
         assert_eq!(politics.count, 2);
         assert_eq!(politics.first_date, Some(day));
-        assert_eq!(
-            politics.last_date,
-            Some(day + chrono::Duration::days(2))
-        );
+        assert_eq!(politics.last_date, Some(day + chrono::Duration::days(2)));
     }
 
     #[test]
