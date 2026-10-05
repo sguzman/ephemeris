@@ -2296,7 +2296,7 @@ impl EphemerisApp {
                 );
                 if !rule.by_weekday.is_empty() {
                     let mut weekdays = rule.by_weekday.clone();
-                    weekdays.sort_by_key(|weekday| weekday.offset_from_monday());
+                    weekdays.sort_by_key(|weekday| weekday.offset_from(rule.week_start));
                     let weekdays = weekdays
                         .into_iter()
                         .map(|weekday| weekday.short_label())
@@ -2304,6 +2304,16 @@ impl EphemerisApp {
                         .join(", ");
                     inspector_row(ui, "Weekdays", &weekdays);
                     inspector_row(ui, "Week start", rule.week_start.short_label());
+                }
+                if !rule.by_month_day.is_empty() {
+                    let mut month_days = rule.by_month_day.clone();
+                    month_days.sort_unstable();
+                    let month_days = month_days
+                        .into_iter()
+                        .map(|day| day.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    inspector_row(ui, "Month days", &month_days);
                 }
                 inspector_row(ui, "RDATE additions", &rule.rdates.len().to_string());
                 inspector_row(ui, "EXDATE exclusions", &rule.exdates.len().to_string());
