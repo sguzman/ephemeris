@@ -23,9 +23,9 @@ cargo test
 
 At the hardened Phase 8 recurrence-selector checkpoint, all **141** library tests pass. Verified implementation code checkpoint: `732354bf5b0457c99093b7c1e118fce895682d22`, with format, check, strict Clippy, and tests all green.
 
-`main` is verified through the whole-year ordinal BYDAY slice at `76b509e639e23e8b232e22286f2d074123c1d250`: format, check, strict Clippy, and all **190** library tests pass in GitHub Actions.
+`main` is verified through YEARLY BYMONTHDAY without explicit BYMONTH at `e4e97ec6ddc14d5fd5c21810040d48ed8f9c137a`: format, check, strict Clippy, and all **195** library tests pass in GitHub Actions.
 
-A rebased child staging slice adds YEARLY BYMONTHDAY without explicit BYMONTH and targets **195** library tests. It remains pending fresh CI verification before promotion.
+A child staging slice at code/persistence checkpoint `eb0b53d056c62dfa3cdfb132b09b9b523359ef1b` adds DAILY BYDAY filtering, including a reachability guard for interval/weekday combinations that can never generate an RRULE slot, and targets **200** library tests. It remains pending fresh CI verification before promotion.
 
 ## Implemented architecture
 
@@ -85,6 +85,7 @@ Implemented:
 - positive interval;
 - optional occurrence count;
 - optional inclusive civil-date `until` bound;
+- daily BYDAY filtering over active interval dates, with skipped weekdays not consuming COUNT and unreachable interval/weekday cycles terminating without hanging;
 - weekly multi-day BYDAY selection with duplicate/non-weekly validation;
 - explicit WKST recurrence-week anchoring for weekly BYDAY, independent from the user's display-week preference;
 - chronological weekday generation within each WKST-anchored active recurrence week, with first-week candidates before DTSTART omitted;
@@ -126,11 +127,11 @@ Implemented:
 - preservation of all-day/range duration;
 - exact/source-timezone recurrence by source wall clock across DST;
 - invalid calendar dates in monthly/yearly series are skipped rather than coerced;
-- recurrence definitions, weekly/monthly/yearly-plain-BYDAY/WKST/BYWEEKNO/BYYEARDAY/BYMONTHDAY/monthly-ordinal-BYDAY/BYMONTH/BYSETPOS selector constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
+- recurrence definitions, daily/weekly/monthly/yearly-plain-BYDAY/WKST/BYWEEKNO/BYYEARDAY/BYMONTHDAY/monthly-ordinal-BYDAY/BYMONTH/BYSETPOS selector constraints, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond weekly/monthly/yearly plain BYDAY, month/year-scoped ordinal BYDAY, monthly/yearly BYMONTHDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond daily/weekly/monthly/yearly plain BYDAY, month/year-scoped ordinal BYDAY, monthly/yearly BYMONTHDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
