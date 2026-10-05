@@ -25,7 +25,7 @@ At the hardened Phase 8 recurrence-selector checkpoint, all **141** library test
 
 `main` is verified through WEEKLY BYMONTH at `c0918d9fb23fae27c4c3dc769954158f37b6ae1e`: format, check, strict Clippy, and all **218** library tests pass in GitHub Actions. The preceding MONTHLY BYMONTH checkpoint is independently verified at `63f29dc8be3ab47ac05381afb416fc750a62ad80` with **211** tests.
 
-Weekly reachability spans the finite 400-year / 20,871-week Gregorian cycle and accounts for BYMONTH, BYDAY, and BYSETPOS candidate cardinality; DAILY reachability also rejects permanently impossible BYSETPOS cardinalities.
+A child staging slice at code checkpoint `93d55264192b543893c962a37bea08783389131c` adds finite YEARLY selector reachability and targets **223** library tests. It scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives. The 223-test slice is pending fresh CI verification before promotion.
 
 ## Implemented architecture
 
@@ -89,6 +89,7 @@ Implemented:
 - daily BYMONTH limiting over active interval dates, intersecting with daily BYDAY when both are present and using a 400-year Gregorian-cycle reachability guard for permanently empty selector/interval combinations;
 - monthly BYMONTH limiting over active recurrence months, with a 4,800-month Gregorian-cycle reachability guard that also detects permanently empty monthly BYDAY/BYMONTHDAY/ordinal-BYDAY/BYSETPOS combinations;
 - weekly BYMONTH limiting over generated weekly dates, applied after BYDAY expansion and before BYSETPOS, with a 20,871-week Gregorian-cycle reachability guard;
+- yearly selector reachability over the finite 400-year Gregorian cycle, covering permanently empty month/day/year-day/week-number/BYDAY/BYSETPOS combinations while preserving future-cycle candidates hidden by first-year DTSTART filtering;
 - weekly multi-day BYDAY selection with duplicate weekday validation;
 - explicit WKST recurrence-week anchoring for weekly BYDAY, independent from the user's display-week preference;
 - chronological weekday generation within each WKST-anchored active recurrence week, with first-week candidates before DTSTART omitted;
@@ -115,7 +116,7 @@ Implemented:
 - signed yearly BYYEARDAY selection for `-366..=-1` and `1..=366`, with zero/out-of-range/duplicate/non-yearly validation;
 - positive BYYEARDAY values count from January 1 and negative values count backward from year-end (`-1` = December 31); day 366 is skipped in non-leap years rather than coerced;
 - when BYYEARDAY is combined with BYMONTH, plain/ordinal BYDAY, and existing month-scoped selectors, those selectors filter the resolved year-day set before COUNT/EXDATE/override processing; plain and ordinal BYDAY forms remain one unioned BYDAY family;
-- generic signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied to each recurrence interval's fully resolved BY-selector candidate set before COUNT is consumed; DAILY/WEEKLY/MONTHLY reachability checks account for candidate-set cardinality so permanently impossible positions terminate;
+- generic signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied to each recurrence interval's fully resolved BY-selector candidate set before COUNT is consumed; DAILY/WEEKLY/MONTHLY/YEARLY reachability checks account for candidate-set cardinality so permanently impossible positions terminate;
 - BYSETPOS requires at least one supported BY selector, rejects zero/out-of-range/duplicate positions, ignores positions outside the current candidate-set size, and deduplicates alias positions that resolve to the same slot;
 - BYSETPOS is shared by visible expansion and override-target validation, preserving original-slot identity and exception semantics;
 - first-year candidates before DTSTART are omitted, impossible civil dates/missing fifth weekdays are skipped, and BYMONTH alone continues to preserve DTSTART's civil day where valid;
