@@ -12,7 +12,8 @@ use crate::calendar::{
     shift_focus, week_days, window_for_view, year_months,
 };
 use crate::domain::{
-    EventStatus, RecurrenceOccurrenceOrigin, TemporalEvent, TemporalSource, TimeSpec,
+    EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin, TemporalEvent, TemporalSource,
+    TimeSpec,
 };
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
@@ -2303,7 +2304,11 @@ impl EphemerisApp {
                         .collect::<Vec<_>>()
                         .join(", ");
                     inspector_row(ui, "Weekdays", &weekdays);
-                    inspector_row(ui, "Week start", rule.week_start.short_label());
+                    if rule.frequency == RecurrenceFrequency::Weekly
+                        || !rule.by_week_no.is_empty()
+                    {
+                        inspector_row(ui, "Week start", rule.week_start.short_label());
+                    }
                 }
                 if !rule.by_month.is_empty() {
                     let mut months = rule.by_month.clone();
