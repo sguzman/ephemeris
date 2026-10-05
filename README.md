@@ -48,8 +48,9 @@ Implemented:
 - ordered query-driven color rules with first-match precedence and semantic fallback coloring
 - embedded overlays with independent query/styling rules
 - ordered union / intersection / subtraction composition layers over the base query with a full GUI editor
+- cycle-safe composition operands that can reuse another saved view's logical event set by stable UUID
 - durable named saved views stored in SQLite
-- saved views that retain query, source visibility, date range, layout, grouping, sort rules, color rules, composition layers, overlays, ordered Table columns, timezone, and week-start behavior
+- saved views that retain query, source visibility, date range, layout, grouping, sort rules, color rules, embedded/referenced composition layers, overlays, ordered Table columns, timezone, and week-start behavior
 - event inspector with Taria identity/provenance details
 - separate unplaced/conflicted event surface
 - native persisted transient UI state
