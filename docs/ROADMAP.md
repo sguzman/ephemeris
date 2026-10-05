@@ -370,6 +370,7 @@ Implemented recurrence foundation:
 - daily / weekly / monthly / yearly frequency
 - interval, count, and inclusive-until bounds
 - weekly multi-day BYDAY selection with explicit WKST recurrence-week anchoring
+- monthly plain BYDAY expansion for every matching weekday in the active month, including composition with ordinal BYDAY, BYMONTHDAY filtering, and BYSETPOS
 - signed monthly BYMONTHDAY selection for `-31..=-1` and `1..=31`, including month-end-relative selectors, resolved-date ordering/deduplication, and impossible-date skipping
 - monthly ordinal BYDAY selection for `±1..±5` weekdays, including last-weekday forms and missing-fifth skipping
 - BYMONTHDAY + monthly ordinal BYDAY intersection over resolved civil dates before occurrence counting/exceptions
@@ -377,6 +378,9 @@ Implemented recurrence foundation:
 - yearly BYMONTH + signed BYMONTHDAY composition over selected months
 - yearly BYMONTH + ordinal BYDAY composition with ordinal weekdays resolved within each selected month
 - yearly BYMONTH + BYMONTHDAY + ordinal BYDAY intersection over resolved civil dates
+- signed yearly BYWEEKNO selection for `-53..=-1` and `1..=53`, including WKST-aware week-year numbering, yearly plain-BYDAY expansion, missing-week-53 skipping, and filtering by existing yearly selectors
+- signed yearly BYYEARDAY selection for `-366..=-1` and `1..=366`, including leap-year invalid-date skipping and filtering by existing yearly month-scoped selectors
+- signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied generically after the supported BY-selector candidate set is resolved within each recurrence interval
 - active-window occurrence expansion rather than eager infinite materialization
 - deterministic occurrence identity and canonical-event lineage
 - date-only / all-day / floating / exact-time recurrence
@@ -392,7 +396,7 @@ Implemented recurrence foundation:
 
 Next Phase 8 work:
 
-- broader RRULE dimensions and selector families beyond the implemented month-oriented combinations plus recurrence-exception interoperability
+- broader RRULE dimensions and selector families beyond monthly plain/ordinal BYDAY and BYWEEKNO/BYYEARDAY/BYSETPOS plus the implemented month-oriented combinations plus recurrence-exception interoperability
 - richer recurrence/exception authoring and editing
 - relations
 - collections/sequences
