@@ -3373,6 +3373,110 @@ mod tests {
     }
 
     #[test]
+    fn release_event_snapshot_diff_tracks_added_moved_and_cancelled_events() {
+        let store = TemporalStore::open_in_memory().expect("store");
+
+        for release_id in ["release:snapshot-old", "release:snapshot-new"] {
+            store
+                .upsert_taria_release(&TariaReleaseRecord {
+                    release_id: release_id.to_string(),
+                    channel: "bootstrap".to_string(),
+                    status: "bootstrap-partial".to_string(),
+                    production_complete: false,
+                    manifest_path: format!("{release_id}.json"),
+                    manifest_sha256: format!("{release_id}:hash"),
+                    generated_at: None,
+                    coverage_json: "{}".to_string(),
+                    manifest_json: "{}".to_string(),
+                })
+                .expect("release");
+        }
+
+        let old_day = NaiveDate::from_ymd_opt(2026, 11, 1).expect("old day");
+        let new_day = NaiveDate::from_ymd_opt(2026, 11, 2).expect("new day");
+
+        let mut changing = TemporalEvent::new(
+            "Changing event",
+            TimeSpec::DateOnly {
+                start: old_day,
+                end_exclusive: None,
+            },
+        );
+        changing.status = EventStatus::Confirmed;
+        store.upsert_event(&changing).expect("changing event");
+
+        let removed = TemporalEvent::new(
+            "Removed event",
+            TimeSpec::DateOnly {
+                start: old_day,
+                end_exclusive: None,
+            },
+        );
+        store.upsert_event(&removed).expect("removed event");
+
+        store
+            .capture_taria_release_event_snapshots(
+                "release:snapshot-old",
+                &BTreeSet::from([changing.id, removed.id]),
+            )
+            .expect("old snapshots");
+
+        changing.time = TimeSpec::DateOnly {
+            start: new_day,
+            end_exclusive: None,
+        };
+        changing.status = EventStatus::Cancelled;
+        changing.updated_at = Utc::now();
+        store.upsert_event(&changing).expect("changed event");
+
+        let added = TemporalEvent::new(
+            "Added event",
+            TimeSpec::DateOnly {
+                start: new_day,
+                end_exclusive: None,
+            },
+        );
+        store.upsert_event(&added).expect("added event");
+
+        store
+            .capture_taria_release_event_snapshots(
+                "release:snapshot-new",
+                &BTreeSet::from([changing.id, added.id]),
+            )
+            .expect("new snapshots");
+
+        let immutability_error = store
+            .capture_taria_release_event_snapshots(
+                "release:snapshot-old",
+                &BTreeSet::from([changing.id]),
+            )
+            .expect_err("old release snapshot must be immutable");
+        assert!(immutability_error.to_string().contains("snapshot changed"));
+
+        assert_eq!(
+            store
+                .taria_release_event_snapshot_count("release:snapshot-old")
+                .expect("old snapshot count"),
+            2
+        );
+        assert_eq!(
+            store
+                .taria_release_event_snapshot_count("release:snapshot-new")
+                .expect("new snapshot count"),
+            2
+        );
+
+        let diff = store
+            .taria_release_diff("release:snapshot-old", "release:snapshot-new")
+            .expect("snapshot diff");
+        assert_eq!(diff.added_snapshot_event_ids, vec![added.id]);
+        assert_eq!(diff.removed_snapshot_event_ids, vec![removed.id]);
+        assert_eq!(diff.moved_event_ids, vec![changing.id]);
+        assert_eq!(diff.status_changed_event_ids, vec![changing.id]);
+        assert_eq!(diff.newly_cancelled_event_ids, vec![changing.id]);
+    }
+
+    #[test]
     fn schema_bootstraps_at_current_version() {
         let store = TemporalStore::open_in_memory().expect("store");
         assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
