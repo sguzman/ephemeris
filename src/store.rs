@@ -345,11 +345,7 @@ impl TemporalStore {
         Ok(counts)
     }
 
-    pub fn begin_refresh_attempt(
-        &self,
-        refresh_kind: &str,
-        target: &str,
-    ) -> anyhow::Result<Uuid> {
+    pub fn begin_refresh_attempt(&self, refresh_kind: &str, target: &str) -> anyhow::Result<Uuid> {
         let id = Uuid::new_v4();
         self.conn
             .execute(
@@ -3890,13 +3886,7 @@ mod tests {
             .begin_refresh_attempt("taria_workspace", "production")
             .expect("failure attempt");
         store
-            .finish_refresh_attempt(
-                failure,
-                false,
-                None,
-                None,
-                Some("integrity mismatch"),
-            )
+            .finish_refresh_attempt(failure, false, None, None, Some("integrity mismatch"))
             .expect("finish failure");
 
         let incomplete = store
