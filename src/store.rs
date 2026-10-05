@@ -4012,10 +4012,7 @@ mod tests {
             by_weekday: Vec::new(),
             by_month: Vec::new(),
             by_month_day: Vec::new(),
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
-                1,
-                RecurrenceWeekday::Monday,
-            )],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4097,10 +4094,7 @@ mod tests {
             by_weekday: Vec::new(),
             by_month: Vec::new(),
             by_month_day: vec![15],
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
-                1,
-                RecurrenceWeekday::Monday,
-            )],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),

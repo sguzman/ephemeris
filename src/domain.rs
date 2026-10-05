@@ -783,11 +783,13 @@ impl fmt::Display for RecurrenceError {
                 )
             }
             Self::DuplicateOrdinalByWeekday(ordinal, weekday) => {
-                write!(formatter, "duplicate monthly BYDAY selector {ordinal} {weekday}")
+                write!(
+                    formatter,
+                    "duplicate monthly BYDAY selector {ordinal} {weekday}"
+                )
             }
-            Self::ConflictingMonthlySelectors => formatter.write_str(
-                "monthly BYMONTHDAY and ordinal BYDAY selectors cannot yet be combined",
-            ),
+            Self::ConflictingMonthlySelectors => formatter
+                .write_str("monthly BYMONTHDAY and ordinal BYDAY selectors cannot yet be combined"),
             Self::UnsupportedTimeKind(kind) => {
                 write!(
                     formatter,
@@ -2724,10 +2726,7 @@ mod tests {
             by_weekday: Vec::new(),
             by_month: Vec::new(),
             by_month_day: Vec::new(),
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
-                5,
-                RecurrenceWeekday::Monday,
-            )],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(5, RecurrenceWeekday::Monday)],
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -2756,10 +2755,8 @@ mod tests {
     #[test]
     fn monthly_ordinal_byday_validation_is_bounded_and_non_combinable() {
         let mut wrong_frequency = RecurrenceRule::new(RecurrenceFrequency::Weekly);
-        wrong_frequency.by_month_weekday = vec![RecurrenceOrdinalWeekday::new(
-            1,
-            RecurrenceWeekday::Monday,
-        )];
+        wrong_frequency.by_month_weekday =
+            vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)];
         assert!(matches!(
             wrong_frequency.validate(),
             Err(RecurrenceError::OrdinalByWeekdayRequiresMonthly)
@@ -2790,10 +2787,8 @@ mod tests {
 
         let mut combined = RecurrenceRule::new(RecurrenceFrequency::Monthly);
         combined.by_month_day = vec![15];
-        combined.by_month_weekday = vec![RecurrenceOrdinalWeekday::new(
-            1,
-            RecurrenceWeekday::Monday,
-        )];
+        combined.by_month_weekday =
+            vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)];
         assert!(matches!(
             combined.validate(),
             Err(RecurrenceError::ConflictingMonthlySelectors)
@@ -2822,10 +2817,7 @@ mod tests {
             by_weekday: Vec::new(),
             by_month: Vec::new(),
             by_month_day: Vec::new(),
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
-                1,
-                RecurrenceWeekday::Sunday,
-            )],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Sunday)],
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -2887,10 +2879,7 @@ mod tests {
             by_weekday: Vec::new(),
             by_month: Vec::new(),
             by_month_day: Vec::new(),
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
-                -1,
-                RecurrenceWeekday::Friday,
-            )],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)],
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
             overrides: vec![RecurrenceOverride {
