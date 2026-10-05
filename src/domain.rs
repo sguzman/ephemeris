@@ -879,8 +879,7 @@ impl TemporalEvent {
                 break;
             }
 
-            let candidates =
-                recurrence_candidates_for_period(&self.time, rule, recurrence_period)?;
+            let candidates = recurrence_candidates_for_period(&self.time, rule, recurrence_period)?;
             recurrence_period = recurrence_period
                 .checked_add(1)
                 .ok_or(RecurrenceError::ArithmeticOverflow)?;
