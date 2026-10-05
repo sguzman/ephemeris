@@ -642,9 +642,6 @@ impl RecurrenceRule {
         if !self.by_month_weekday.is_empty() && self.frequency != RecurrenceFrequency::Monthly {
             return Err(RecurrenceError::OrdinalByWeekdayRequiresMonthly);
         }
-        if !self.by_month_day.is_empty() && !self.by_month_weekday.is_empty() {
-            return Err(RecurrenceError::ConflictingMonthlySelectors);
-        }
         let mut ordinal_weekdays = HashSet::new();
         for selector in &self.by_month_weekday {
             if selector.ordinal == 0 || !(-5..=5).contains(&selector.ordinal) {
@@ -723,7 +720,6 @@ pub enum RecurrenceError {
     OrdinalByWeekdayRequiresMonthly,
     InvalidOrdinalByWeekday(i8),
     DuplicateOrdinalByWeekday(i8, &'static str),
-    ConflictingMonthlySelectors,
     UnsupportedTimeKind(&'static str),
     InvalidSourceTimezone(String),
     MismatchedExceptionTimeKind {
@@ -788,8 +784,6 @@ impl fmt::Display for RecurrenceError {
                     "duplicate monthly BYDAY selector {ordinal} {weekday}"
                 )
             }
-            Self::ConflictingMonthlySelectors => formatter
-                .write_str("monthly BYMONTHDAY and ordinal BYDAY selectors cannot yet be combined"),
             Self::UnsupportedTimeKind(kind) => {
                 write!(
                     formatter,
@@ -1146,6 +1140,12 @@ fn recurrence_candidates_for_period(
     if rule.frequency == RecurrenceFrequency::Weekly && !rule.by_weekday.is_empty() {
         return weekly_recurrence_candidates(base, rule, period);
     }
+    if rule.frequency == RecurrenceFrequency::Monthly
+        && !rule.by_month_day.is_empty()
+        && !rule.by_month_weekday.is_empty()
+    {
+        return monthly_combined_recurrence_candidates(base, rule, period);
+    }
     if rule.frequency == RecurrenceFrequency::Monthly && !rule.by_month_day.is_empty() {
         return monthly_recurrence_candidates(base, rule, period);
     }
@@ -1225,6 +1225,48 @@ fn monthly_recurrence_candidates(
         }
         candidate_dates.push(candidate_date);
     }
+    candidate_dates.sort_unstable();
+    candidate_dates.dedup();
+
+    let mut candidates = Vec::with_capacity(candidate_dates.len());
+    for candidate_date in candidate_dates {
+        if let Some(candidate) = shift_time_to_date(base, base_date, candidate_date)? {
+            candidates.push(candidate);
+        }
+    }
+    Ok(candidates)
+}
+
+fn monthly_combined_recurrence_candidates(
+    base: &TimeSpec,
+    rule: &RecurrenceRule,
+    period: u32,
+) -> Result<Vec<TimeSpec>, RecurrenceError> {
+    let base_date = recurrence_rule_date(base)?;
+    let base_month_start = NaiveDate::from_ymd_opt(base_date.year(), base_date.month(), 1)
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let month_offset = rule
+        .interval
+        .checked_mul(period)
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let Some(active_month_start) = add_months_preserving_day(base_month_start, month_offset)?
+    else {
+        return Ok(Vec::new());
+    };
+
+    let month_day_dates = rule
+        .by_month_day
+        .iter()
+        .filter_map(|selector| resolve_month_day(active_month_start, *selector))
+        .collect::<HashSet<_>>();
+
+    let mut candidate_dates = rule
+        .by_month_weekday
+        .iter()
+        .filter_map(|selector| resolve_ordinal_weekday(active_month_start, *selector))
+        .filter(|date| month_day_dates.contains(date))
+        .filter(|date| period != 0 || *date >= base_date)
+        .collect::<Vec<_>>();
     candidate_dates.sort_unstable();
     candidate_dates.dedup();
 
@@ -2753,7 +2795,7 @@ mod tests {
     }
 
     #[test]
-    fn monthly_ordinal_byday_validation_is_bounded_and_non_combinable() {
+    fn monthly_ordinal_byday_validation_is_bounded() {
         let mut wrong_frequency = RecurrenceRule::new(RecurrenceFrequency::Weekly);
         wrong_frequency.by_month_weekday =
             vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)];
@@ -2785,14 +2827,107 @@ mod tests {
             Err(RecurrenceError::DuplicateOrdinalByWeekday(-1, "friday"))
         ));
 
-        let mut combined = RecurrenceRule::new(RecurrenceFrequency::Monthly);
-        combined.by_month_day = vec![15];
-        combined.by_month_weekday =
-            vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)];
-        assert!(matches!(
-            combined.validate(),
-            Err(RecurrenceError::ConflictingMonthlySelectors)
-        ));
+    }
+
+    #[test]
+    fn monthly_selector_combination_intersects_resolved_civil_dates() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Monthly selector intersection",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            count: Some(3),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_month_day: vec![5, 30, 31],
+            by_month_weekday: vec![
+                RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
+                RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
+            ],
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2027, 1, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        assert_eq!(
+            occurrences
+                .iter()
+                .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+                .collect::<Vec<_>>(),
+            vec![
+                NaiveDate::from_ymd_opt(2026, 1, 5).expect("jan first monday"),
+                NaiveDate::from_ymd_opt(2026, 1, 30).expect("jan last friday"),
+                NaiveDate::from_ymd_opt(2026, 7, 31).expect("jul last friday"),
+            ]
+        );
+    }
+
+    #[test]
+    fn monthly_selector_intersection_preserves_override_target_validation() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1).expect("start");
+        let target = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 1, 5).expect("intersection target"),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Intersection override",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            count: Some(1),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_month_day: vec![5, 15],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
+                1,
+                RecurrenceWeekday::Monday,
+            )],
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: vec![RecurrenceOverride {
+                original: target.clone(),
+                replacement: Some(TimeSpec::DateOnly {
+                    start: NaiveDate::from_ymd_opt(2026, 1, 6).expect("moved"),
+                    end_exclusive: None,
+                }),
+                cancelled: false,
+            }],
+        });
+
+        event.validate_recurrence().expect("valid intersection target");
+        let occurrences = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2026, 2, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+        assert_eq!(occurrences.len(), 1);
+        assert_eq!(occurrences[0].original_time, target);
+        assert!(occurrences[0].override_applied);
     }
 
     #[test]
