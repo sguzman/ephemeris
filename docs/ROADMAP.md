@@ -375,6 +375,7 @@ Implemented recurrence foundation:
 - monthly ordinal BYDAY selection for `±1..±5` weekdays, including last-weekday forms and missing-fifth skipping
 - BYMONTHDAY + monthly ordinal BYDAY intersection over resolved civil dates before occurrence counting/exceptions
 - positive yearly BYMONTH selection for months 1-12 while preserving DTSTART's civil day where valid
+- signed yearly BYMONTHDAY expansion across every month when BYMONTH is absent, or across only selected months when BYMONTH is present
 - yearly BYMONTH + signed BYMONTHDAY composition over selected months
 - yearly plain BYDAY expansion across the active recurrence year, with BYMONTH limiting expansion to selected months and BYYEARDAY acting as an intersecting filter
 - context-aware yearly ordinal BYDAY: `±1..±53` resolves against the whole year when BYMONTH is absent; BYMONTH retains month-scoped `±1..±5` semantics; numeric BYDAY remains invalid with BYWEEKNO
@@ -398,7 +399,7 @@ Implemented recurrence foundation:
 
 Next Phase 8 work:
 
-- broader RRULE dimensions and selector families beyond weekly/monthly/yearly plain BYDAY, month/year-scoped ordinal BYDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations plus recurrence-exception interoperability
+- broader RRULE dimensions and selector families beyond weekly/monthly/yearly plain BYDAY, month/year-scoped ordinal BYDAY, yearly/monthly BYMONTHDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations plus recurrence-exception interoperability
 - richer recurrence/exception authoring and editing
 - relations
 - collections/sequences
