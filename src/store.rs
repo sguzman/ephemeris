@@ -4111,7 +4111,7 @@ mod tests {
             },
             hidden_source_ids: std::collections::BTreeSet::new(),
             calendar_view: CalendarView::Year,
-            calendar_layout: CalendarLayout::Agenda,
+            calendar_layout: CalendarLayout::Timeline,
             group_by: GroupBy::Jurisdiction,
             sort_rules: vec![SortRule {
                 field: SortField::Importance,
@@ -4160,7 +4160,7 @@ mod tests {
         let loaded = store.list_saved_views().expect("list");
 
         assert_eq!(loaded, vec![view.clone()]);
-        assert_eq!(loaded[0].calendar_layout, CalendarLayout::Agenda);
+        assert_eq!(loaded[0].calendar_layout, CalendarLayout::Timeline);
         assert_eq!(loaded[0].group_by, GroupBy::Jurisdiction);
         assert_eq!(loaded[0].color_by, ColorBy::EventType);
         assert_eq!(loaded[0].color_rules.len(), 1);
