@@ -7142,9 +7142,7 @@ mod tests {
 
         rule.interval = 7;
         rule.by_weekday = vec![RecurrenceWeekday::Tuesday];
-        assert!(
-            !daily_byday_has_reachable_weekday(&event.time, &rule).expect("reachability")
-        );
+        assert!(!daily_byday_has_reachable_weekday(&event.time, &rule).expect("reachability"));
     }
 
     #[test]
@@ -7288,5 +7286,4 @@ mod tests {
             occurrence_identity(event.id, &original).expect("stable identity")
         );
     }
-
 }
