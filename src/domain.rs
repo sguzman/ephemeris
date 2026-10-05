@@ -1046,8 +1046,7 @@ fn weekly_recurrence_candidates(
 ) -> Result<Vec<TimeSpec>, RecurrenceError> {
     let base_date = recurrence_rule_date(base)?;
     let base_weekday = u64::from(base_date.weekday().num_days_from_monday());
-    let days_since_week_start =
-        (base_weekday + 7 - rule.week_start.offset_from_monday()) % 7;
+    let days_since_week_start = (base_weekday + 7 - rule.week_start.offset_from_monday()) % 7;
     let week_start = base_date
         .checked_sub_days(Days::new(days_since_week_start))
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
