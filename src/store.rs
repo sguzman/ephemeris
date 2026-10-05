@@ -4504,7 +4504,7 @@ mod tests {
     }
 
     #[test]
-    fn store_rejects_yearly_by_month_day_without_by_month() {
+    fn store_rejects_out_of_range_yearly_bymonthday() {
         use crate::domain::{RecurrenceFrequency, RecurrenceRule};
 
         let store = TemporalStore::open_in_memory().expect("store");
@@ -4526,7 +4526,7 @@ mod tests {
             by_month: Vec::new(),
             by_week_no: Vec::new(),
             by_year_day: Vec::new(),
-            by_month_day: vec![1],
+            by_month_day: vec![32],
             by_month_weekday: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
@@ -4536,7 +4536,7 @@ mod tests {
 
         let error = store
             .upsert_event(&event)
-            .expect_err("yearly BYMONTHDAY without BYMONTH must not persist");
+            .expect_err("yearly BYMONTHDAY beyond 31 must not persist");
         assert!(
             error
                 .to_string()
