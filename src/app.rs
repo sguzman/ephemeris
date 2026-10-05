@@ -1807,6 +1807,15 @@ impl EphemerisApp {
                 }
                 inspector_row(ui, "Created", &source.created_at.to_rfc3339());
                 inspector_row(ui, "Last refreshed", &source.updated_at.to_rfc3339());
+                if let Some(upstream_generated) = source
+                    .properties
+                    .get("taria")
+                    .and_then(serde_json::Value::as_object)
+                    .and_then(|taria| taria.get("generated_at"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    inspector_row(ui, "Upstream generated", upstream_generated);
+                }
 
                 ui.collapsing("Properties", |ui| {
                     let pretty = serde_json::to_string_pretty(&source.properties)
