@@ -5465,4 +5465,50 @@ mod tests {
 
         assert_eq!(loaded.recurrence, event.recurrence);
     }
+
+
+    #[test]
+    fn whole_year_ordinal_byday_roundtrips_through_event_storage() {
+        use crate::domain::{
+            RecurrenceFrequency, RecurrenceOrdinalWeekday, RecurrenceRule, RecurrenceWeekday,
+        };
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Fifty-third Friday",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: Some(2),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
+                53,
+                RecurrenceWeekday::Friday,
+            )],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        store.upsert_event(&event).expect("persist recurrence");
+        let loaded = store
+            .event_by_id(event.id)
+            .expect("query")
+            .expect("event");
+
+        assert_eq!(loaded.recurrence, event.recurrence);
+    }
 }
