@@ -339,25 +339,26 @@ Remaining Phase 6 work:
 
 ## Phase 7 - Rich temporal visualization
 
-Status: **active through Agenda, chronological Stream, and dense Table**
+Status: **complete at the current foundation scope**
 
 Implemented:
 
 - Agenda layout
+- Compact Agenda high-density one-line layout
 - chronological Stream layout with fixed typed temporal ordering and date/precision markers
-- Stream persistence in UI state and SavedViews through the existing layout serialization boundary
-- Stream preserves but temporarily disables arbitrary grouping/sort controls because chronology defines the layout
+- proportional Timeline with exact-point, range, all-day/date-only, month-precision, and year-precision placement
+- scale-aware Timeline ticks for Year/Quarter/Month/Week/Day
+- Density/heatmap layout using genuine per-day occurrence counts and explicit coarse-precision accounting
+- Density day drill-down into Agenda + Day
+- pivot-style Summary layout driven by the existing GroupBy dimension
+- Summary counts, shares, earliest/latest positioned dates, and temporal-precision breakdown
+- persistence of the new layouts through the existing UI-state/SavedView layout boundary
 - dense Table layout
 - true group partitioning in configurable dense views
-- direct selection into the event inspector
+- direct selection into the event inspector where the surface represents individual events
 - ordered configurable Table columns with UI-state and SavedView persistence
 
-Goals:
-
-- compact agenda
-- timeline
-- heatmap/density
-- pivot/summary foundation
+The roadmap can now move to Phase 8 temporal semantics. Future visual variants (for example more elaborate continuous/Gantt-style timelines) are enhancements rather than blockers for the Phase 7 foundation.
 
 ## Phase 8 - Advanced temporal semantics
 
