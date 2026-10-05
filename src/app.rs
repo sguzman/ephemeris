@@ -385,11 +385,8 @@ impl EphemerisApp {
             .taria_update_receiver
             .as_ref()
             .map(|(attempt_id, _)| *attempt_id);
-        let refresh_health = taria_refresh_health(
-            &self.source_refresh_attempts,
-            active_attempt_id,
-            Utc::now(),
-        );
+        let refresh_health =
+            taria_refresh_health(&self.source_refresh_attempts, active_attempt_id, Utc::now());
         let health_color = match refresh_health {
             TariaRefreshHealth::Healthy => Color32::LIGHT_GREEN,
             TariaRefreshHealth::Running => Color32::LIGHT_BLUE,
@@ -4148,23 +4145,27 @@ mod tests {
         );
         assert_eq!(
             taria_refresh_health(
-                &[refresh_attempt(Uuid::new_v4(), Some(false), Some("2026-10-09T00:00:00Z"))],
+                &[refresh_attempt(
+                    Uuid::new_v4(),
+                    Some(false),
+                    Some("2026-10-09T00:00:00Z")
+                )],
                 None,
                 now,
             ),
             TariaRefreshHealth::Failed
         );
         assert_eq!(
-            taria_refresh_health(
-                &[refresh_attempt(Uuid::new_v4(), None, None)],
-                None,
-                now,
-            ),
+            taria_refresh_health(&[refresh_attempt(Uuid::new_v4(), None, None)], None, now,),
             TariaRefreshHealth::Interrupted
         );
         assert_eq!(
             taria_refresh_health(
-                &[refresh_attempt(Uuid::new_v4(), Some(true), Some("2026-10-09T00:00:00Z"))],
+                &[refresh_attempt(
+                    Uuid::new_v4(),
+                    Some(true),
+                    Some("2026-10-09T00:00:00Z")
+                )],
                 None,
                 now,
             ),
@@ -4172,7 +4173,11 @@ mod tests {
         );
         assert_eq!(
             taria_refresh_health(
-                &[refresh_attempt(Uuid::new_v4(), Some(true), Some("2026-10-01T00:00:00Z"))],
+                &[refresh_attempt(
+                    Uuid::new_v4(),
+                    Some(true),
+                    Some("2026-10-01T00:00:00Z")
+                )],
                 None,
                 now,
             ),
@@ -4180,4 +4185,3 @@ mod tests {
         );
     }
 }
-
