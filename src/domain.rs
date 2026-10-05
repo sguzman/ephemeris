@@ -317,9 +317,7 @@ impl TimeSpec {
                     .map(|end| end.with_timezone(&timezone).naive_local())
                     .unwrap_or(event_start);
                 let window_start = start.and_hms_opt(0, 0, 0).unwrap_or(event_start);
-                let window_end = end_exclusive
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap_or(event_start);
+                let window_end = end_exclusive.and_hms_opt(0, 0, 0).unwrap_or(event_start);
                 if end_utc.is_some() {
                     event_start < window_end && event_end > window_start
                 } else {
@@ -333,9 +331,7 @@ impl TimeSpec {
             } => {
                 let event_end = event_end.unwrap_or(*event_start);
                 let window_start = start.and_hms_opt(0, 0, 0).unwrap_or(*event_start);
-                let window_end = end_exclusive
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap_or(*event_start);
+                let window_end = end_exclusive.and_hms_opt(0, 0, 0).unwrap_or(*event_start);
                 if event_end != *event_start {
                     *event_start < window_end && event_end > window_start
                 } else {
@@ -509,7 +505,10 @@ impl fmt::Display for RecurrenceError {
             Self::ZeroInterval => formatter.write_str("recurrence interval must be at least 1"),
             Self::ZeroCount => formatter.write_str("recurrence count must be at least 1"),
             Self::UnsupportedTimeKind(kind) => {
-                write!(formatter, "recurrence is not supported for {kind} precision")
+                write!(
+                    formatter,
+                    "recurrence is not supported for {kind} precision"
+                )
             }
             Self::InvalidSourceTimezone(zone) => {
                 write!(formatter, "invalid recurrence source timezone {zone}")
@@ -758,8 +757,7 @@ fn shift_recurrence_time(
                 None => chrono_tz::UTC,
             };
             let local_start = start_utc.with_timezone(&timezone).naive_local();
-            let Some(shifted_local) =
-                shift_naive_datetime(local_start, rule.frequency, steps)?
+            let Some(shifted_local) = shift_naive_datetime(local_start, rule.frequency, steps)?
             else {
                 return Ok(None);
             };
@@ -901,18 +899,10 @@ mod tests {
         });
 
         let first = event
-            .occurrences_in_window(
-                start,
-                start + Duration::days(10),
-                chrono_tz::UTC,
-            )
+            .occurrences_in_window(start, start + Duration::days(10), chrono_tz::UTC)
             .expect("expand");
         let second = event
-            .occurrences_in_window(
-                start,
-                start + Duration::days(10),
-                chrono_tz::UTC,
-            )
+            .occurrences_in_window(start, start + Duration::days(10), chrono_tz::UTC)
             .expect("expand again");
 
         assert_eq!(first.len(), 4);
@@ -929,7 +919,10 @@ mod tests {
             ]
         );
         assert_eq!(
-            first.iter().map(|occurrence| occurrence.id).collect::<Vec<_>>(),
+            first
+                .iter()
+                .map(|occurrence| occurrence.id)
+                .collect::<Vec<_>>(),
             second
                 .iter()
                 .map(|occurrence| occurrence.id)
@@ -992,11 +985,7 @@ mod tests {
         });
 
         let occurrences = event
-            .occurrences_in_window(
-                start,
-                start + Duration::days(14),
-                chrono_tz::UTC,
-            )
+            .occurrences_in_window(start, start + Duration::days(14), chrono_tz::UTC)
             .expect("expand");
 
         assert_eq!(occurrences.len(), 2);
@@ -1056,10 +1045,7 @@ mod tests {
 
     #[test]
     fn recurrence_rejects_coarse_precision_base_time() {
-        let mut event = TemporalEvent::new(
-            "Annual unknown month",
-            TimeSpec::Year { year: 2026 },
-        );
+        let mut event = TemporalEvent::new("Annual unknown month", TimeSpec::Year { year: 2026 });
         event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Yearly));
 
         let error = event
