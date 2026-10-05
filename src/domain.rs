@@ -565,6 +565,8 @@ pub struct RecurrenceRule {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub by_month: Vec<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_year_day: Vec<i16>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub by_month_day: Vec<i8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub by_month_weekday: Vec<RecurrenceOrdinalWeekday>,
@@ -586,6 +588,7 @@ impl RecurrenceRule {
             week_start: RecurrenceWeekday::Monday,
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -625,6 +628,18 @@ impl RecurrenceRule {
             }
             if !months.insert(*month) {
                 return Err(RecurrenceError::DuplicateByMonth(*month));
+            }
+        }
+        if !self.by_year_day.is_empty() && self.frequency != RecurrenceFrequency::Yearly {
+            return Err(RecurrenceError::ByYearDayRequiresYearly);
+        }
+        let mut year_days = HashSet::new();
+        for day in &self.by_year_day {
+            if *day == 0 || !(-366..=366).contains(day) {
+                return Err(RecurrenceError::InvalidByYearDay(*day));
+            }
+            if !year_days.insert(*day) {
+                return Err(RecurrenceError::DuplicateByYearDay(*day));
             }
         }
         if !self.by_month_day.is_empty()
@@ -720,6 +735,9 @@ pub enum RecurrenceError {
     ByMonthRequiresYearly,
     InvalidByMonth(u8),
     DuplicateByMonth(u8),
+    ByYearDayRequiresYearly,
+    InvalidByYearDay(i16),
+    DuplicateByYearDay(i16),
     ByMonthDayRequiresMonthContext,
     InvalidByMonthDay(i8),
     DuplicateByMonthDay(i8),
@@ -762,6 +780,17 @@ impl fmt::Display for RecurrenceError {
             }
             Self::DuplicateByMonth(month) => {
                 write!(formatter, "duplicate BYMONTH value {month}")
+            }
+            Self::ByYearDayRequiresYearly => formatter
+                .write_str("BYYEARDAY selection is supported only for yearly recurrence"),
+            Self::InvalidByYearDay(day) => {
+                write!(
+                    formatter,
+                    "BYYEARDAY value must be -366..=-1 or 1..=366, got {day}"
+                )
+            }
+            Self::DuplicateByYearDay(day) => {
+                write!(formatter, "duplicate BYYEARDAY value {day}")
             }
             Self::ByMonthDayRequiresMonthContext => formatter.write_str(
                 "BYMONTHDAY selection requires monthly recurrence or yearly recurrence with BYMONTH",
@@ -1158,7 +1187,9 @@ fn recurrence_candidates_for_period(
     if rule.frequency == RecurrenceFrequency::Monthly && !rule.by_month_weekday.is_empty() {
         return monthly_ordinal_weekday_candidates(base, rule, period);
     }
-    if rule.frequency == RecurrenceFrequency::Yearly && !rule.by_month.is_empty() {
+    if rule.frequency == RecurrenceFrequency::Yearly
+        && (!rule.by_month.is_empty() || !rule.by_year_day.is_empty())
+    {
         return yearly_recurrence_candidates(base, rule, period);
     }
 
@@ -1364,6 +1395,18 @@ fn resolve_month_day(month_start: NaiveDate, selector: i8) -> Option<NaiveDate> 
         .then_some(candidate)
 }
 
+fn resolve_year_day(year: i32, selector: i16) -> Option<NaiveDate> {
+    if selector > 0 {
+        return NaiveDate::from_yo_opt(year, u32::try_from(selector).ok()?);
+    }
+
+    let next_year = year.checked_add(1)?;
+    let next_year_start = NaiveDate::from_ymd_opt(next_year, 1, 1)?;
+    let days_from_end = u64::try_from(-i32::from(selector)).ok()?;
+    let candidate = next_year_start.checked_sub_days(Days::new(days_from_end))?;
+    (candidate.year() == year).then_some(candidate)
+}
+
 fn yearly_recurrence_candidates(
     base: &TimeSpec,
     rule: &RecurrenceRule,
@@ -1381,11 +1424,49 @@ fn yearly_recurrence_candidates(
         .checked_add(year_offset)
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
 
-    let mut months = rule.by_month.clone();
-    months.sort_unstable();
+    let mut candidate_dates = if rule.by_year_day.is_empty() {
+        Vec::new()
+    } else {
+        rule.by_year_day
+            .iter()
+            .filter_map(|selector| resolve_year_day(active_year, *selector))
+            .collect::<Vec<_>>()
+    };
 
-    let mut candidate_dates = Vec::new();
-    for month in months {
+    if !rule.by_year_day.is_empty() {
+        if !rule.by_month.is_empty() {
+            let selected_months = rule.by_month.iter().copied().collect::<HashSet<_>>();
+            candidate_dates.retain(|date| {
+                u8::try_from(date.month())
+                    .ok()
+                    .is_some_and(|month| selected_months.contains(&month))
+            });
+        }
+        if !rule.by_month_day.is_empty() {
+            candidate_dates.retain(|date| {
+                let month_start = NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
+                    .expect("candidate date month must be valid");
+                rule.by_month_day
+                    .iter()
+                    .filter_map(|selector| resolve_month_day(month_start, *selector))
+                    .any(|candidate| candidate == *date)
+            });
+        }
+        if !rule.by_month_weekday.is_empty() {
+            candidate_dates.retain(|date| {
+                let month_start = NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
+                    .expect("candidate date month must be valid");
+                rule.by_month_weekday
+                    .iter()
+                    .filter_map(|selector| resolve_ordinal_weekday(month_start, *selector))
+                    .any(|candidate| candidate == *date)
+            });
+        }
+    } else {
+        let mut months = rule.by_month.clone();
+        months.sort_unstable();
+
+        for month in months {
         let Some(month_start) = NaiveDate::from_ymd_opt(active_year, u32::from(month), 1) else {
             continue;
         };
@@ -1424,6 +1505,7 @@ fn yearly_recurrence_candidates(
                 continue;
             };
             candidate_dates.push(candidate_date);
+        }
         }
     }
 
@@ -1885,6 +1967,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -1942,6 +2025,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: vec![TimeSpec::DateOnly {
@@ -1999,6 +2083,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2058,6 +2143,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2108,6 +2194,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2157,6 +2244,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2196,6 +2284,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2238,6 +2327,7 @@ mod tests {
                 RecurrenceWeekday::Wednesday,
             ],
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2282,6 +2372,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: vec![RecurrenceWeekday::Monday, RecurrenceWeekday::Wednesday],
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2325,6 +2416,7 @@ mod tests {
             week_start: RecurrenceWeekday::Sunday,
             by_weekday: vec![RecurrenceWeekday::Sunday, RecurrenceWeekday::Monday],
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2404,6 +2496,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: vec![RecurrenceWeekday::Sunday, RecurrenceWeekday::Tuesday],
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2470,6 +2563,7 @@ mod tests {
                 RecurrenceWeekday::Friday,
             ],
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2505,6 +2599,295 @@ mod tests {
     }
 
     #[test]
+    fn yearly_by_year_day_supports_signed_selectors_and_skips_invalid_non_leap_day() {
+        let start = NaiveDate::from_ymd_opt(2026, 4, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Signed year days",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: Some(5),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_year_day: vec![366, -1, 100, 1],
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2028, 1, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        assert_eq!(
+            occurrences
+                .iter()
+                .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+                .collect::<Vec<_>>(),
+            vec![
+                NaiveDate::from_ymd_opt(2026, 4, 10).expect("day 100"),
+                NaiveDate::from_ymd_opt(2026, 12, 31).expect("last day"),
+                NaiveDate::from_ymd_opt(2027, 1, 1).expect("day 1"),
+                NaiveDate::from_ymd_opt(2027, 4, 10).expect("day 100"),
+                NaiveDate::from_ymd_opt(2027, 12, 31).expect("last day"),
+            ]
+        );
+    }
+
+    #[test]
+    fn yearly_by_year_day_interval_tracks_leap_year_ordinals() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Every other year day sixty",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 2,
+            count: Some(3),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_year_day: vec![60],
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2031, 1, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        assert_eq!(
+            occurrences
+                .iter()
+                .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+                .collect::<Vec<_>>(),
+            vec![
+                NaiveDate::from_ymd_opt(2026, 3, 1).expect("2026 day 60"),
+                NaiveDate::from_ymd_opt(2028, 2, 29).expect("2028 day 60"),
+                NaiveDate::from_ymd_opt(2030, 3, 1).expect("2030 day 60"),
+            ]
+        );
+    }
+
+    #[test]
+    fn by_year_day_validation_rejects_wrong_frequency_zero_range_and_duplicates() {
+        let mut wrong_frequency = RecurrenceRule::new(RecurrenceFrequency::Monthly);
+        wrong_frequency.by_year_day = vec![1];
+        assert!(matches!(
+            wrong_frequency.validate(),
+            Err(RecurrenceError::ByYearDayRequiresYearly)
+        ));
+
+        for invalid_day in [-367, 0, 367] {
+            let mut invalid = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+            invalid.by_year_day = vec![invalid_day];
+            assert!(matches!(
+                invalid.validate(),
+                Err(RecurrenceError::InvalidByYearDay(value)) if value == invalid_day
+            ));
+        }
+
+        let mut duplicate = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        duplicate.by_year_day = vec![-1, -1];
+        assert!(matches!(
+            duplicate.validate(),
+            Err(RecurrenceError::DuplicateByYearDay(-1))
+        ));
+    }
+
+    #[test]
+    fn yearly_by_year_day_intersects_existing_month_scoped_selectors() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Year-day selector intersection",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: Some(3),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: vec![1, 7],
+            by_year_day: vec![5, 30, 31, 212],
+            by_month_day: vec![5, 30, 31],
+            by_month_weekday: vec![
+                RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
+                RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
+            ],
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2027, 1, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        assert_eq!(
+            occurrences
+                .iter()
+                .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+                .collect::<Vec<_>>(),
+            vec![
+                NaiveDate::from_ymd_opt(2026, 1, 5).expect("jan first monday"),
+                NaiveDate::from_ymd_opt(2026, 1, 30).expect("jan last friday"),
+                NaiveDate::from_ymd_opt(2026, 7, 31).expect("jul last friday"),
+            ]
+        );
+    }
+
+    #[test]
+    fn exact_yearly_by_year_day_preserves_source_wall_clock_across_dst() {
+        let start_utc = DateTime::parse_from_rfc3339("2026-01-01T14:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc);
+        let mut event = TemporalEvent::new(
+            "Year days at nine",
+            TimeSpec::Instant {
+                start_utc,
+                end_utc: None,
+                source_timezone: Some("America/New_York".to_string()),
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: Some(2),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_year_day: vec![1, 182],
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 1, 1).expect("start"),
+                NaiveDate::from_ymd_opt(2026, 8, 1).expect("end"),
+                chrono_tz::America::New_York,
+            )
+            .expect("expand");
+
+        assert_eq!(occurrences.len(), 2);
+        let TimeSpec::Instant {
+            start_utc: summer, ..
+        } = occurrences[1].time
+        else {
+            panic!("instant occurrence");
+        };
+        assert_eq!(
+            summer
+                .with_timezone(&chrono_tz::America::New_York)
+                .format("%Y-%m-%d %H:%M")
+                .to_string(),
+            "2026-07-01 09:00"
+        );
+        assert_eq!(summer.format("%H:%M").to_string(), "13:00");
+    }
+
+    #[test]
+    fn yearly_by_year_day_integrates_with_exdate_and_moved_override() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1).expect("start");
+        let excluded = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 4, 10).expect("day 100"),
+            end_exclusive: None,
+        };
+        let original = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 12, 31).expect("last day"),
+            end_exclusive: None,
+        };
+        let replacement = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2027, 1, 2).expect("moved"),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Year-day exceptions",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: Some(4),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_year_day: vec![100, -1],
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            rdates: Vec::new(),
+            exdates: vec![excluded.clone()],
+            overrides: vec![RecurrenceOverride {
+                original: original.clone(),
+                replacement: Some(replacement.clone()),
+                cancelled: false,
+            }],
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2027, 2, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        assert!(
+            occurrences
+                .iter()
+                .all(|occurrence| occurrence.original_time != excluded)
+        );
+        let moved = occurrences
+            .iter()
+            .find(|occurrence| occurrence.original_time == original)
+            .expect("moved occurrence");
+        assert_eq!(moved.time, replacement);
+        assert!(moved.override_applied);
+    }
+
+    #[test]
     fn yearly_by_month_and_ordinal_byday_expands_month_scoped_weekdays() {
         let start = NaiveDate::from_ymd_opt(2026, 4, 15).expect("start");
         let mut event = TemporalEvent::new(
@@ -2522,6 +2905,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![11, 3],
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: vec![
                 RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
@@ -2587,6 +2971,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![1, 7],
+            by_year_day: Vec::new(),
             by_month_day: vec![5, 30, 31],
             by_month_weekday: vec![
                 RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
@@ -2639,6 +3024,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![1, 7],
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             rdates: Vec::new(),
@@ -2689,6 +3075,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![12, 1, 7],
+            by_year_day: Vec::new(),
             by_month_day: vec![-1, 1],
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2751,6 +3138,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![1, 7],
+            by_year_day: Vec::new(),
             by_month_day: vec![4],
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2801,6 +3189,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![1, 7],
+            by_year_day: Vec::new(),
             by_month_day: vec![1],
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2863,6 +3252,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![1, 7],
+            by_year_day: Vec::new(),
             by_month_day: vec![-1],
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2913,6 +3303,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![10, 1, 4],
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -2961,6 +3352,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![2, 8],
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3035,6 +3427,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![1, 7],
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3097,6 +3490,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![1, 6, 12],
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3153,6 +3547,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: vec![
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
@@ -3203,6 +3598,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(5, RecurrenceWeekday::Monday)],
             rdates: Vec::new(),
@@ -3282,6 +3678,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: vec![5, 30, 31],
             by_month_weekday: vec![
                 RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
@@ -3335,6 +3732,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: vec![5, 15],
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             rdates: Vec::new(),
@@ -3385,6 +3783,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Sunday)],
             rdates: Vec::new(),
@@ -3447,6 +3846,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)],
             rdates: Vec::new(),
@@ -3497,6 +3897,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: vec![-1, 1, -2],
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3545,6 +3946,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: vec![1, -31],
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3618,6 +4020,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: vec![-1],
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3668,6 +4071,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: vec![31, 1, 15],
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3716,6 +4120,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: vec![1, 15],
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3790,6 +4195,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: vec![1, 15],
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3852,6 +4258,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: vec![1, 15],
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3908,6 +4315,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3953,6 +4361,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),
@@ -3995,6 +4404,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
             rdates: Vec::new(),

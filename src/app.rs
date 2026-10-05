@@ -2315,6 +2315,16 @@ impl EphemerisApp {
                         .join(", ");
                     inspector_row(ui, "Months", &months);
                 }
+                if !rule.by_year_day.is_empty() {
+                    let mut year_days = rule.by_year_day.clone();
+                    year_days.sort_unstable();
+                    let year_days = year_days
+                        .into_iter()
+                        .map(|day| day.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    inspector_row(ui, "Year days", &year_days);
+                }
                 if !rule.by_month_day.is_empty() {
                     let mut month_days = rule.by_month_day.clone();
                     month_days.sort_unstable();
