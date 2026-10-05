@@ -25,7 +25,7 @@ At the hardened Phase 8 recurrence-selector checkpoint, all **141** library test
 
 The prepared Phase 8 selector stack through BYSETPOS, BYWEEKNO, and monthly plain BYDAY is attached to `main` (formatted at `07839223414b03e7b2c4a417af3224dbf33dfcdc`) and targets **176** library tests. Fresh CI verification is pending; the 141-test checkpoint above remains the last verified gate until that run completes.
 
-A rebased staging slice at `c92081a81edd4e01b8b5223d5078f6778db82d9b` adds yearly plain BYDAY, including plain+ordinal BYDAY union semantics when filtering BYYEARDAY candidates, and targets **183** library tests. A child staging slice at `89827367bc4c7f534919c5e5c4e61cf38e6e8331` extends ordinal BYDAY to whole-year scope and targets **190** library tests. Both remain unverified while GitHub-hosted Actions runners are degraded.
+A rebased staging slice at `c92081a81edd4e01b8b5223d5078f6778db82d9b` adds yearly plain BYDAY, including plain+ordinal BYDAY union semantics when filtering BYYEARDAY candidates, and targets **183** library tests. A child staging slice at `89827367bc4c7f534919c5e5c4e61cf38e6e8331` extends ordinal BYDAY to whole-year scope and targets **190** library tests. A further hardening child at `cd41d55b0951145f2319017730dc196e339d9c5c` bounds permanently empty selector periods by recurrence-period floor against the view horizon and UNTIL, targeting **192** library tests. These newer staging checkpoints remain pending full CI verification.
 
 ## Implemented architecture
 
@@ -115,6 +115,7 @@ Implemented:
 - BYSETPOS requires at least one supported BY selector, rejects zero/out-of-range/duplicate positions, ignores positions outside the current candidate-set size, and deduplicates alias positions that resolve to the same slot;
 - BYSETPOS is shared by visible expansion and override-target validation, preserving original-slot identity and exception semantics;
 - first-year candidates before DTSTART are omitted, impossible civil dates/missing fifth weekdays are skipped, and BYMONTH alone continues to preserve DTSTART's civil day where valid;
+- recurrence intervals whose selector intersection yields no candidates still advance against a monotonic civil-period floor, so the engine terminates at the active view horizon or inclusive UNTIL instead of spinning forever on permanently empty candidate sets;
 - deterministic occurrence UUID derived from the canonical event and original recurrence slot;
 - RDATE additions and EXDATE exclusions stored inside the existing schema-v14 recurrence JSON;
 - moved occurrence overrides that retain the original occurrence UUID/lineage while rendering at the replacement time;
