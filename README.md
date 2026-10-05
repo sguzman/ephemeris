@@ -74,7 +74,9 @@ Implemented:
 - membership-aware saved views, overlays, color rules, and calendar algebra without copying membership into events
 - adopted-release coverage/status and per-bundle population posture in the Sources panel
 - local adopted-release history with source/bundle/calendar/member-event diffs
-- canonical release-event diffs for added, removed, moved, status-changed, and newly-cancelled events
+- canonical release-event diffs for added, removed, renamed, moved, status-changed, and newly-cancelled events, with before/after drill-down
+- persisted generic refresh-attempt history with success/failure/incomplete states
+- explicit Taria refresh health posture with running/healthy/stale/failed/interrupted/never-refreshed states and a visible 7-day stale threshold
 - release-backed bundle/projected-calendar selectors in the recursive query editor
 - repeatable Taria re-import using stable source-record and upstream event identity
 - transactional source import reconciliation
@@ -84,7 +86,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified implementation code checkpoint at 2026-10-05 is `6f5612c7a6314deaf81a1ce06137abe61288b8c4`: format, compile, strict Clippy, and **60 library tests** all pass. Documentation synchronization and later source-history correctness refinements follow that green checkpoint.
+The verified implementation code checkpoint at 2026-10-05 is `f9aeb12c33ace2707e220694c0aa15d3e27febb9`: format, compile, strict Clippy, and **62 library tests** all pass.
 
 ## Product boundary
 
