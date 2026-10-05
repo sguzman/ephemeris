@@ -2290,6 +2290,9 @@ impl EphemerisApp {
             CalendarAction::OpenDay(day) => {
                 self.state.set_focus_date(day);
                 self.state.calendar_view = CalendarView::Day;
+                if self.state.calendar_layout == CalendarLayout::Density {
+                    self.state.calendar_layout = CalendarLayout::Agenda;
+                }
                 self.state.selected_event_id = None;
                 self.mark_state_dirty();
                 self.reload_or_report();
