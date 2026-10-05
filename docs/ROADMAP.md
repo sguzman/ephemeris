@@ -339,20 +339,22 @@ Remaining Phase 6 work:
 
 ## Phase 7 - Rich temporal visualization
 
-Status: **started through Agenda and dense Table**
+Status: **active through Agenda, chronological Stream, and dense Table**
 
 Implemented:
 
 - Agenda layout
+- chronological Stream layout with fixed typed temporal ordering and date/precision markers
+- Stream persistence in UI state and SavedViews through the existing layout serialization boundary
+- Stream preserves but temporarily disables arbitrary grouping/sort controls because chronology defines the layout
 - dense Table layout
-- true group partitioning in dense views
+- true group partitioning in configurable dense views
 - direct selection into the event inspector
 - ordered configurable Table columns with UI-state and SavedView persistence
 
 Goals:
 
 - compact agenda
-- chronological stream
 - timeline
 - heatmap/density
 - pivot/summary foundation
