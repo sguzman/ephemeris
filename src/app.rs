@@ -1715,10 +1715,7 @@ impl EphemerisApp {
                     }
 
                     if ui
-                        .selectable_label(
-                            self.selected_source_id == Some(source.id),
-                            &source.name,
-                        )
+                        .selectable_label(self.selected_source_id == Some(source.id), &source.name)
                         .on_hover_text("Inspect source metadata")
                         .clicked()
                     {
@@ -1755,11 +1752,7 @@ impl EphemerisApp {
                 inspector_row(ui, "Kind", source.kind.as_str());
                 inspector_row(ui, "Authority", source.authority.as_str());
                 inspector_row(ui, "Enabled", if source.enabled { "yes" } else { "no" });
-                inspector_row(
-                    ui,
-                    "Read only",
-                    if source.read_only { "yes" } else { "no" },
-                );
+                inspector_row(ui, "Read only", if source.read_only { "yes" } else { "no" });
                 if let Some(locator) = source.locator.as_deref() {
                     inspector_row(ui, "Locator", locator);
                 }
