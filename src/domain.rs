@@ -1,7 +1,12 @@
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
+use std::fmt;
+
+use chrono::{
+    DateTime, Datelike, Days, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc,
+};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -281,6 +286,84 @@ impl TimeSpec {
         )
     }
 
+    pub fn overlaps_date_window(
+        &self,
+        start: NaiveDate,
+        end_exclusive: NaiveDate,
+        timezone: Tz,
+    ) -> bool {
+        if end_exclusive <= start {
+            return false;
+        }
+
+        match self {
+            Self::DateOnly {
+                start: event_start,
+                end_exclusive: event_end,
+            }
+            | Self::AllDay {
+                start: event_start,
+                end_exclusive: event_end,
+            } => {
+                let event_end =
+                    event_end.unwrap_or_else(|| event_start.succ_opt().unwrap_or(*event_start));
+                *event_start < end_exclusive && event_end > start
+            }
+            Self::Instant {
+                start_utc, end_utc, ..
+            } => {
+                let event_start = start_utc.with_timezone(&timezone).naive_local();
+                let event_end = end_utc
+                    .map(|end| end.with_timezone(&timezone).naive_local())
+                    .unwrap_or(event_start);
+                let window_start = start.and_hms_opt(0, 0, 0).unwrap_or(event_start);
+                let window_end = end_exclusive
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap_or(event_start);
+                if end_utc.is_some() {
+                    event_start < window_end && event_end > window_start
+                } else {
+                    event_start >= window_start && event_start < window_end
+                }
+            }
+            Self::Floating {
+                start: event_start,
+                end: event_end,
+                ..
+            } => {
+                let event_end = event_end.unwrap_or(*event_start);
+                let window_start = start.and_hms_opt(0, 0, 0).unwrap_or(*event_start);
+                let window_end = end_exclusive
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap_or(*event_start);
+                if event_end != *event_start {
+                    *event_start < window_end && event_end > window_start
+                } else {
+                    *event_start >= window_start && *event_start < window_end
+                }
+            }
+            Self::Month { year, month } => {
+                let Some(event_start) = NaiveDate::from_ymd_opt(*year, *month, 1) else {
+                    return false;
+                };
+                let Some(event_end) = next_month_start(event_start) else {
+                    return false;
+                };
+                event_start < end_exclusive && event_end > start
+            }
+            Self::Year { year } => {
+                let Some(event_start) = NaiveDate::from_ymd_opt(*year, 1, 1) else {
+                    return false;
+                };
+                let Some(event_end) = NaiveDate::from_ymd_opt(year.saturating_add(1), 1, 1) else {
+                    return false;
+                };
+                event_start < end_exclusive && event_end > start
+            }
+            Self::Unknown { .. } => false,
+        }
+    }
+
     pub fn display_time_label(&self, timezone: Tz) -> String {
         match self {
             Self::DateOnly {
@@ -357,6 +440,90 @@ impl TemporalSource {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecurrenceFrequency {
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecurrenceRule {
+    pub frequency: RecurrenceFrequency,
+    #[serde(default = "default_recurrence_interval")]
+    pub interval: u32,
+    #[serde(default)]
+    pub count: Option<u32>,
+    #[serde(default)]
+    pub until: Option<NaiveDate>,
+}
+
+impl RecurrenceRule {
+    pub const fn new(frequency: RecurrenceFrequency) -> Self {
+        Self {
+            frequency,
+            interval: 1,
+            count: None,
+            until: None,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), RecurrenceError> {
+        if self.interval == 0 {
+            return Err(RecurrenceError::ZeroInterval);
+        }
+        if self.count == Some(0) {
+            return Err(RecurrenceError::ZeroCount);
+        }
+        Ok(())
+    }
+}
+
+const fn default_recurrence_interval() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventOccurrence {
+    pub id: Uuid,
+    pub event_id: Uuid,
+    pub recurrence_index: u32,
+    pub time: TimeSpec,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecurrenceError {
+    ZeroInterval,
+    ZeroCount,
+    UnsupportedTimeKind(&'static str),
+    InvalidSourceTimezone(String),
+    ArithmeticOverflow,
+    IdentityEncoding(String),
+}
+
+impl fmt::Display for RecurrenceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroInterval => formatter.write_str("recurrence interval must be at least 1"),
+            Self::ZeroCount => formatter.write_str("recurrence count must be at least 1"),
+            Self::UnsupportedTimeKind(kind) => {
+                write!(formatter, "recurrence is not supported for {kind} precision")
+            }
+            Self::InvalidSourceTimezone(zone) => {
+                write!(formatter, "invalid recurrence source timezone {zone}")
+            }
+            Self::ArithmeticOverflow => formatter.write_str("recurrence arithmetic overflow"),
+            Self::IdentityEncoding(error) => {
+                write!(formatter, "failed to encode occurrence identity: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RecurrenceError {}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TemporalEvent {
     pub id: Uuid,
@@ -382,6 +549,8 @@ pub struct TemporalEvent {
     pub importance: Option<i32>,
     pub personal_relevance: Option<i32>,
     pub time: TimeSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recurrence: Option<RecurrenceRule>,
     pub tags: Vec<String>,
     pub properties: Value,
     pub created_at: DateTime<Utc>,
@@ -413,6 +582,7 @@ impl TemporalEvent {
             importance: None,
             personal_relevance: None,
             time,
+            recurrence: None,
             tags: Vec::new(),
             properties: Value::Object(Default::default()),
             created_at: now,
@@ -427,6 +597,284 @@ impl TemporalEvent {
     pub fn display_time_label(&self, timezone: Tz) -> String {
         self.time.display_time_label(timezone)
     }
+
+    pub fn occurrences_in_window(
+        &self,
+        start: NaiveDate,
+        end_exclusive: NaiveDate,
+        display_timezone: Tz,
+    ) -> Result<Vec<EventOccurrence>, RecurrenceError> {
+        if end_exclusive <= start {
+            return Ok(Vec::new());
+        }
+
+        let Some(rule) = self.recurrence.as_ref() else {
+            if !self
+                .time
+                .overlaps_date_window(start, end_exclusive, display_timezone)
+            {
+                return Ok(Vec::new());
+            }
+            return Ok(vec![EventOccurrence {
+                id: occurrence_identity(self.id, &self.time)?,
+                event_id: self.id,
+                recurrence_index: 0,
+                time: self.time.clone(),
+            }]);
+        };
+
+        rule.validate()?;
+        if matches!(
+            self.time,
+            TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. }
+        ) {
+            return Err(RecurrenceError::UnsupportedTimeKind(self.time.kind_name()));
+        }
+
+        let mut occurrences = Vec::new();
+        let mut recurrence_period = 0_u32;
+        let mut emitted = 0_u32;
+
+        loop {
+            if rule.count.is_some_and(|count| emitted >= count) {
+                break;
+            }
+
+            let shifted = shift_recurrence_time(&self.time, rule, recurrence_period)?;
+            recurrence_period = recurrence_period
+                .checked_add(1)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+
+            let Some(time) = shifted else {
+                continue;
+            };
+            let occurrence_date = recurrence_rule_date(&time)?;
+
+            if rule.until.is_some_and(|until| occurrence_date > until) {
+                break;
+            }
+
+            let recurrence_index = emitted;
+            emitted = emitted
+                .checked_add(1)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+
+            if time.overlaps_date_window(start, end_exclusive, display_timezone) {
+                occurrences.push(EventOccurrence {
+                    id: occurrence_identity(self.id, &time)?,
+                    event_id: self.id,
+                    recurrence_index,
+                    time: time.clone(),
+                });
+            }
+
+            if occurrence_date >= end_exclusive {
+                break;
+            }
+        }
+
+        Ok(occurrences)
+    }
+}
+
+fn occurrence_identity(event_id: Uuid, time: &TimeSpec) -> Result<Uuid, RecurrenceError> {
+    let encoded = serde_json::to_vec(time)
+        .map_err(|error| RecurrenceError::IdentityEncoding(error.to_string()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(event_id.as_bytes());
+    hasher.update(encoded);
+    let digest = hasher.finalize();
+
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(Uuid::from_bytes(bytes))
+}
+
+fn shift_recurrence_time(
+    time: &TimeSpec,
+    rule: &RecurrenceRule,
+    period: u32,
+) -> Result<Option<TimeSpec>, RecurrenceError> {
+    let steps = rule
+        .interval
+        .checked_mul(period)
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+
+    match time {
+        TimeSpec::DateOnly {
+            start,
+            end_exclusive,
+        } => {
+            let Some(shifted_start) = shift_date(*start, rule.frequency, steps)? else {
+                return Ok(None);
+            };
+            let duration_days = end_exclusive.map(|end| (end - *start).num_days());
+            Ok(Some(TimeSpec::DateOnly {
+                start: shifted_start,
+                end_exclusive: duration_days
+                    .and_then(|days| shifted_start.checked_add_signed(Duration::days(days))),
+            }))
+        }
+        TimeSpec::AllDay {
+            start,
+            end_exclusive,
+        } => {
+            let Some(shifted_start) = shift_date(*start, rule.frequency, steps)? else {
+                return Ok(None);
+            };
+            let duration_days = end_exclusive.map(|end| (end - *start).num_days());
+            Ok(Some(TimeSpec::AllDay {
+                start: shifted_start,
+                end_exclusive: duration_days
+                    .and_then(|days| shifted_start.checked_add_signed(Duration::days(days))),
+            }))
+        }
+        TimeSpec::Floating {
+            start,
+            end,
+            source_timezone,
+        } => {
+            let Some(shifted_start) = shift_naive_datetime(*start, rule.frequency, steps)? else {
+                return Ok(None);
+            };
+            let duration = end.map(|end| end - *start);
+            Ok(Some(TimeSpec::Floating {
+                start: shifted_start,
+                end: duration.and_then(|duration| shifted_start.checked_add_signed(duration)),
+                source_timezone: source_timezone.clone(),
+            }))
+        }
+        TimeSpec::Instant {
+            start_utc,
+            end_utc,
+            source_timezone,
+        } => {
+            let timezone = match source_timezone.as_deref() {
+                Some(raw) => raw
+                    .parse::<Tz>()
+                    .map_err(|_| RecurrenceError::InvalidSourceTimezone(raw.to_string()))?,
+                None => chrono_tz::UTC,
+            };
+            let local_start = start_utc.with_timezone(&timezone).naive_local();
+            let Some(shifted_local) =
+                shift_naive_datetime(local_start, rule.frequency, steps)?
+            else {
+                return Ok(None);
+            };
+            let Some(shifted_start) = resolve_local_datetime(timezone, shifted_local) else {
+                return Ok(None);
+            };
+            let duration = end_utc.map(|end| end - *start_utc);
+            Ok(Some(TimeSpec::Instant {
+                start_utc: shifted_start,
+                end_utc: duration.and_then(|duration| shifted_start.checked_add_signed(duration)),
+                source_timezone: source_timezone.clone(),
+            }))
+        }
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+            Err(RecurrenceError::UnsupportedTimeKind(time.kind_name()))
+        }
+    }
+}
+
+fn recurrence_rule_date(time: &TimeSpec) -> Result<NaiveDate, RecurrenceError> {
+    match time {
+        TimeSpec::DateOnly { start, .. } | TimeSpec::AllDay { start, .. } => Ok(*start),
+        TimeSpec::Floating { start, .. } => Ok(start.date()),
+        TimeSpec::Instant {
+            start_utc,
+            source_timezone,
+            ..
+        } => {
+            let timezone = match source_timezone.as_deref() {
+                Some(raw) => raw
+                    .parse::<Tz>()
+                    .map_err(|_| RecurrenceError::InvalidSourceTimezone(raw.to_string()))?,
+                None => chrono_tz::UTC,
+            };
+            Ok(start_utc.with_timezone(&timezone).date_naive())
+        }
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+            Err(RecurrenceError::UnsupportedTimeKind(time.kind_name()))
+        }
+    }
+}
+
+fn shift_naive_datetime(
+    value: NaiveDateTime,
+    frequency: RecurrenceFrequency,
+    steps: u32,
+) -> Result<Option<NaiveDateTime>, RecurrenceError> {
+    let Some(date) = shift_date(value.date(), frequency, steps)? else {
+        return Ok(None);
+    };
+    Ok(Some(NaiveDateTime::new(date, value.time())))
+}
+
+fn shift_date(
+    value: NaiveDate,
+    frequency: RecurrenceFrequency,
+    steps: u32,
+) -> Result<Option<NaiveDate>, RecurrenceError> {
+    match frequency {
+        RecurrenceFrequency::Daily => Ok(value.checked_add_days(Days::new(u64::from(steps)))),
+        RecurrenceFrequency::Weekly => {
+            let days = u64::from(steps)
+                .checked_mul(7)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            Ok(value.checked_add_days(Days::new(days)))
+        }
+        RecurrenceFrequency::Monthly => add_months_preserving_day(value, steps),
+        RecurrenceFrequency::Yearly => {
+            let step_years =
+                i32::try_from(steps).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+            let year = value
+                .year()
+                .checked_add(step_years)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            Ok(NaiveDate::from_ymd_opt(year, value.month(), value.day()))
+        }
+    }
+}
+
+fn add_months_preserving_day(
+    value: NaiveDate,
+    months: u32,
+) -> Result<Option<NaiveDate>, RecurrenceError> {
+    let base = i64::from(value.year())
+        .checked_mul(12)
+        .and_then(|value| value.checked_add(i64::from(value_month_zero(value))))
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let target = base
+        .checked_add(i64::from(months))
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let year =
+        i32::try_from(target.div_euclid(12)).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+    let month = u32::try_from(target.rem_euclid(12) + 1)
+        .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+    Ok(NaiveDate::from_ymd_opt(year, month, value.day()))
+}
+
+const fn value_month_zero(value: NaiveDate) -> u32 {
+    value.month() - 1
+}
+
+fn next_month_start(value: NaiveDate) -> Option<NaiveDate> {
+    if value.month() == 12 {
+        NaiveDate::from_ymd_opt(value.year().checked_add(1)?, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(value.year(), value.month() + 1, 1)
+    }
+}
+
+fn resolve_local_datetime(timezone: Tz, value: NaiveDateTime) -> Option<DateTime<Utc>> {
+    match timezone.from_local_datetime(&value) {
+        LocalResult::Single(value) => Some(value.with_timezone(&Utc)),
+        LocalResult::Ambiguous(first, second) => Some(first.min(second).with_timezone(&Utc)),
+        LocalResult::None => None,
+    }
 }
 
 #[cfg(test)]
@@ -434,6 +882,198 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
+    #[test]
+    fn daily_recurrence_expands_with_stable_occurrence_identity() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Daily",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 2,
+            count: Some(4),
+            until: None,
+        });
+
+        let first = event
+            .occurrences_in_window(
+                start,
+                start + Duration::days(10),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+        let second = event
+            .occurrences_in_window(
+                start,
+                start + Duration::days(10),
+                chrono_tz::UTC,
+            )
+            .expect("expand again");
+
+        assert_eq!(first.len(), 4);
+        assert_eq!(
+            first
+                .iter()
+                .map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+                .collect::<Vec<_>>(),
+            vec![
+                Some(start),
+                Some(start + Duration::days(2)),
+                Some(start + Duration::days(4)),
+                Some(start + Duration::days(6)),
+            ]
+        );
+        assert_eq!(
+            first.iter().map(|occurrence| occurrence.id).collect::<Vec<_>>(),
+            second
+                .iter()
+                .map(|occurrence| occurrence.id)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn monthly_recurrence_skips_invalid_calendar_dates() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 31).expect("start");
+        let mut event = TemporalEvent::new(
+            "Month end",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            count: Some(3),
+            until: None,
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2026, 6, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+        assert_eq!(
+            occurrences
+                .iter()
+                .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+                .collect::<Vec<_>>(),
+            vec![
+                NaiveDate::from_ymd_opt(2026, 1, 31).expect("jan"),
+                NaiveDate::from_ymd_opt(2026, 3, 31).expect("mar"),
+                NaiveDate::from_ymd_opt(2026, 5, 31).expect("may"),
+            ]
+        );
+    }
+
+    #[test]
+    fn recurrence_preserves_all_day_range_duration() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "Two days",
+            TimeSpec::AllDay {
+                start,
+                end_exclusive: Some(start + Duration::days(2)),
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            count: Some(2),
+            until: None,
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                start,
+                start + Duration::days(14),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        assert_eq!(occurrences.len(), 2);
+        assert_eq!(
+            occurrences[1].time,
+            TimeSpec::AllDay {
+                start: start + Duration::days(7),
+                end_exclusive: Some(start + Duration::days(9)),
+            }
+        );
+    }
+
+    #[test]
+    fn exact_recurrence_preserves_source_wall_clock_across_dst() {
+        let start_utc = DateTime::parse_from_rfc3339("2026-03-01T14:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc);
+        let mut event = TemporalEvent::new(
+            "Weekly at nine",
+            TimeSpec::Instant {
+                start_utc,
+                end_utc: None,
+                source_timezone: Some("America/New_York".to_string()),
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            count: Some(2),
+            until: None,
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 3, 1).expect("start"),
+                NaiveDate::from_ymd_opt(2026, 3, 10).expect("end"),
+                chrono_tz::America::New_York,
+            )
+            .expect("expand");
+
+        assert_eq!(occurrences.len(), 2);
+        let TimeSpec::Instant {
+            start_utc: second, ..
+        } = occurrences[1].time
+        else {
+            panic!("instant occurrence");
+        };
+        assert_eq!(second.format("%H:%M").to_string(), "13:00");
+        assert_eq!(
+            second
+                .with_timezone(&chrono_tz::America::New_York)
+                .format("%H:%M")
+                .to_string(),
+            "09:00"
+        );
+    }
+
+    #[test]
+    fn recurrence_rejects_coarse_precision_base_time() {
+        let mut event = TemporalEvent::new(
+            "Annual unknown month",
+            TimeSpec::Year { year: 2026 },
+        );
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Yearly));
+
+        let error = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 1, 1).expect("start"),
+                NaiveDate::from_ymd_opt(2027, 1, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect_err("coarse recurrence must be rejected");
+        assert!(matches!(
+            error,
+            RecurrenceError::UnsupportedTimeKind("year")
+        ));
+    }
 
     #[test]
     fn all_day_event_does_not_shift_with_timezone() {
