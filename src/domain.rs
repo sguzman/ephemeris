@@ -1794,12 +1794,21 @@ fn yearly_recurrence_candidates(
                     .is_some_and(|month| selected_months.contains(&month))
             });
         }
-        if !rule.by_weekday.is_empty() {
+        if !rule.by_weekday.is_empty() || !rule.by_month_weekday.is_empty() {
             candidate_dates.retain(|date| {
                 let weekday = u64::from(date.weekday().num_days_from_monday());
-                rule.by_weekday
+                let matches_plain = rule
+                    .by_weekday
                     .iter()
-                    .any(|selector| selector.offset_from_monday() == weekday)
+                    .any(|selector| selector.offset_from_monday() == weekday);
+                let matches_ordinal = NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
+                    .is_some_and(|month_start| {
+                        rule.by_month_weekday
+                            .iter()
+                            .filter_map(|selector| resolve_ordinal_weekday(month_start, *selector))
+                            .any(|candidate| candidate == *date)
+                    });
+                matches_plain || matches_ordinal
             });
         }
         if !rule.by_month_day.is_empty() {
@@ -1811,18 +1820,6 @@ fn yearly_recurrence_candidates(
                 rule.by_month_day
                     .iter()
                     .filter_map(|selector| resolve_month_day(month_start, *selector))
-                    .any(|candidate| candidate == *date)
-            });
-        }
-        if !rule.by_month_weekday.is_empty() {
-            candidate_dates.retain(|date| {
-                let Some(month_start) = NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
-                else {
-                    return false;
-                };
-                rule.by_month_weekday
-                    .iter()
-                    .filter_map(|selector| resolve_ordinal_weekday(month_start, *selector))
                     .any(|candidate| candidate == *date)
             });
         }
@@ -6282,6 +6279,59 @@ mod tests {
             vec![
                 NaiveDate::from_ymd_opt(2026, 1, 30).expect("date"),
                 NaiveDate::from_ymd_opt(2027, 1, 29).expect("date"),
+            ]
+        );
+    }
+
+
+    #[test]
+    fn yearly_byyearday_unions_plain_and_ordinal_byday() {
+        let start = NaiveDate::from_ymd_opt(2026, 3, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "March BYDAY union",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: Some(2),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: vec![RecurrenceWeekday::Monday],
+            by_month: vec![3],
+            by_week_no: Vec::new(),
+            by_year_day: vec![61, 62, 63, 64, 65, 66, 67],
+            by_month_day: Vec::new(),
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
+                1,
+                RecurrenceWeekday::Tuesday,
+            )],
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 3, 1).expect("window start"),
+                NaiveDate::from_ymd_opt(2026, 3, 10).expect("window end"),
+                chrono_tz::UTC,
+            )
+            .expect("occurrences");
+        let dates = occurrences
+            .iter()
+            .map(|occurrence| recurrence_rule_date(&occurrence.time).expect("date"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            dates,
+            vec![
+                NaiveDate::from_ymd_opt(2026, 3, 2).expect("date"),
+                NaiveDate::from_ymd_opt(2026, 3, 3).expect("date"),
             ]
         );
     }
