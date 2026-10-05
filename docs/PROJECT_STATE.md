@@ -23,9 +23,9 @@ cargo test
 
 At the hardened Phase 8 recurrence-selector checkpoint, all **141** library tests pass. Verified implementation code checkpoint: `732354bf5b0457c99093b7c1e118fce895682d22`, with format, check, strict Clippy, and tests all green.
 
-`main` is verified through MONTHLY BYMONTH at `63f29dc8be3ab47ac05381afb416fc750a62ad80`: format, check, strict Clippy, and all **211** library tests pass in GitHub Actions. The preceding DAILY BYMONTH checkpoint is independently verified at `fda7172a65917a74aca6eb30ab5dd93ac24d7c5a` with **205** tests.
+`main` is verified through WEEKLY BYMONTH at `c0918d9fb23fae27c4c3dc769954158f37b6ae1e`: format, check, strict Clippy, and all **218** library tests pass in GitHub Actions. The preceding MONTHLY BYMONTH checkpoint is independently verified at `63f29dc8be3ab47ac05381afb416fc750a62ad80` with **211** tests.
 
-A child staging slice at code/persistence checkpoint `47e319bf800508fbb038b69c73e31c56cde2ab9f` adds WEEKLY BYMONTH and targets **218** library tests. Weekly reachability spans the finite 400-year / 20,871-week Gregorian cycle and accounts for BYMONTH, BYDAY, and BYSETPOS candidate cardinality; DAILY reachability now also rejects permanently impossible BYSETPOS cardinalities. The 218-test slice is pending fresh CI verification before promotion.
+Weekly reachability spans the finite 400-year / 20,871-week Gregorian cycle and accounts for BYMONTH, BYDAY, and BYSETPOS candidate cardinality; DAILY reachability also rejects permanently impossible BYSETPOS cardinalities.
 
 ## Implemented architecture
 
