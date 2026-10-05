@@ -110,6 +110,8 @@ pub struct TariaReleaseHistoryEntry {
 pub struct TariaReleaseDiff {
     pub from_release_id: String,
     pub to_release_id: String,
+    pub added_source_projection_refs: Vec<String>,
+    pub removed_source_projection_refs: Vec<String>,
     pub added_bundle_refs: Vec<String>,
     pub removed_bundle_refs: Vec<String>,
     pub added_calendar_ids: Vec<String>,
@@ -1119,6 +1121,23 @@ impl TemporalStore {
         from_release_id: &str,
         to_release_id: &str,
     ) -> anyhow::Result<TariaReleaseDiff> {
+        let from_sources = self.taria_release_string_set(
+            from_release_id,
+            r#"
+            SELECT DISTINCT projection_ref
+            FROM taria_release_sources
+            WHERE release_id = ?1
+            "#,
+        )?;
+        let to_sources = self.taria_release_string_set(
+            to_release_id,
+            r#"
+            SELECT DISTINCT projection_ref
+            FROM taria_release_sources
+            WHERE release_id = ?1
+            "#,
+        )?;
+
         let from_bundles = self.taria_release_string_set(
             from_release_id,
             r#"
@@ -1183,6 +1202,8 @@ impl TemporalStore {
         Ok(TariaReleaseDiff {
             from_release_id: from_release_id.to_string(),
             to_release_id: to_release_id.to_string(),
+            added_source_projection_refs: set_added(&from_sources, &to_sources),
+            removed_source_projection_refs: set_added(&to_sources, &from_sources),
             added_bundle_refs: set_added(&from_bundles, &to_bundles),
             removed_bundle_refs: set_added(&to_bundles, &from_bundles),
             added_calendar_ids: set_added(&from_calendars, &to_calendars),
