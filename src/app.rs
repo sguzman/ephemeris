@@ -2,9 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
-use chrono::{
-    DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate, Timelike, Utc,
-};
+use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;
 use eframe::egui::{self, Color32, RichText};
 use uuid::Uuid;
@@ -3212,7 +3210,9 @@ fn render_timeline(
         ui.strong("Timeline");
         ui.small(axis_label);
         if unpositioned > 0 {
-            ui.small(format!("· {unpositioned} unresolved event(s) not positioned"));
+            ui.small(format!(
+                "· {unpositioned} unresolved event(s) not positioned"
+            ));
         }
     });
     ui.separator();
@@ -3246,9 +3246,7 @@ fn render_timeline(
                 egui::Stroke::new(1.0, Color32::DARK_GRAY),
             );
 
-            let x_for = |fraction: f32| {
-                rect.left() + rect.width() * fraction.clamp(0.0, 1.0)
-            };
+            let x_for = |fraction: f32| rect.left() + rect.width() * fraction.clamp(0.0, 1.0);
             let start_x = x_for(span.start_fraction);
             let end_x = x_for(span.end_fraction);
             let color = event_color(event, colors);
@@ -3304,16 +3302,10 @@ fn timeline_span(
             end_exclusive,
         } => {
             let end = end_exclusive.unwrap_or(start + chrono::Duration::days(1));
-            (
-                date_fraction(start, 0),
-                date_fraction(end, 0),
-                false,
-            )
+            (date_fraction(start, 0), date_fraction(end, 0), false)
         }
         TimeSpec::Instant {
-            start_utc,
-            end_utc,
-            ..
+            start_utc, end_utc, ..
         } => {
             let start = start_utc.with_timezone(&timezone).naive_local();
             let end = end_utc
@@ -3341,20 +3333,12 @@ fn timeline_span(
             } else {
                 NaiveDate::from_ymd_opt(year, month + 1, 1)?
             };
-            (
-                date_fraction(start, 0),
-                date_fraction(end, 0),
-                false,
-            )
+            (date_fraction(start, 0), date_fraction(end, 0), false)
         }
         TimeSpec::Year { year } => {
             let start = NaiveDate::from_ymd_opt(year, 1, 1)?;
             let end = NaiveDate::from_ymd_opt(year + 1, 1, 1)?;
-            (
-                date_fraction(start, 0),
-                date_fraction(end, 0),
-                false,
-            )
+            (date_fraction(start, 0), date_fraction(end, 0), false)
         }
         TimeSpec::Unknown { .. } => return None,
     };
