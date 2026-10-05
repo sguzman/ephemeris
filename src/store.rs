@@ -3511,6 +3511,7 @@ mod tests {
             )
             .expect("old snapshots");
 
+        changing.normalized_title = "Changed event".to_string();
         changing.time = TimeSpec::DateOnly {
             start: new_day,
             end_exclusive: None,
@@ -3593,9 +3594,12 @@ mod tests {
             .iter()
             .find(|change| change.event_id == changing.id)
             .expect("changed detail");
+        assert!(changed.title_changed);
         assert!(changed.moved);
         assert!(changed.status_changed);
         assert!(changed.newly_cancelled);
+        assert_eq!(changed.from_title.as_deref(), Some("Changing event"));
+        assert_eq!(changed.to_title.as_deref(), Some("Changed event"));
         assert_eq!(changed.from_status.as_deref(), Some("confirmed"));
         assert_eq!(changed.to_status.as_deref(), Some("cancelled"));
         assert_ne!(changed.from_time_json, changed.to_time_json);
