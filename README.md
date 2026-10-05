@@ -37,6 +37,9 @@ Implemented:
 - canonical `TemporalEvent` and `TemporalSource` types
 - event-native storage with no Taskwarrior mediation
 - distinct temporal semantics for date-only, all-day, exact instants, floating/local time, month precision, year precision, and unresolved time
+- persisted recurrence definitions with daily/weekly/monthly/yearly frequency, interval, count, and until bounds
+- query-window recurrence expansion with deterministic occurrence identity instead of eager infinite materialization
+- recurrence support for date-only, all-day, floating, and exact/source-timezone events, including source-wall-clock preservation across DST
 - Year, Quarter, Month, Week, and Day date ranges
 - Grid, Agenda, Compact Agenda, chronological Stream, proportional Timeline, Density, Summary, and dense Table as independent layouts
 - ordered user-defined Table columns with add, hide, reorder, and reset controls
