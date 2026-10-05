@@ -61,6 +61,7 @@ pub struct EphemerisApp {
     store: TemporalStore,
     state: PersistedUiState,
     events: Vec<TemporalEvent>,
+    occurrence_parent_ids: HashMap<Uuid, Uuid>,
     unplaced_events: Vec<TemporalEvent>,
     sources: Vec<TemporalSource>,
     source_event_counts: HashMap<Uuid, u64>,
@@ -106,6 +107,7 @@ impl EphemerisApp {
             store,
             state,
             events: Vec::new(),
+            occurrence_parent_ids: HashMap::new(),
             unplaced_events: Vec::new(),
             sources: Vec::new(),
             source_event_counts: HashMap::new(),
@@ -767,6 +769,13 @@ impl EphemerisApp {
             .unwrap_or(chrono_tz::America::Mexico_City)
     }
 
+    fn canonical_event_id(&self, event_id: Uuid) -> Uuid {
+        self.occurrence_parent_ids
+            .get(&event_id)
+            .copied()
+            .unwrap_or(event_id)
+    }
+
     fn reload(&mut self) -> anyhow::Result<()> {
         let timezone = self.timezone();
         let focus = self.state.focus_date();
@@ -779,12 +788,40 @@ impl EphemerisApp {
             self.state.calendar_view,
             CalendarView::Year | CalendarView::Quarter | CalendarView::Month
         );
-        self.events = self.store.events_in_window(
-            window.start,
-            window.end_exclusive,
-            timezone,
-            include_imprecise,
-        )?;
+        let mut candidates = self
+            .store
+            .events_in_window(
+                window.start,
+                window.end_exclusive,
+                timezone,
+                include_imprecise,
+            )?
+            .into_iter()
+            .map(|event| (event.id, event))
+            .collect::<HashMap<_, _>>();
+        for event in self.store.recurring_events()? {
+            candidates.entry(event.id).or_insert(event);
+        }
+
+        self.events.clear();
+        self.occurrence_parent_ids.clear();
+        for event in candidates.into_values() {
+            if event.recurrence.is_some() {
+                for occurrence in
+                    event.occurrences_in_window(window.start, window.end_exclusive, timezone)?
+                {
+                    let mut materialized = event.clone();
+                    materialized.id = occurrence.id;
+                    materialized.time = occurrence.time;
+                    self.occurrence_parent_ids
+                        .insert(materialized.id, event.id);
+                    self.events.push(materialized);
+                }
+            } else {
+                self.events.push(event);
+            }
+        }
+
         if self.state.calendar_view != CalendarView::Year {
             self.events
                 .retain(|event| !matches!(event.time, TimeSpec::Year { .. }));
@@ -1016,7 +1053,8 @@ impl EphemerisApp {
                         &self.saved_views,
                         event,
                         &context,
-                        self.taria_memberships.get(&event.id),
+                        self.taria_memberships
+                            .get(&self.canonical_event_id(event.id)),
                     )
             })
             .cloned()
@@ -1042,7 +1080,8 @@ impl EphemerisApp {
                         &self.saved_views,
                         event,
                         &context,
-                        self.taria_memberships.get(&event.id),
+                        self.taria_memberships
+                            .get(&self.canonical_event_id(event.id)),
                     )
             })
             .cloned()
@@ -2161,6 +2200,7 @@ impl EphemerisApp {
                                     rules: &self.state.color_rules,
                                     overlays: &self.state.overlays,
                                     memberships: &self.taria_memberships,
+                                    occurrence_parent_ids: &self.occurrence_parent_ids,
                                     query_context: QueryContext::for_timezone(self.timezone()),
                                 },
                             )),
@@ -2297,7 +2337,13 @@ impl EphemerisApp {
             }
 
             ui.separator();
-            inspector_row(ui, "Event ID", &event.id.to_string());
+            let canonical_id = self.canonical_event_id(event.id);
+            if canonical_id != event.id {
+                inspector_row(ui, "Occurrence ID", &event.id.to_string());
+                inspector_row(ui, "Event ID", &canonical_id.to_string());
+            } else {
+                inspector_row(ui, "Event ID", &event.id.to_string());
+            }
             inspector_row(ui, "Created", &event.created_at.to_rfc3339());
             inspector_row(ui, "Updated", &event.updated_at.to_rfc3339());
         });
@@ -2390,6 +2436,7 @@ impl eframe::App for EphemerisApp {
                                     rules: &self.state.color_rules,
                                     overlays: &self.state.overlays,
                                     memberships: &self.taria_memberships,
+                                    occurrence_parent_ids: &self.occurrence_parent_ids,
                                     query_context: QueryContext::for_timezone(timezone),
                                 },
                             },
@@ -3135,6 +3182,7 @@ struct ColorPresentation<'a> {
     rules: &'a [ColorRule],
     overlays: &'a [Overlay],
     memberships: &'a HashMap<Uuid, EventMembership>,
+    occurrence_parent_ids: &'a HashMap<Uuid, Uuid>,
     query_context: QueryContext,
 }
 
@@ -4268,7 +4316,12 @@ fn date_group_label(event: &TemporalEvent, timezone: Tz) -> String {
 }
 
 fn event_color(event: &TemporalEvent, colors: ColorPresentation<'_>) -> Color32 {
-    let membership = colors.memberships.get(&event.id);
+    let canonical_id = colors
+        .occurrence_parent_ids
+        .get(&event.id)
+        .copied()
+        .unwrap_or(event.id);
+    let membership = colors.memberships.get(&canonical_id);
 
     if let Some(overlay) = colors
         .overlays
