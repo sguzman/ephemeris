@@ -668,10 +668,11 @@ impl RecurrenceRule {
             }
         }
         if !self.by_month_day.is_empty()
+            && self.frequency != RecurrenceFrequency::Daily
             && self.frequency != RecurrenceFrequency::Monthly
             && self.frequency != RecurrenceFrequency::Yearly
         {
-            return Err(RecurrenceError::ByMonthDayRequiresMonthlyOrYearly);
+            return Err(RecurrenceError::ByMonthDayRequiresSupportedContext);
         }
         let mut month_days = HashSet::new();
         for day in &self.by_month_day {
@@ -797,7 +798,7 @@ pub enum RecurrenceError {
     ByYearDayRequiresYearly,
     InvalidByYearDay(i16),
     DuplicateByYearDay(i16),
-    ByMonthDayRequiresMonthlyOrYearly,
+    ByMonthDayRequiresSupportedContext,
     InvalidByMonthDay(i8),
     DuplicateByMonthDay(i8),
     OrdinalByWeekdayRequiresMonthlyOrYearly,
@@ -866,9 +867,9 @@ impl fmt::Display for RecurrenceError {
             Self::DuplicateByYearDay(day) => {
                 write!(formatter, "duplicate BYYEARDAY value {day}")
             }
-            Self::ByMonthDayRequiresMonthlyOrYearly => {
-                formatter.write_str("BYMONTHDAY selection requires monthly or yearly recurrence")
-            }
+            Self::ByMonthDayRequiresSupportedContext => formatter.write_str(
+                "BYMONTHDAY selection requires daily, monthly, or yearly recurrence",
+            ),
             Self::InvalidByMonthDay(day) => {
                 write!(
                     formatter,
@@ -1270,7 +1271,9 @@ fn recurrence_candidates_before_set_pos(
     period: u32,
 ) -> Result<Vec<TimeSpec>, RecurrenceError> {
     if rule.frequency == RecurrenceFrequency::Daily
-        && (!rule.by_weekday.is_empty() || !rule.by_month.is_empty())
+        && (!rule.by_weekday.is_empty()
+            || !rule.by_month.is_empty()
+            || !rule.by_month_day.is_empty())
     {
         let Some(candidate) = shift_recurrence_time(base, rule, period)? else {
             return Ok(Vec::new());
@@ -1285,7 +1288,18 @@ fn recurrence_candidates_before_set_pos(
             || u8::try_from(candidate_date.month())
                 .ok()
                 .is_some_and(|month| rule.by_month.contains(&month));
-        return Ok((weekday_matches && month_matches)
+        let month_day_matches = if rule.by_month_day.is_empty() {
+            true
+        } else {
+            let month_start =
+                NaiveDate::from_ymd_opt(candidate_date.year(), candidate_date.month(), 1)
+                    .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            rule.by_month_day
+                .iter()
+                .filter_map(|selector| resolve_month_day(month_start, *selector))
+                .any(|date| date == candidate_date)
+        };
+        return Ok((weekday_matches && month_matches && month_day_matches)
             .then_some(candidate)
             .into_iter()
             .collect());
@@ -1435,7 +1449,7 @@ fn daily_rule_has_reachable_candidate(
     if rule.frequency != RecurrenceFrequency::Daily {
         return Ok(true);
     }
-    if rule.by_month.is_empty() {
+    if rule.by_month.is_empty() && rule.by_month_day.is_empty() {
         return Ok(daily_byday_has_reachable_weekday(base, rule)?
             && set_positions_select_any(1, &rule.by_set_pos));
     }
@@ -1457,15 +1471,31 @@ fn daily_rule_has_reachable_candidate(
         let candidate_date = cycle_start
             .checked_add_days(Days::new(offset))
             .ok_or(RecurrenceError::ArithmeticOverflow)?;
-        let month_matches = u8::try_from(candidate_date.month())
-            .ok()
-            .is_some_and(|month| rule.by_month.contains(&month));
+        let month_matches = rule.by_month.is_empty()
+            || u8::try_from(candidate_date.month())
+                .ok()
+                .is_some_and(|month| rule.by_month.contains(&month));
         let weekday_matches = rule.by_weekday.is_empty()
             || rule.by_weekday.iter().any(|weekday| {
                 weekday.offset_from_monday()
                     == u64::from(candidate_date.weekday().num_days_from_monday())
             });
-        if month_matches && weekday_matches && set_positions_select_any(1, &rule.by_set_pos) {
+        let month_day_matches = if rule.by_month_day.is_empty() {
+            true
+        } else {
+            let month_start =
+                NaiveDate::from_ymd_opt(candidate_date.year(), candidate_date.month(), 1)
+                    .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            rule.by_month_day
+                .iter()
+                .filter_map(|selector| resolve_month_day(month_start, *selector))
+                .any(|date| date == candidate_date)
+        };
+        if month_matches
+            && weekday_matches
+            && month_day_matches
+            && set_positions_select_any(1, &rule.by_set_pos)
+        {
             return Ok(true);
         }
 
@@ -6206,12 +6236,16 @@ mod tests {
     }
 
     #[test]
-    fn by_month_day_validation_rejects_wrong_frequency_invalid_and_duplicate_days() {
+    fn by_month_day_validation_accepts_daily_and_rejects_weekly_invalid_and_duplicate_days() {
+        let mut daily = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        daily.by_month_day = vec![1, -1];
+        daily.validate().expect("daily BYMONTHDAY");
+
         let mut wrong_frequency = RecurrenceRule::new(RecurrenceFrequency::Weekly);
         wrong_frequency.by_month_day = vec![15];
         assert!(matches!(
             wrong_frequency.validate(),
-            Err(RecurrenceError::ByMonthDayRequiresMonthlyOrYearly)
+            Err(RecurrenceError::ByMonthDayRequiresSupportedContext)
         ));
 
         let mut invalid = RecurrenceRule::new(RecurrenceFrequency::Monthly);
@@ -8537,4 +8571,260 @@ mod tests {
             vec![NaiveDate::from_ymd_opt(2426, 1, 31).expect("future January")]
         );
     }
+
+    #[test]
+    fn daily_bymonthday_supports_signed_month_days() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 30).expect("start");
+        let mut event = TemporalEvent::new(
+            "First and last day daily",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: Some(5),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: vec![1, -1],
+            by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let dates = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2026, 4, 2).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            dates,
+            vec![
+                NaiveDate::from_ymd_opt(2026, 1, 31).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 2, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 2, 28).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 3, 31).unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn daily_bymonthday_composes_with_bymonth_and_byday() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1).expect("start");
+        let mut event = TemporalEvent::new(
+            "March selected Mondays",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: Some(3),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: vec![RecurrenceWeekday::Monday],
+            by_month: vec![3],
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: vec![2, 9, 16],
+            by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let dates = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2026, 4, 1).expect("end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .filter_map(|occurrence| occurrence.time.display_date(chrono_tz::UTC))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            dates,
+            vec![
+                NaiveDate::from_ymd_opt(2026, 3, 2).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 3, 9).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 3, 16).unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn daily_bymonthday_reachability_detects_unreachable_gregorian_cycle() {
+        let start = NaiveDate::from_ymd_opt(2000, 1, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Never first day",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.interval = u32::try_from(GREGORIAN_CYCLE_DAYS).expect("cycle fits u32");
+        rule.count = Some(1);
+        rule.by_month_day = vec![1];
+        event.recurrence = Some(rule.clone());
+
+        assert!(!daily_rule_has_reachable_candidate(&event.time, &rule).expect("reachability"));
+        assert!(
+            event
+                .occurrences_in_window(
+                    start,
+                    NaiveDate::from_ymd_opt(2001, 1, 1).expect("end"),
+                    chrono_tz::UTC,
+                )
+                .expect("expand")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn exact_daily_bymonthday_preserves_source_wall_clock_across_dst() {
+        let start_utc = DateTime::parse_from_rfc3339("2026-03-06T14:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc);
+        let mut event = TemporalEvent::new(
+            "Selected March days at nine",
+            TimeSpec::Instant {
+                start_utc,
+                end_utc: None,
+                source_timezone: Some("America/New_York".to_string()),
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: Some(3),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: vec![3],
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: vec![6, 9, 10],
+            by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let zone = chrono_tz::America::New_York;
+        let local = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 3, 6).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 3, 12).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Instant { start_utc, .. } => start_utc.with_timezone(&zone),
+                other => panic!("expected instant, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(local.len(), 3);
+        assert!(local.iter().all(|date| date.format("%H:%M").to_string() == "09:00"));
+        assert_eq!(
+            local[0].with_timezone(&Utc).format("%H:%M").to_string(),
+            "14:00"
+        );
+        assert_eq!(
+            local[1].with_timezone(&Utc).format("%H:%M").to_string(),
+            "13:00"
+        );
+    }
+
+    #[test]
+    fn daily_bymonthday_integrates_with_exdate_and_moved_override() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 30).expect("start");
+        let excluded = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 2, 1).unwrap(),
+            end_exclusive: None,
+        };
+        let original = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 2, 28).unwrap(),
+            end_exclusive: None,
+        };
+        let replacement = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 3, 2).unwrap(),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Daily month-day exceptions",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            interval: 1,
+            count: Some(4),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: vec![1, -1],
+            by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: vec![excluded.clone()],
+            overrides: vec![RecurrenceOverride {
+                original: original.clone(),
+                replacement: Some(replacement.clone()),
+                cancelled: false,
+            }],
+        });
+
+        let occurrences = event
+            .occurrences_in_window(
+                start,
+                NaiveDate::from_ymd_opt(2026, 3, 5).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        assert!(
+            occurrences
+                .iter()
+                .all(|occurrence| occurrence.original_time != excluded)
+        );
+        let moved = occurrences
+            .iter()
+            .find(|occurrence| occurrence.original_time == original)
+            .expect("moved");
+        assert_eq!(moved.time, replacement);
+        assert_eq!(
+            moved.id,
+            occurrence_identity(event.id, &original).expect("stable identity")
+        );
+    }
+
 }
