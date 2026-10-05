@@ -133,9 +133,12 @@ pub struct TariaEventChangeDetail {
     pub title: String,
     pub added: bool,
     pub removed: bool,
+    pub title_changed: bool,
     pub moved: bool,
     pub status_changed: bool,
     pub newly_cancelled: bool,
+    pub from_title: Option<String>,
+    pub to_title: Option<String>,
     pub from_status: Option<String>,
     pub to_status: Option<String>,
     pub from_time_json: Option<String>,
@@ -1358,9 +1361,12 @@ impl TemporalStore {
                 title: to.normalized_title.clone(),
                 added: true,
                 removed: false,
+                title_changed: false,
                 moved: false,
                 status_changed: false,
                 newly_cancelled: false,
+                from_title: None,
+                to_title: Some(to.normalized_title.clone()),
                 from_status: None,
                 to_status: Some(to.status.clone()),
                 from_time_json: None,
@@ -1375,9 +1381,12 @@ impl TemporalStore {
                 title: from.normalized_title.clone(),
                 added: false,
                 removed: true,
+                title_changed: false,
                 moved: false,
                 status_changed: false,
                 newly_cancelled: false,
+                from_title: Some(from.normalized_title.clone()),
+                to_title: None,
                 from_status: Some(from.status.clone()),
                 to_status: None,
                 from_time_json: Some(from.time_json.clone()),
@@ -1388,6 +1397,7 @@ impl TemporalStore {
         for event_id in from_snapshot_ids.intersection(&to_snapshot_ids) {
             let from = &from_snapshots[event_id];
             let to = &to_snapshots[event_id];
+            let title_changed = from.normalized_title != to.normalized_title;
             let moved = from.time_json != to.time_json;
             let status_changed = from.status != to.status;
             let newly_cancelled =
@@ -1402,15 +1412,18 @@ impl TemporalStore {
             if newly_cancelled {
                 newly_cancelled_event_ids.push(*event_id);
             }
-            if moved || status_changed || from.normalized_title != to.normalized_title {
+            if title_changed || moved || status_changed {
                 event_changes.push(TariaEventChangeDetail {
                     event_id: *event_id,
                     title: to.normalized_title.clone(),
                     added: false,
                     removed: false,
+                    title_changed,
                     moved,
                     status_changed,
                     newly_cancelled,
+                    from_title: Some(from.normalized_title.clone()),
+                    to_title: Some(to.normalized_title.clone()),
                     from_status: Some(from.status.clone()),
                     to_status: Some(to.status.clone()),
                     from_time_json: Some(from.time_json.clone()),
@@ -3562,7 +3575,9 @@ mod tests {
             .find(|change| change.event_id == added.id)
             .expect("added detail");
         assert!(added_change.added);
+        assert!(!added_change.title_changed);
         assert_eq!(added_change.title, "Added event");
+        assert_eq!(added_change.to_title.as_deref(), Some("Added event"));
 
         let removed_change = diff
             .event_changes
@@ -3570,7 +3585,9 @@ mod tests {
             .find(|change| change.event_id == removed.id)
             .expect("removed detail");
         assert!(removed_change.removed);
+        assert!(!removed_change.title_changed);
         assert_eq!(removed_change.title, "Removed event");
+        assert_eq!(removed_change.from_title.as_deref(), Some("Removed event"));
 
         let changed = diff
             .event_changes
