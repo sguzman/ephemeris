@@ -1092,6 +1092,9 @@ impl EphemerisApp {
             if input.key_pressed(egui::Key::A) {
                 target_layout = Some(CalendarLayout::Agenda);
             }
+            if input.key_pressed(egui::Key::S) {
+                target_layout = Some(CalendarLayout::Stream);
+            }
         });
 
         if navigate != 0 {
@@ -3105,6 +3108,7 @@ fn render_calendar(
         CalendarLayout::Agenda => {
             render_agenda(ui, events, timezone, selected, group_by, sort_rules, colors)
         }
+        CalendarLayout::Stream => render_stream(ui, events, timezone, selected, colors),
         CalendarLayout::Table => render_table(
             ui,
             events,
@@ -3129,6 +3133,88 @@ fn render_calendar(
             CalendarView::Day => render_day(ui, events, focus, timezone, selected, colors),
         },
     }
+}
+
+fn render_stream(
+    ui: &mut egui::Ui,
+    events: &[TemporalEvent],
+    timezone: Tz,
+    selected: Option<Uuid>,
+    colors: ColorPresentation<'_>,
+) -> Option<CalendarAction> {
+    let mut ordered = events.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        agenda_sort_date(left, timezone)
+            .cmp(&agenda_sort_date(right, timezone))
+            .then_with(|| {
+                left.display_time_label(timezone)
+                    .cmp(&right.display_time_label(timezone))
+            })
+            .then_with(|| left.normalized_title.cmp(&right.normalized_title))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let mut action = None;
+    let mut previous_marker: Option<String> = None;
+
+    for event in ordered {
+        let marker = date_group_label(event, timezone);
+        if previous_marker.as_deref() != Some(marker.as_str()) {
+            if previous_marker.is_some() {
+                ui.add_space(6.0);
+            }
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("●").color(Color32::GRAY));
+                ui.strong(&marker);
+            });
+            previous_marker = Some(marker);
+        }
+
+        ui.horizontal_top(|ui| {
+            ui.add_space(3.0);
+            ui.label(RichText::new("│").monospace().color(Color32::DARK_GRAY));
+            ui.vertical(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(event.display_time_label(timezone))
+                            .monospace()
+                            .color(Color32::GRAY),
+                    );
+                    if ui
+                        .selectable_label(
+                            selected == Some(event.id),
+                            RichText::new(&event.normalized_title)
+                                .color(event_color(event, colors))
+                                .strong(),
+                        )
+                        .clicked()
+                    {
+                        action = Some(CalendarAction::Select(event.id));
+                    }
+                    ui.small(event.status.as_str());
+                });
+
+                let mut metadata = Vec::new();
+                if let Some(event_type) = event.event_type.as_deref() {
+                    metadata.push(event_type);
+                }
+                if let Some(domain) = event.domain.as_deref() {
+                    metadata.push(domain);
+                }
+                if let Some(jurisdiction) = event.jurisdiction.as_deref() {
+                    metadata.push(jurisdiction);
+                }
+                if let Some(institution) = event.institution.as_deref() {
+                    metadata.push(institution);
+                }
+                if !metadata.is_empty() {
+                    ui.small(metadata.join(" · "));
+                }
+            });
+        });
+    }
+
+    action
 }
 
 fn render_agenda(
