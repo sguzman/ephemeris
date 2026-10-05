@@ -810,14 +810,11 @@ impl fmt::Display for RecurrenceError {
             Self::InvalidOrdinalByWeekday(ordinal) => {
                 write!(
                     formatter,
-                    "monthly ordinal BYDAY must use -5..=-1 or 1..=5, got {ordinal}"
+                    "ordinal BYDAY must use -5..=-1 or 1..=5, got {ordinal}"
                 )
             }
             Self::DuplicateOrdinalByWeekday(ordinal, weekday) => {
-                write!(
-                    formatter,
-                    "duplicate monthly BYDAY selector {ordinal} {weekday}"
-                )
+                write!(formatter, "duplicate ordinal BYDAY selector {ordinal} {weekday}")
             }
             Self::UnsupportedTimeKind(kind) => {
                 write!(
@@ -1444,8 +1441,9 @@ fn yearly_recurrence_candidates(
         }
         if !rule.by_month_day.is_empty() {
             candidate_dates.retain(|date| {
-                let month_start = NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
-                    .expect("candidate date month must be valid");
+                let Some(month_start) = NaiveDate::from_ymd_opt(date.year(), date.month(), 1) else {
+                    return false;
+                };
                 rule.by_month_day
                     .iter()
                     .filter_map(|selector| resolve_month_day(month_start, *selector))
@@ -1454,8 +1452,9 @@ fn yearly_recurrence_candidates(
         }
         if !rule.by_month_weekday.is_empty() {
             candidate_dates.retain(|date| {
-                let month_start = NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
-                    .expect("candidate date month must be valid");
+                let Some(month_start) = NaiveDate::from_ymd_opt(date.year(), date.month(), 1) else {
+                    return false;
+                };
                 rule.by_month_weekday
                     .iter()
                     .filter_map(|selector| resolve_ordinal_weekday(month_start, *selector))
