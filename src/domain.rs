@@ -1385,10 +1385,8 @@ fn daily_rule_has_reachable_candidate(
         return Ok(true);
     }
     if rule.by_month.is_empty() {
-        return Ok(
-            daily_byday_has_reachable_weekday(base, rule)?
-                && set_positions_select_any(1, &rule.by_set_pos),
-        );
+        return Ok(daily_byday_has_reachable_weekday(base, rule)?
+            && set_positions_select_any(1, &rule.by_set_pos));
     }
 
     let base_date = recurrence_rule_date(base)?;
@@ -1416,10 +1414,7 @@ fn daily_rule_has_reachable_candidate(
                 weekday.offset_from_monday()
                     == u64::from(candidate_date.weekday().num_days_from_monday())
             });
-        if month_matches
-            && weekday_matches
-            && set_positions_select_any(1, &rule.by_set_pos)
-        {
+        if month_matches && weekday_matches && set_positions_select_any(1, &rule.by_set_pos) {
             return Ok(true);
         }
 
@@ -1479,21 +1474,21 @@ fn weekly_rule_has_reachable_candidate(
     let equivalent_base = NaiveDate::from_ymd_opt(cycle_year, base_date.month(), base_date.day())
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
     let base_weekday = u64::from(equivalent_base.weekday().num_days_from_monday());
-    let days_since_week_start =
-        (base_weekday + 7 - rule.week_start.offset_from_monday()) % 7;
+    let days_since_week_start = (base_weekday + 7 - rule.week_start.offset_from_monday()) % 7;
     let equivalent_week_start = equivalent_base
         .checked_sub_days(Days::new(days_since_week_start))
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
-    let mut day_offset = (equivalent_week_start - cycle_start)
-        .num_days()
-        .rem_euclid(i64::try_from(GREGORIAN_CYCLE_DAYS)
-            .map_err(|_| RecurrenceError::ArithmeticOverflow)?);
+    let mut day_offset = (equivalent_week_start - cycle_start).num_days().rem_euclid(
+        i64::try_from(GREGORIAN_CYCLE_DAYS).map_err(|_| RecurrenceError::ArithmeticOverflow)?,
+    );
     let step_weeks = u64::from(rule.interval) % GREGORIAN_CYCLE_WEEKS;
     let cycle_len =
         GREGORIAN_CYCLE_WEEKS / greatest_common_divisor(GREGORIAN_CYCLE_WEEKS, step_weeks);
-    let step_days = i64::try_from(step_weeks.checked_mul(7).ok_or(
-        RecurrenceError::ArithmeticOverflow,
-    )?)
+    let step_days = i64::try_from(
+        step_weeks
+            .checked_mul(7)
+            .ok_or(RecurrenceError::ArithmeticOverflow)?,
+    )
     .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
     let cycle_days =
         i64::try_from(GREGORIAN_CYCLE_DAYS).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
@@ -1521,11 +1516,13 @@ fn weekly_selector_dates_for_week(
     active_week_start: NaiveDate,
 ) -> Result<Vec<NaiveDate>, RecurrenceError> {
     let mut weekday_offsets = if rule.by_weekday.is_empty() {
-        vec![u64::from(base_date.weekday().num_days_from_monday())
-            .checked_add(7)
-            .and_then(|weekday| weekday.checked_sub(rule.week_start.offset_from_monday()))
-            .ok_or(RecurrenceError::ArithmeticOverflow)?
-            % 7]
+        vec![
+            u64::from(base_date.weekday().num_days_from_monday())
+                .checked_add(7)
+                .and_then(|weekday| weekday.checked_sub(rule.week_start.offset_from_monday()))
+                .ok_or(RecurrenceError::ArithmeticOverflow)?
+                % 7,
+        ]
     } else {
         let mut weekdays = rule.by_weekday.clone();
         weekdays.sort_by_key(|weekday| weekday.offset_from(rule.week_start));
@@ -8223,7 +8220,11 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(local.len(), 3);
-        assert!(local.iter().all(|date| date.format("%H:%M").to_string() == "09:00"));
+        assert!(
+            local
+                .iter()
+                .all(|date| date.format("%H:%M").to_string() == "09:00")
+        );
         assert_eq!(
             local[0].with_timezone(&Utc).format("%H:%M").to_string(),
             "14:00"
@@ -8302,7 +8303,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn daily_reachability_accounts_for_bysetpos_candidate_size() {
         let start = NaiveDate::from_ymd_opt(2026, 1, 5).expect("start");
@@ -8331,5 +8331,4 @@ mod tests {
                 .is_empty()
         );
     }
-
 }
