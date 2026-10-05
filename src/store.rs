@@ -3876,6 +3876,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
@@ -3936,6 +3937,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![6],
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
@@ -3977,6 +3979,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![1, 4, 10],
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
@@ -4017,6 +4020,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
@@ -4060,6 +4064,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: vec![
@@ -4103,6 +4108,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: vec![1, 15, -1],
             by_month_weekday: vec![
@@ -4110,6 +4116,87 @@ mod tests {
                 RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
             ],
             by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        store.upsert_event(&event).expect("save");
+        let loaded = store
+            .event_by_id(event.id)
+            .expect("load")
+            .expect("stored event");
+        assert_eq!(loaded.recurrence, event.recurrence);
+    }
+
+    #[test]
+    fn store_rejects_by_week_no_on_non_yearly_recurrence() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Invalid BYWEEKNO",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            count: None,
+            until: None,
+            week_start: Default::default(),
+            by_weekday: Vec::new(),
+            by_month: Vec::new(),
+            by_week_no: vec![1],
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            by_set_pos: Vec::new(),
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        let error = store
+            .upsert_event(&event)
+            .expect_err("non-yearly BYWEEKNO must not persist");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event recurrence definition")
+        );
+        assert_eq!(store.event_count().expect("event count"), 0);
+    }
+
+    #[test]
+    fn yearly_by_week_no_roundtrips_through_event_storage() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule, RecurrenceWeekday};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Week-number selectors",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Yearly,
+            interval: 1,
+            count: Some(4),
+            until: None,
+            week_start: RecurrenceWeekday::Sunday,
+            by_weekday: vec![RecurrenceWeekday::Sunday, RecurrenceWeekday::Wednesday],
+            by_month: Vec::new(),
+            by_week_no: vec![1, -1],
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4144,6 +4231,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
@@ -4185,6 +4273,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: vec![1, 15, -1],
             by_month_weekday: Vec::new(),
@@ -4223,6 +4312,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: vec![1],
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
@@ -4264,6 +4354,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![1, 7, 12],
+            by_week_no: Vec::new(),
             by_year_day: vec![1, 100, 212, -1],
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
@@ -4304,6 +4395,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
@@ -4347,6 +4439,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![3, 11],
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: vec![1, 30, -1],
             by_month_weekday: vec![
@@ -4388,6 +4481,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: vec![1],
             by_month_weekday: Vec::new(),
@@ -4429,6 +4523,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: vec![1, 7, 12],
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: vec![1, -1],
             by_month_weekday: Vec::new(),
@@ -4467,6 +4562,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: vec![15],
             by_month_weekday: Vec::new(),
@@ -4508,6 +4604,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: vec![-1, 1, 15, 31],
             by_month_weekday: Vec::new(),
@@ -4546,6 +4643,7 @@ mod tests {
             week_start: RecurrenceWeekday::Sunday,
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
@@ -4587,6 +4685,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: vec![RecurrenceWeekday::Monday],
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
@@ -4632,6 +4731,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
@@ -4677,6 +4777,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
@@ -4725,6 +4826,7 @@ mod tests {
             week_start: Default::default(),
             by_weekday: Vec::new(),
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),
@@ -4774,6 +4876,7 @@ mod tests {
                 crate::domain::RecurrenceWeekday::Friday,
             ],
             by_month: Vec::new(),
+            by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
             by_month_weekday: Vec::new(),

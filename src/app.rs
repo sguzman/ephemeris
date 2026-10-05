@@ -2315,6 +2315,16 @@ impl EphemerisApp {
                         .join(", ");
                     inspector_row(ui, "Months", &months);
                 }
+                if !rule.by_week_no.is_empty() {
+                    let mut week_numbers = rule.by_week_no.clone();
+                    week_numbers.sort_unstable();
+                    let week_numbers = week_numbers
+                        .into_iter()
+                        .map(|week_no| week_no.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    inspector_row(ui, "Week numbers", &week_numbers);
+                }
                 if !rule.by_year_day.is_empty() {
                     let mut year_days = rule.by_year_day.clone();
                     year_days.sort_unstable();
