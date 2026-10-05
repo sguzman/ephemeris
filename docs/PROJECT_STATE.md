@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the saved-view-reference composition checkpoint, all **58** library tests pass. Verified implementation code checkpoint: `0de0c447f0742de6d3ce8c0955b42d8a2a1d090d`, with format, check, strict Clippy, and tests all green.
+At the first canonical release-snapshot checkpoint, all **60** library tests pass. Verified implementation code checkpoint: `6f5612c7a6314deaf81a1ce06137abe61288b8c4`, with format, check, strict Clippy, and tests all green. Later source-inspector correctness refinements build on that checkpoint and are validated again at the documentation head.
 
 ## Implemented architecture
 
@@ -37,7 +37,7 @@ At the saved-view-reference composition checkpoint, all **58** library tests pas
 
 SQLite via bundled `rusqlite`.
 
-Current schema version: 10.
+Current schema version: 12.
 
 The database owns:
 
@@ -47,6 +47,8 @@ The database owns:
 - Taria source/import-record mappings
 - Taria upstream event/reconciled identity aliases
 - immutable Taria release metadata
+- release-to-source projection associations
+- immutable per-release canonical event snapshots
 - immutable CalendarSets
 - release-to-CalendarSet associations
 - projected calendars
@@ -315,11 +317,10 @@ The current milestone is a foundation, not the finished calendar.
 
 Not yet implemented:
 
-- richer field-level release/event snapshot diffs beyond membership-level release history
+- richer per-field release diff presentation beyond canonical add/remove/time/status/cancellation changes
 - event-occurrence/recurrence engine
-- dedicated provenance/snapshot/history tables
-- snapshot diffs
-- source health/rollover
+- general-purpose provenance/history tables beyond the Taria release snapshot model
+- persistent refresh-failure history and policy-driven stale/health thresholds
 - annotations
 - relations and collections
 - duplicate/entity resolution
@@ -404,7 +405,7 @@ Implemented:
 
 ## Immediate next implementation boundary
 
-Harden **release adoption execution** now that filesystem transport, identity, membership, query exposure, and release-posture UX are materialized.
+Phase 6 source management/history is now active on top of the completed release-adoption execution boundary.
 
 Implemented in the current slice:
 
@@ -435,10 +436,31 @@ Release-history/diff inspection is now implemented from persisted SQLite state:
 
 - adopted releases are listed without reopening Taria files;
 - current release is compared with the previous release on the same channel;
-- diffs report added/removed bundle refs, projected calendars, and resolved CalendarSet member-event presence;
-- the UI explicitly distinguishes these membership-level deltas from future field-level event snapshot diffs.
+- schema v11 persists the exact source projections associated with each adopted release;
+- source rollover diffs report added/removed projection refs;
+- schema v12 stores one canonical event snapshot per event actually present in each release, after cross-projection reconciliation;
+- retained-missing local records are not falsely counted as present in later release snapshots;
+- canonical snapshot diffs report added/removed events, temporal moves, lifecycle-status changes, and newly cancelled events;
+- resolved CalendarSet member-event deltas remain a separate membership-level view;
+- snapshot capture participates in the same whole-release transaction, including rollback;
+- older pre-v12 releases are not fabricated/backfilled; re-adoption can populate snapshots from the immutable release payload.
 
 Calendar algebra is also now editable in the GUI.
+
+### Source inspector and release posture
+
+The Sources panel now has a first Phase 6 source-management surface.
+
+Implemented:
+
+- source selection independent from visibility toggles;
+- source identity, external ref, publisher, kind, authority, locator, enabled/read-only state, creation time, local refresh time, and raw properties inspection;
+- upstream Taria generation time when present;
+- canonical event counts that include both direct ownership and source/import-record mappings, so reconciled cross-source events count for every contributing source;
+- persisted release-to-source projection membership;
+- current-release versus historical/not-current source posture;
+- neutral handling for upgraded databases that have not yet recorded release/source links;
+- source projection add/remove rollover in release-history diffs.
 
 ### Configurable Table columns
 
