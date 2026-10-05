@@ -3917,7 +3917,7 @@ mod tests {
     }
 
     #[test]
-    fn store_rejects_by_month_on_unsupported_monthly_recurrence() {
+    fn store_rejects_by_month_on_unsupported_weekly_recurrence() {
         use crate::domain::{RecurrenceFrequency, RecurrenceRule};
 
         let store = TemporalStore::open_in_memory().expect("store");
@@ -3930,7 +3930,7 @@ mod tests {
             },
         );
         event.recurrence = Some(RecurrenceRule {
-            frequency: RecurrenceFrequency::Monthly,
+            frequency: RecurrenceFrequency::Weekly,
             interval: 1,
             count: None,
             until: None,
@@ -3949,7 +3949,7 @@ mod tests {
 
         let error = store
             .upsert_event(&event)
-            .expect_err("monthly BYMONTH is not supported in this slice");
+            .expect_err("weekly BYMONTH is not supported in this slice");
         assert!(
             error
                 .to_string()
@@ -5619,4 +5619,42 @@ mod tests {
 
         assert_eq!(loaded.recurrence, event.recurrence);
     }
+
+    #[test]
+    fn monthly_bymonth_roundtrips_through_event_storage() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule, RecurrenceWeekday};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "March Mondays",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Monthly,
+            interval: 1,
+            count: Some(4),
+            until: None,
+            week_start: Default::default(),
+            by_weekday: vec![RecurrenceWeekday::Monday],
+            by_month: vec![3, 9],
+            by_week_no: Vec::new(),
+            by_year_day: Vec::new(),
+            by_month_day: Vec::new(),
+            by_month_weekday: Vec::new(),
+            by_set_pos: vec![-1],
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: Vec::new(),
+        });
+
+        store.upsert_event(&event).expect("persist recurrence");
+        let loaded = store.event_by_id(event.id).expect("query").expect("event");
+
+        assert_eq!(loaded.recurrence, event.recurrence);
+    }
+
 }
