@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the richer-simple-facets checkpoint, all **53** library tests pass. Verified implementation code checkpoint: `29f79fcf6a040f9d5700bafd7b254d1eb65dcee4`, with format, check, strict Clippy, and tests all green.
+At the saved-view-reference composition checkpoint, all **58** library tests pass. Verified implementation code checkpoint: `0de0c447f0742de6d3ce8c0955b42d8a2a1d090d`, with format, check, strict Clippy, and tests all green.
 
 ## Implemented architecture
 
