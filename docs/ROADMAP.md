@@ -63,7 +63,7 @@ Still required:
 - `EventOccurrence`
 - recurrence engine
 - dedicated provenance records/tables
-- snapshot/history tables
+- general-purpose snapshot/history tables beyond the implemented Taria release snapshot model
 - annotations
 - relations/collections
 - richer indexed ontology
@@ -115,6 +115,11 @@ Implemented:
 - nonblocking result polling and post-commit reload
 - adopted release history from SQLite
 - previous same-channel release comparison
+- persisted release-to-source projection associations
+- source projection rollover diffs
+- immutable canonical event snapshots per adopted release
+- exact release-present event capture, excluding retained-missing local records
+- canonical event add/remove/move/status/newly-cancelled diffs
 - bundle/projected-calendar/resolved-member-event membership diffs
 
 Now established upstream:
@@ -129,12 +134,11 @@ Now established upstream:
 
 Next Ephemeris implementation:
 
-- deeper field-level event snapshot/diff history later, after the dedicated snapshot model
+- richer per-field event-diff presentation and drill-down on top of the snapshot model
+- persistent refresh-failure history and explicit stale/health policy
 
 Still later:
 
-- snapshot/history persistence
-- source health/rollover presentation
 - additional Taria artifact families as Resourcearium evolves
 
 ## Immediate program priority
@@ -301,15 +305,34 @@ Exit criterion remains:
 
 ## Phase 6 - Source management and history
 
-Status: **not started beyond source identity/import metadata**
+Status: **active / substantial first slice implemented**
 
-Goals:
+Implemented:
 
-- source inspector
-- refresh state
-- snapshot diff
-- added/moved/cancelled changes
-- stale/rollover states
+- source inspector over canonical `TemporalSource` metadata
+- source visibility kept independent from inspection selection
+- local refresh timestamp and upstream-generation metadata
+- canonical event counts across direct ownership and import-record mappings
+- release-to-source projection persistence in schema v11
+- current-release versus historical source posture
+- source projection rollover diffs between adjacent releases
+- immutable canonical event snapshots in schema v12
+- exact release-present snapshot membership from importer-reported canonical UUIDs
+- cross-projection deduplication before snapshot capture
+- snapshot capture inside the whole-release atomic transaction
+- canonical event add/remove diffs
+- moved-event detection from temporal-state changes
+- lifecycle-status change detection
+- newly-cancelled event detection
+- release-history UI summary for source and canonical-event changes
+- regression coverage for overlapping-source counts, snapshot deduplication, replay stability, and rollback
+
+Remaining Phase 6 work:
+
+- richer changed-event drill-down beyond counts/IDs
+- persistent refresh failure/attempt history
+- explicit stale/health policy and thresholds
+- broader non-Taria source refresh/history integration
 
 ## Phase 7 - Rich temporal visualization
 
