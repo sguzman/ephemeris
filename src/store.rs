@@ -5656,5 +5656,4 @@ mod tests {
 
         assert_eq!(loaded.recurrence, event.recurrence);
     }
-
 }
