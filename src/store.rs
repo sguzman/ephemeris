@@ -3873,6 +3873,7 @@ mod tests {
             interval: 0,
             count: None,
             until: None,
+            by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -3930,6 +3931,7 @@ mod tests {
             interval: 1,
             count: None,
             until: None,
+            by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
             overrides: vec![RecurrenceOverride {
@@ -3968,6 +3970,7 @@ mod tests {
             interval: 1,
             count: Some(2),
             until: None,
+            by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: vec![RecurrenceOverride {
@@ -4009,6 +4012,7 @@ mod tests {
             interval: 1,
             count: None,
             until: None,
+            by_weekday: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
             overrides: Vec::new(),
@@ -4047,6 +4051,11 @@ mod tests {
             interval: 2,
             count: Some(5),
             until: Some(NaiveDate::from_ymd_opt(2027, 1, 1).expect("until")),
+            by_weekday: vec![
+                crate::domain::RecurrenceWeekday::Monday,
+                crate::domain::RecurrenceWeekday::Wednesday,
+                crate::domain::RecurrenceWeekday::Friday,
+            ],
             rdates: vec![TimeSpec::DateOnly {
                 start: day + chrono::Duration::days(1),
                 end_exclusive: None,

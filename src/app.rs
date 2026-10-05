@@ -2294,6 +2294,15 @@ impl EphemerisApp {
                         .until
                         .map_or_else(|| "unbounded".to_string(), |until| until.to_string()),
                 );
+                if !rule.by_weekday.is_empty() {
+                    let weekdays = rule
+                        .by_weekday
+                        .iter()
+                        .map(|weekday| weekday.short_label())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    inspector_row(ui, "Weekdays", &weekdays);
+                }
                 inspector_row(ui, "RDATE additions", &rule.rdates.len().to_string());
                 inspector_row(ui, "EXDATE exclusions", &rule.exdates.len().to_string());
                 inspector_row(
