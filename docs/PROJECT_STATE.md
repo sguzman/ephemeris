@@ -23,9 +23,9 @@ cargo test
 
 At the hardened Phase 8 recurrence-selector checkpoint, all **141** library tests pass. Verified implementation code checkpoint: `732354bf5b0457c99093b7c1e118fce895682d22`, with format, check, strict Clippy, and tests all green.
 
-`main` is verified through YEARLY BYMONTHDAY without explicit BYMONTH at `e4e97ec6ddc14d5fd5c21810040d48ed8f9c137a`: format, check, strict Clippy, and all **195** library tests pass in GitHub Actions.
+`main` is verified through DAILY BYDAY at `69a32937c224649587c53d56c1d4b2af36fc272a`: format, check, strict Clippy, and all **200** library tests pass in GitHub Actions. The preceding YEARLY BYMONTHDAY checkpoint is also independently verified at `e4e97ec6ddc14d5fd5c21810040d48ed8f9c137a` with **195** tests.
 
-A child staging slice at code/persistence checkpoint `eb0b53d056c62dfa3cdfb132b09b9b523359ef1b` adds DAILY BYDAY filtering, including a reachability guard for interval/weekday combinations that can never generate an RRULE slot, and targets **200** library tests. It remains pending fresh CI verification before promotion.
+DAILY BYDAY includes interval/weekday reachability handling so combinations that can never generate an RRULE slot terminate cleanly instead of searching forever.
 
 ## Implemented architecture
 
