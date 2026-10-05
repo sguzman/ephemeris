@@ -5466,7 +5466,6 @@ mod tests {
         assert_eq!(loaded.recurrence, event.recurrence);
     }
 
-
     #[test]
     fn whole_year_ordinal_byday_roundtrips_through_event_storage() {
         use crate::domain::{
@@ -5493,10 +5492,7 @@ mod tests {
             by_week_no: Vec::new(),
             by_year_day: Vec::new(),
             by_month_day: Vec::new(),
-            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(
-                53,
-                RecurrenceWeekday::Friday,
-            )],
+            by_month_weekday: vec![RecurrenceOrdinalWeekday::new(53, RecurrenceWeekday::Friday)],
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5504,10 +5500,7 @@ mod tests {
         });
 
         store.upsert_event(&event).expect("persist recurrence");
-        let loaded = store
-            .event_by_id(event.id)
-            .expect("query")
-            .expect("event");
+        let loaded = store.event_by_id(event.id).expect("query").expect("event");
 
         assert_eq!(loaded.recurrence, event.recurrence);
     }
