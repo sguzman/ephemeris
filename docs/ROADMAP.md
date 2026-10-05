@@ -369,6 +369,7 @@ Implemented recurrence foundation:
 - recurrence definitions persisted on canonical events in schema v14
 - daily / weekly / monthly / yearly frequency
 - interval, count, and inclusive-until bounds
+- daily BYDAY filtering over active interval days
 - weekly multi-day BYDAY selection with explicit WKST recurrence-week anchoring
 - monthly plain BYDAY expansion for every matching weekday in the active month, including composition with ordinal BYDAY, BYMONTHDAY filtering, and BYSETPOS
 - signed monthly BYMONTHDAY selection for `-31..=-1` and `1..=31`, including month-end-relative selectors, resolved-date ordering/deduplication, and impossible-date skipping
@@ -399,7 +400,7 @@ Implemented recurrence foundation:
 
 Next Phase 8 work:
 
-- broader RRULE dimensions and selector families beyond weekly/monthly/yearly plain BYDAY, month/year-scoped ordinal BYDAY, yearly/monthly BYMONTHDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations plus recurrence-exception interoperability
+- broader RRULE dimensions and selector families beyond daily/weekly/monthly/yearly plain BYDAY, month/year-scoped ordinal BYDAY, yearly/monthly BYMONTHDAY, BYWEEKNO/BYYEARDAY/BYSETPOS, and the implemented selector combinations plus recurrence-exception interoperability
 - richer recurrence/exception authoring and editing
 - relations
 - collections/sequences
