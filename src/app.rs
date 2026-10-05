@@ -38,6 +38,7 @@ pub struct EphemerisApp {
     sources: Vec<TemporalSource>,
     source_event_counts: HashMap<Uuid, u64>,
     selected_source_id: Option<Uuid>,
+    taria_current_source_ids: BTreeSet<Uuid>,
     taria_memberships: HashMap<Uuid, EventMembership>,
     taria_release_status: Option<TariaReleaseStatusRecord>,
     taria_release_history: Vec<TariaReleaseHistoryEntry>,
@@ -81,6 +82,7 @@ impl EphemerisApp {
             sources: Vec::new(),
             source_event_counts: HashMap::new(),
             selected_source_id: None,
+            taria_current_source_ids: BTreeSet::new(),
             taria_memberships: HashMap::new(),
             taria_release_status: None,
             taria_release_history: Vec::new(),
@@ -439,10 +441,11 @@ impl EphemerisApp {
                         .is_some_and(|release_id| release_id == release.release_id);
                     let prefix = if current { "Current · " } else { "" };
                     ui.small(format!(
-                        "{prefix}{} · {} · {} · {} bundles · {} calendars · {} member events",
+                        "{prefix}{} · {} · {} · {} sources · {} bundles · {} calendars · {} member events",
                         release.release_id,
                         release.channel,
                         release.status,
+                        release.source_count,
                         release.bundle_count,
                         release.projected_calendar_count,
                         release.resolved_member_event_count
@@ -529,6 +532,9 @@ impl EphemerisApp {
         self.unplaced_events = self.store.unplaced_events()?;
         self.sources = self.store.list_sources()?;
         self.source_event_counts = self.store.source_event_counts()?;
+        self.taria_current_source_ids = self
+            .store
+            .taria_source_ids_for_release(self.state.taria_last_release_id.as_deref())?;
         if self
             .selected_source_id
             .is_some_and(|selected| !self.sources.iter().any(|source| source.id == selected))
@@ -1766,8 +1772,21 @@ impl EphemerisApp {
                         .unwrap_or_default()
                         .to_string(),
                 );
+                if source.kind == crate::domain::SourceKind::Taria {
+                    let posture = if self.state.taria_last_release_id.is_none() {
+                        "No adopted release"
+                    } else if self.taria_current_source_ids.contains(&source.id) {
+                        "Current adopted release"
+                    } else {
+                        "Historical / not in current release"
+                    };
+                    inspector_row(ui, "Release posture", posture);
+                    if let Some(release_id) = self.state.taria_last_release_id.as_deref() {
+                        inspector_row(ui, "Current release", release_id);
+                    }
+                }
                 inspector_row(ui, "Created", &source.created_at.to_rfc3339());
-                inspector_row(ui, "Updated", &source.updated_at.to_rfc3339());
+                inspector_row(ui, "Last refreshed", &source.updated_at.to_rfc3339());
 
                 ui.collapsing("Properties", |ui| {
                     let pretty = serde_json::to_string_pretty(&source.properties)
