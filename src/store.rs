@@ -14,7 +14,7 @@ use crate::domain::{
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -89,6 +89,19 @@ pub struct TariaProjectedCalendarChoice {
     pub calendar_id: String,
     pub name: String,
     pub kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceRefreshAttempt {
+    pub id: Uuid,
+    pub refresh_kind: String,
+    pub target: String,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub success: Option<bool>,
+    pub release_id: Option<String>,
+    pub summary: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -330,6 +343,102 @@ impl TemporalStore {
             counts.insert(source_id, count);
         }
         Ok(counts)
+    }
+
+    pub fn begin_refresh_attempt(
+        &self,
+        refresh_kind: &str,
+        target: &str,
+    ) -> anyhow::Result<Uuid> {
+        let id = Uuid::new_v4();
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO source_refresh_attempts (
+                    id, refresh_kind, target, started_at
+                ) VALUES (?1, ?2, ?3, ?4)
+                "#,
+                params![
+                    id.to_string(),
+                    refresh_kind,
+                    target,
+                    Utc::now().to_rfc3339(),
+                ],
+            )
+            .context("failed to begin source refresh attempt")?;
+        Ok(id)
+    }
+
+    pub fn finish_refresh_attempt(
+        &self,
+        id: Uuid,
+        success: bool,
+        release_id: Option<&str>,
+        summary: Option<&str>,
+        error: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let changed = self
+            .conn
+            .execute(
+                r#"
+                UPDATE source_refresh_attempts
+                SET completed_at = ?2,
+                    success = ?3,
+                    release_id = ?4,
+                    summary = ?5,
+                    error = ?6
+                WHERE id = ?1
+                "#,
+                params![
+                    id.to_string(),
+                    Utc::now().to_rfc3339(),
+                    success,
+                    release_id,
+                    summary,
+                    error,
+                ],
+            )
+            .context("failed to finish source refresh attempt")?;
+        if changed == 0 {
+            return Err(anyhow!("source refresh attempt {id} does not exist"));
+        }
+        Ok(())
+    }
+
+    pub fn source_refresh_attempts(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<SourceRefreshAttempt>> {
+        let limit = i64::try_from(limit).context("refresh attempt limit is too large")?;
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, refresh_kind, target, started_at, completed_at,
+                success, release_id, summary, error
+            FROM source_refresh_attempts
+            ORDER BY started_at DESC, id DESC
+            LIMIT ?1
+            "#,
+        )?;
+
+        let mut rows = stmt.query(params![limit])?;
+        let mut attempts = Vec::new();
+        while let Some(row) = rows.next()? {
+            let raw_id: String = row.get(0)?;
+            attempts.push(SourceRefreshAttempt {
+                id: Uuid::parse_str(&raw_id)
+                    .with_context(|| format!("invalid source refresh attempt id: {raw_id}"))?,
+                refresh_kind: row.get(1)?,
+                target: row.get(2)?,
+                started_at: row.get(3)?,
+                completed_at: row.get(4)?,
+                success: row.get(5)?,
+                release_id: row.get(6)?,
+                summary: row.get(7)?,
+                error: row.get(8)?,
+            });
+        }
+        Ok(attempts)
     }
 
     pub fn list_saved_views(&self) -> anyhow::Result<Vec<SavedView>> {
@@ -2045,6 +2154,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         create_schema_v2(&tx)?;
         create_saved_views_schema_current(&tx)?;
         create_taria_release_schema_current(&tx)?;
+        create_refresh_history_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -2103,6 +2213,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 11 {
         migrate_v11_to_v12(conn)?;
+        current = 12;
+    }
+
+    if current == 12 {
+        migrate_v12_to_v13(conn)?;
     }
 
     Ok(())
@@ -2372,6 +2487,28 @@ fn create_taria_release_schema_current(conn: &Connection) -> anyhow::Result<()> 
     Ok(())
 }
 
+fn create_refresh_history_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE source_refresh_attempts (
+            id TEXT PRIMARY KEY,
+            refresh_kind TEXT NOT NULL,
+            target TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            success INTEGER,
+            release_id TEXT,
+            summary TEXT,
+            error TEXT
+        );
+
+        CREATE INDEX source_refresh_attempts_started
+            ON source_refresh_attempts(started_at DESC);
+        "#,
+    )
+    .context("failed to create source refresh history schema")
+}
+
 fn create_saved_views_schema_v3(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -2429,6 +2566,35 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> anyhow::Result<()> {
         .context("failed to set schema version 3")?;
     tx.commit()
         .context("failed to commit v2 to v3 schema migration")
+}
+
+fn migrate_v12_to_v13(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v12 to v13 migration")?;
+    tx.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS source_refresh_attempts (
+            id TEXT PRIMARY KEY,
+            refresh_kind TEXT NOT NULL,
+            target TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            success INTEGER,
+            release_id TEXT,
+            summary TEXT,
+            error TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS source_refresh_attempts_started
+            ON source_refresh_attempts(started_at DESC);
+        "#,
+    )
+    .context("failed to add source refresh attempt history")?;
+    tx.pragma_update(None, "user_version", 13)
+        .context("failed to set schema version 13")?;
+    tx.commit()
+        .context("failed to commit v12 to v13 schema migration")
 }
 
 fn migrate_v11_to_v12(conn: &mut Connection) -> anyhow::Result<()> {
@@ -3164,6 +3330,15 @@ mod tests {
             )
             .expect("release event snapshot table");
         assert_eq!(snapshot_table, 1);
+
+        let refresh_history_table: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'source_refresh_attempts'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("refresh history table");
+        assert_eq!(refresh_history_table, 1);
     }
 
     #[test]
@@ -3692,6 +3867,66 @@ mod tests {
             .events_in_window(month_start, month_end, chrono_tz::UTC, true)
             .expect("broad query");
         assert_eq!(broad.len(), 2);
+    }
+
+    #[test]
+    fn refresh_attempt_history_records_success_failure_and_incomplete_attempts() {
+        let store = TemporalStore::open_in_memory().expect("store");
+
+        let success = store
+            .begin_refresh_attempt("taria_workspace", "bootstrap")
+            .expect("success attempt");
+        store
+            .finish_refresh_attempt(
+                success,
+                true,
+                Some("release:success"),
+                Some("imported"),
+                None,
+            )
+            .expect("finish success");
+
+        let failure = store
+            .begin_refresh_attempt("taria_workspace", "production")
+            .expect("failure attempt");
+        store
+            .finish_refresh_attempt(
+                failure,
+                false,
+                None,
+                None,
+                Some("integrity mismatch"),
+            )
+            .expect("finish failure");
+
+        let incomplete = store
+            .begin_refresh_attempt("ics", "calendar.ics")
+            .expect("incomplete attempt");
+
+        let attempts = store.source_refresh_attempts(10).expect("attempt history");
+        assert_eq!(attempts.len(), 3);
+
+        let success = attempts
+            .iter()
+            .find(|attempt| attempt.id == success)
+            .expect("success record");
+        assert_eq!(success.success, Some(true));
+        assert_eq!(success.release_id.as_deref(), Some("release:success"));
+        assert!(success.completed_at.is_some());
+
+        let failure = attempts
+            .iter()
+            .find(|attempt| attempt.id == failure)
+            .expect("failure record");
+        assert_eq!(failure.success, Some(false));
+        assert_eq!(failure.error.as_deref(), Some("integrity mismatch"));
+
+        let incomplete = attempts
+            .iter()
+            .find(|attempt| attempt.id == incomplete)
+            .expect("incomplete record");
+        assert_eq!(incomplete.success, None);
+        assert!(incomplete.completed_at.is_none());
     }
 
     #[test]
