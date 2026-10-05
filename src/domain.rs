@@ -564,6 +564,7 @@ pub enum RecurrenceError {
     },
     DuplicateOverride(String),
     ConflictingException(String),
+    UnknownOverrideTarget(String),
     ArithmeticOverflow,
 }
 
@@ -594,6 +595,12 @@ impl fmt::Display for RecurrenceError {
                 write!(
                     formatter,
                     "recurrence occurrence {key} cannot be both excluded and overridden"
+                )
+            }
+            Self::UnknownOverrideTarget(key) => {
+                write!(
+                    formatter,
+                    "recurrence override does not target an RRULE/RDATE occurrence: {key}"
                 )
             }
             Self::ArithmeticOverflow => formatter.write_str("recurrence arithmetic overflow"),
@@ -726,6 +733,9 @@ impl TemporalEvent {
             }
             if exdate_keys.contains(&key) {
                 return Err(RecurrenceError::ConflictingException(key));
+            }
+            if !recurrence_generates_original_time(&self.time, rule, &occurrence_override.original)? {
+                return Err(RecurrenceError::UnknownOverrideTarget(key));
             }
         }
 
@@ -898,6 +908,53 @@ fn validate_recurrence_time(time: &TimeSpec) -> Result<(), RecurrenceError> {
     }
 
     Ok(())
+}
+
+fn recurrence_generates_original_time(
+    base: &TimeSpec,
+    rule: &RecurrenceRule,
+    target: &TimeSpec,
+) -> Result<bool, RecurrenceError> {
+    let target_key = recurrence_key(target)?;
+    for rdate in &rule.rdates {
+        if recurrence_key(rdate)? == target_key {
+            return Ok(true);
+        }
+    }
+
+    let target_date = recurrence_rule_date(target)?;
+    let mut recurrence_period = 0_u32;
+    let mut emitted = 0_u32;
+
+    loop {
+        if rule.count.is_some_and(|count| emitted >= count) {
+            return Ok(false);
+        }
+
+        let shifted = shift_recurrence_time(base, rule, recurrence_period)?;
+        recurrence_period = recurrence_period
+            .checked_add(1)
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+
+        let Some(time) = shifted else {
+            continue;
+        };
+        let occurrence_date = recurrence_rule_date(&time)?;
+        if rule.until.is_some_and(|until| occurrence_date > until) {
+            return Ok(false);
+        }
+
+        emitted = emitted
+            .checked_add(1)
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+
+        if recurrence_key(&time)? == target_key {
+            return Ok(true);
+        }
+        if occurrence_date >= target_date {
+            return Ok(false);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1448,6 +1505,43 @@ mod tests {
         assert!(matches!(
             event.validate_recurrence(),
             Err(RecurrenceError::ConflictingException(_))
+        ));
+    }
+
+    #[test]
+    fn override_for_non_occurrence_is_rejected() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 1).expect("start");
+        let invalid_target = TimeSpec::DateOnly {
+            start: start + Duration::days(2),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Finite weekly",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            count: Some(2),
+            until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: vec![RecurrenceOverride {
+                original: invalid_target,
+                replacement: Some(TimeSpec::DateOnly {
+                    start: start + Duration::days(3),
+                    end_exclusive: None,
+                }),
+                cancelled: false,
+            }],
+        });
+
+        assert!(matches!(
+            event.validate_recurrence(),
+            Err(RecurrenceError::UnknownOverrideTarget(_))
         ));
     }
 

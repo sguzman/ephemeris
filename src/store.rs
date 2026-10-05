@@ -3951,6 +3951,47 @@ mod tests {
     }
 
     #[test]
+    fn store_rejects_override_for_non_occurrence() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceOverride, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Invalid detached override",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Weekly,
+            interval: 1,
+            count: Some(2),
+            until: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            overrides: vec![RecurrenceOverride {
+                original: TimeSpec::DateOnly {
+                    start: day + chrono::Duration::days(2),
+                    end_exclusive: None,
+                },
+                replacement: None,
+                cancelled: true,
+            }],
+        });
+
+        let error = store
+            .upsert_event(&event)
+            .expect_err("phantom override must not persist");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event recurrence definition")
+        );
+        assert_eq!(store.event_count().expect("event count"), 0);
+    }
+
+    #[test]
     fn recurring_events_are_retrievable_outside_base_window() {
         use crate::domain::{RecurrenceFrequency, RecurrenceRule};
 
