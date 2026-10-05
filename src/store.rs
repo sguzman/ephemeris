@@ -284,9 +284,15 @@ impl TemporalStore {
     pub fn source_event_counts(&self) -> anyhow::Result<HashMap<Uuid, u64>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT source_id, COUNT(*)
-            FROM temporal_events
-            WHERE source_id IS NOT NULL
+            SELECT source_id, COUNT(DISTINCT event_id)
+            FROM (
+                SELECT source_id, event_id
+                FROM temporal_event_import_records
+                UNION
+                SELECT source_id, id AS event_id
+                FROM temporal_events
+                WHERE source_id IS NOT NULL
+            )
             GROUP BY source_id
             "#,
         )?;
