@@ -1398,7 +1398,8 @@ fn yearly_recurrence_candidates(
     } else {
         candidate_dates.reserve(months.len().saturating_mul(rule.by_month_day.len()));
         for month in months {
-            let Some(month_start) = NaiveDate::from_ymd_opt(active_year, u32::from(month), 1) else {
+            let Some(month_start) = NaiveDate::from_ymd_opt(active_year, u32::from(month), 1)
+            else {
                 continue;
             };
             for day in &rule.by_month_day {
