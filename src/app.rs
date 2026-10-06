@@ -15,7 +15,7 @@ use crate::calendar::{
 };
 use crate::domain::{
     EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday,
-    RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
+    RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
 };
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
@@ -90,6 +90,7 @@ struct RecurrenceEditDraft {
     set_pos_text: String,
     rdate_text: String,
     exdate_text: String,
+    override_text: String,
     base_time: TimeSpec,
 }
 
@@ -120,6 +121,7 @@ impl RecurrenceEditDraft {
             set_pos_text: format_selector_values(&rule.by_set_pos),
             rdate_text: format_exception_start_values(&rule.rdates),
             exdate_text: format_exception_start_values(&rule.exdates),
+            override_text: format_recurrence_override_values(&rule.overrides),
             base_time: event.time.clone(),
             rule,
         }
@@ -166,6 +168,9 @@ impl RecurrenceEditDraft {
             rule.exdates =
                 parse_exception_start_values(&self.exdate_text, &self.base_time, "EXDATE")?;
         }
+        if self.override_text != format_recurrence_override_values(&self.rule.overrides) {
+            rule.overrides = parse_recurrence_override_values(&self.override_text, &self.base_time)?;
+        }
 
         rule.validate().map_err(|error| error.to_string())?;
         let mut validation_event =
@@ -177,9 +182,6 @@ impl RecurrenceEditDraft {
         Ok(rule)
     }
 
-    fn has_unedited_overrides(&self) -> bool {
-        !self.rule.overrides.is_empty()
-    }
 }
 
 fn selector_tokens(raw: &str) -> impl Iterator<Item = &str> {
@@ -195,27 +197,55 @@ fn format_selector_values<T: ToString>(values: &[T]) -> String {
         .join(",")
 }
 
+fn format_exception_start_value(value: &TimeSpec) -> String {
+    match value {
+        TimeSpec::DateOnly { start, .. } | TimeSpec::AllDay { start, .. } => start.to_string(),
+        TimeSpec::Instant { start_utc, .. } => {
+            start_utc.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+        }
+        TimeSpec::Floating { start, .. } => {
+            if start.nanosecond() == 0 {
+                start.format("%Y-%m-%dT%H:%M:%S").to_string()
+            } else {
+                start.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
+            }
+        }
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+            format!("<unsupported:{}>", value.kind_name())
+        }
+    }
+}
+
 fn format_exception_start_values(values: &[TimeSpec]) -> String {
     values
         .iter()
-        .map(|value| match value {
-            TimeSpec::DateOnly { start, .. } | TimeSpec::AllDay { start, .. } => start.to_string(),
-            TimeSpec::Instant { start_utc, .. } => {
-                start_utc.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
-            }
-            TimeSpec::Floating { start, .. } => {
-                if start.nanosecond() == 0 {
-                    start.format("%Y-%m-%dT%H:%M:%S").to_string()
-                } else {
-                    start.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
+        .map(format_exception_start_value)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_recurrence_override_values(values: &[RecurrenceOverride]) -> String {
+    values
+        .iter()
+        .map(|occurrence_override| {
+            let original = format_exception_start_value(&occurrence_override.original);
+            match (
+                occurrence_override.cancelled,
+                occurrence_override.replacement.as_ref(),
+            ) {
+                (false, Some(replacement)) => {
+                    format!("{original}=>{}", format_exception_start_value(replacement))
                 }
-            }
-            TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
-                format!("<unsupported:{}>", value.kind_name())
+                (true, None) => format!("{original}=>CANCEL"),
+                (true, Some(replacement)) => format!(
+                    "{original}=>CANCEL@{}",
+                    format_exception_start_value(replacement)
+                ),
+                (false, None) => format!("{original}=>KEEP"),
             }
         })
         .collect::<Vec<_>>()
-        .join(",")
+        .join("\n")
 }
 
 fn parse_floating_exception_start(raw: &str, label: &str) -> Result<NaiveDateTime, String> {
@@ -233,13 +263,12 @@ fn parse_floating_exception_start(raw: &str, label: &str) -> Result<NaiveDateTim
     ))
 }
 
-fn parse_exception_start_values(
-    raw: &str,
+fn parse_exception_start_value(
+    token: &str,
     base_time: &TimeSpec,
     label: &str,
-) -> Result<Vec<TimeSpec>, String> {
-    selector_tokens(raw)
-        .map(|token| match base_time {
+) -> Result<TimeSpec, String> {
+    match base_time {
             TimeSpec::DateOnly {
                 start: base_start,
                 end_exclusive,
@@ -322,14 +351,102 @@ fn parse_exception_start_values(
                     source_timezone: source_timezone.clone(),
                 })
             }
-            TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
-                Err(format!(
-                    "{label} cannot be authored for {} recurrence.",
-                    base_time.kind_name()
-                ))
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => Err(
+            format!(
+                "{label} cannot be authored for {} recurrence.",
+                base_time.kind_name()
+            ),
+        ),
+    }
+}
+
+fn parse_exception_start_values(
+    raw: &str,
+    base_time: &TimeSpec,
+    label: &str,
+) -> Result<Vec<TimeSpec>, String> {
+    selector_tokens(raw)
+        .map(|token| parse_exception_start_value(token, base_time, label))
+        .collect()
+}
+
+fn override_entries(raw: &str) -> impl Iterator<Item = &str> {
+    raw.split(['\n', ';']).map(str::trim).filter(|entry| !entry.is_empty())
+}
+
+fn parse_recurrence_override_values(
+    raw: &str,
+    base_time: &TimeSpec,
+) -> Result<Vec<RecurrenceOverride>, String> {
+    override_entries(raw)
+        .map(|entry| {
+            let (original_raw, action_raw) = entry.split_once("=>").ok_or_else(|| {
+                format!(
+                    "Override '{entry}' must use original=>replacement, original=>CANCEL, or original=>KEEP."
+                )
+            })?;
+            let original_raw = original_raw.trim();
+            let action_raw = action_raw.trim();
+            if original_raw.is_empty() || action_raw.is_empty() {
+                return Err(format!("Override '{entry}' is missing an original or action."));
             }
+
+            let original =
+                parse_exception_start_value(original_raw, base_time, "Override original")?;
+
+            if action_raw.eq_ignore_ascii_case("CANCEL") {
+                return Ok(RecurrenceOverride {
+                    original,
+                    replacement: None,
+                    cancelled: true,
+                });
+            }
+            if action_raw.eq_ignore_ascii_case("KEEP") {
+                return Ok(RecurrenceOverride {
+                    original,
+                    replacement: None,
+                    cancelled: false,
+                });
+            }
+            if let Some(replacement_raw) = action_raw
+                .strip_prefix("CANCEL@")
+                .or_else(|| action_raw.strip_prefix("cancel@"))
+            {
+                let replacement = parse_exception_start_value(
+                    replacement_raw.trim(),
+                    base_time,
+                    "Override replacement",
+                )?;
+                return Ok(RecurrenceOverride {
+                    original,
+                    replacement: Some(replacement),
+                    cancelled: true,
+                });
+            }
+
+            let replacement =
+                parse_exception_start_value(action_raw, base_time, "Override replacement")?;
+            Ok(RecurrenceOverride {
+                original,
+                replacement: Some(replacement),
+                cancelled: false,
+            })
         })
         .collect()
+}
+
+fn recurrence_override_hint(base_time: &TimeSpec) -> String {
+    let occurrence = match base_time {
+        TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => "2026-03-10",
+        TimeSpec::Floating { .. } => "2026-03-10T09:00:00",
+        TimeSpec::Instant { .. } => "2026-03-10T15:00:00Z",
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => "",
+    };
+    if occurrence.is_empty() {
+        String::new()
+    } else {
+        format!("{occurrence}=>CANCEL")
+    }
 }
 
 fn recurrence_exception_hint(base_time: &TimeSpec) -> &'static str {
@@ -3255,9 +3372,18 @@ fn render_recurrence_editor(
     let exception_hint = recurrence_exception_hint(&draft.base_time);
     recurrence_selector_text_row(ui, "RDATE", &mut draft.rdate_text, exception_hint);
     recurrence_selector_text_row(ui, "EXDATE", &mut draft.exdate_text, exception_hint);
-    if draft.has_unedited_overrides() {
-        ui.small("Moved/cancelled occurrence overrides are preserved unchanged in this slice.");
-    }
+
+    ui.label("Occurrence overrides");
+    ui.small(
+        "One per line: original=>replacement, original=>CANCEL, original=>CANCEL@replacement, or original=>KEEP.",
+    );
+    let override_hint = recurrence_override_hint(&draft.base_time);
+    ui.add(
+        egui::TextEdit::multiline(&mut draft.override_text)
+            .desired_width(430.0)
+            .desired_rows(3)
+            .hint_text(override_hint),
+    );
 
     let validation = draft.parsed_rule();
     match &validation {
@@ -6104,7 +6230,7 @@ mod tests {
         let parsed = draft.parsed_rule().expect("parsed rule");
 
         assert_eq!(draft.rdate_text, "2026-10-05T12:00:00");
-        assert!(!draft.has_unedited_overrides());
+        assert!(draft.override_text.is_empty());
         assert_eq!(parsed.by_hour, rule.by_hour);
         assert_eq!(parsed.by_minute, rule.by_minute);
         assert_eq!(parsed.by_second, rule.by_second);
@@ -6343,7 +6469,10 @@ mod tests {
         assert_eq!(parsed.rdates.len(), 2);
         assert_eq!(parsed.exdates.len(), 1);
         assert_eq!(parsed.overrides, rule.overrides);
-        assert!(draft.has_unedited_overrides());
+        assert_eq!(
+            draft.override_text,
+            "2026-10-12=>2026-10-13"
+        );
     }
 
     #[test]
@@ -6391,4 +6520,149 @@ mod tests {
 
         assert!(draft.parsed_rule().is_err());
     }
+
+    #[test]
+    fn recurrence_override_parser_roundtrips_move_cancel_keep_and_cancelled_move() {
+        let base = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 5).expect("base"),
+            end_exclusive: None,
+        };
+        let raw = concat!(
+            "2026-10-12=>2026-10-13\n",
+            "2026-10-19=>CANCEL\n",
+            "2026-10-26=>KEEP\n",
+            "2026-11-02=>CANCEL@2026-11-03"
+        );
+
+        let parsed = parse_recurrence_override_values(raw, &base).expect("parse overrides");
+
+        assert_eq!(parsed.len(), 4);
+        assert_eq!(
+            format_recurrence_override_values(&parsed),
+            raw
+        );
+        assert!(!parsed[0].cancelled);
+        assert!(parsed[0].replacement.is_some());
+        assert!(parsed[1].cancelled);
+        assert!(parsed[1].replacement.is_none());
+        assert!(!parsed[2].cancelled);
+        assert!(parsed[2].replacement.is_none());
+        assert!(parsed[3].cancelled);
+        assert!(parsed[3].replacement.is_some());
+    }
+
+    #[test]
+    fn recurrence_override_parser_preserves_canonical_duration() {
+        let base = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 5).expect("base"),
+            end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 7).expect("base end")),
+        };
+
+        let parsed = parse_recurrence_override_values(
+            "2026-10-12=>2026-10-20",
+            &base,
+        )
+        .expect("parse override");
+
+        assert_eq!(
+            parsed[0].original,
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 12).expect("original"),
+                end_exclusive: Some(
+                    NaiveDate::from_ymd_opt(2026, 10, 14).expect("original end")
+                ),
+            }
+        );
+        assert_eq!(
+            parsed[0].replacement,
+            Some(TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 20).expect("replacement"),
+                end_exclusive: Some(
+                    NaiveDate::from_ymd_opt(2026, 10, 22).expect("replacement end")
+                ),
+            })
+        );
+    }
+
+    #[test]
+    fn recurrence_edit_draft_applies_move_and_cancel_overrides_live() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Override editor",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(10);
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.override_text =
+            "2026-10-07=>2026-10-20\n2026-10-08=>CANCEL".to_string();
+
+        let parsed = draft.parsed_rule().expect("valid overrides");
+
+        assert_eq!(parsed.overrides.len(), 2);
+        assert_eq!(
+            format_recurrence_override_values(&parsed.overrides),
+            draft.override_text
+        );
+    }
+
+    #[test]
+    fn recurrence_edit_draft_rejects_unknown_override_target_live() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Monday series",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Weekly);
+        rule.by_weekday = vec![RecurrenceWeekday::Monday];
+        rule.count = Some(4);
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.override_text = "2026-10-06=>CANCEL".to_string();
+
+        assert!(draft.parsed_rule().is_err());
+    }
+
+    #[test]
+    fn recurrence_edit_draft_rejects_duplicate_override_original_live() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Duplicate override",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(5);
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.override_text =
+            "2026-10-06=>CANCEL\n2026-10-06=>2026-10-10".to_string();
+
+        assert!(draft.parsed_rule().is_err());
+    }
+
+    #[test]
+    fn recurrence_override_parser_rejects_malformed_entry() {
+        let base = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 5).expect("base"),
+            end_exclusive: None,
+        };
+
+        assert!(parse_recurrence_override_values("2026-10-06", &base).is_err());
+        assert!(parse_recurrence_override_values("=>CANCEL", &base).is_err());
+        assert!(parse_recurrence_override_values("2026-10-06=>", &base).is_err());
+    }
+
 }
