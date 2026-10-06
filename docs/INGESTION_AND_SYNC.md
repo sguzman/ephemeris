@@ -69,7 +69,7 @@ Local ICS is the first implemented source in this class. The current adapter par
 
 For local files, the canonicalized filesystem path is the stable source identity and VEVENT UID is the stable source-record identity. Refresh is transactional: unchanged records remain unchanged, changed UIDs update in place, new UIDs are created, and UIDs absent from a later file snapshot are retained unless stronger source semantics justify deletion or cancellation. Invalid calendars fail before source creation.
 
-ICS import is available from `ephemeris-import` and GUI drag/drop. The canonical RFC exporter is implemented; the remaining user-facing export work is selecting stored events/sources and writing the resulting VCALENDAR payload to disk.
+ICS import is available from `ephemeris-import` and GUI drag/drop. Stored ICS sources can be exported atomically through `ephemeris-export` or the GUI source inspector. Export reads canonical events for the source, projects them through the strict RFC adapter, preserves supported calendar-level source properties, and writes a replacement-safe VCALENDAR file. Explicit in-app refresh controls are the next local-source ergonomics step.
 
 Each adapter stage should provide diagnostics.
 
