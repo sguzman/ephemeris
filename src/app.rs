@@ -8751,7 +8751,6 @@ mod tests {
         assert!(draft.week_no_rows.is_empty());
     }
 
-
     #[test]
     fn recurrence_yearday_edit_rows_roundtrip_compact_syntax() {
         let rows = recurrence_yearday_edit_rows(&[1, 100, -1]);
