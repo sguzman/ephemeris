@@ -113,7 +113,6 @@ enum RecurrenceEditorSelector {
     Hour,
     Minute,
     Second,
-    SetPos,
 }
 
 impl RecurrenceEditorSelector {
@@ -130,7 +129,6 @@ impl RecurrenceEditorSelector {
             Self::Hour | Self::Minute | Self::Second => {
                 "Time-of-day selectors require a floating or exact date-time series."
             }
-            Self::SetPos => "BYSETPOS is available in every recurrence frequency.",
         }
     }
 }
@@ -177,7 +175,6 @@ fn recurrence_editor_selector_available(
         RecurrenceEditorSelector::Hour
         | RecurrenceEditorSelector::Minute
         | RecurrenceEditorSelector::Second => recurrence_editor_base_is_datetime(base_time),
-        RecurrenceEditorSelector::SetPos => true,
     }
 }
 
@@ -380,6 +377,42 @@ fn validate_recurrence_second_edit_rows(rows: &[String]) -> Result<(), String> {
         raw.parse::<u8>().map_err(|_| {
             format!(
                 "BYSECOND row #{} has invalid second '{}'.",
+                index + 1,
+                value
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn recurrence_setpos_edit_rows(values: &[i16]) -> Vec<String> {
+    values.iter().map(ToString::to_string).collect()
+}
+
+fn format_recurrence_setpos_edit_rows(rows: &[String]) -> String {
+    rows.iter()
+        .map(|value| value.trim())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_recurrence_setpos_edit_rows(raw: &str) -> Result<Vec<String>, String> {
+    parse_i16_selector_values(raw, "BYSETPOS")
+        .map(|values| values.iter().map(ToString::to_string).collect())
+}
+
+fn validate_recurrence_setpos_edit_rows(rows: &[String]) -> Result<(), String> {
+    for (index, value) in rows.iter().enumerate() {
+        let raw = value.trim();
+        if raw.is_empty() {
+            return Err(format!(
+                "BYSETPOS row #{} needs a position or must be removed.",
+                index + 1
+            ));
+        }
+        raw.parse::<i16>().map_err(|_| {
+            format!(
+                "BYSETPOS row #{} has invalid position '{}'.",
                 index + 1,
                 value
             )
@@ -610,6 +643,7 @@ struct RecurrenceEditDraft {
     second_text: String,
     second_rows: Vec<String>,
     set_pos_text: String,
+    set_pos_rows: Vec<String>,
     rdate_text: String,
     rdate_rows: Vec<String>,
     exdate_text: String,
@@ -644,6 +678,8 @@ impl RecurrenceEditDraft {
         let minute_rows = recurrence_minute_edit_rows(&rule.by_minute);
         let second_text = format_selector_values(&rule.by_second);
         let second_rows = recurrence_second_edit_rows(&rule.by_second);
+        let set_pos_text = format_selector_values(&rule.by_set_pos);
+        let set_pos_rows = recurrence_setpos_edit_rows(&rule.by_set_pos);
         let ordinal_byday_text = format_ordinal_byday_values(&rule.by_month_weekday);
         let ordinal_byday_rows = recurrence_ordinal_byday_edit_rows(&rule.by_month_weekday);
         Self {
@@ -670,7 +706,8 @@ impl RecurrenceEditDraft {
             minute_rows,
             second_text,
             second_rows,
-            set_pos_text: format_selector_values(&rule.by_set_pos),
+            set_pos_text,
+            set_pos_rows,
             rdate_text,
             rdate_rows,
             exdate_text,
@@ -702,6 +739,7 @@ impl RecurrenceEditDraft {
         self.second_text.clear();
         self.second_rows.clear();
         self.set_pos_text.clear();
+        self.set_pos_rows.clear();
 
         match preset {
             RecurrencePreset::Daily => {
@@ -733,6 +771,7 @@ impl RecurrenceEditDraft {
                     RecurrenceWeekday::Friday,
                 ];
                 self.set_pos_text = "-1".to_string();
+                self.set_pos_rows = vec!["-1".to_string()];
             }
             RecurrencePreset::Yearly => {
                 self.rule.frequency = RecurrenceFrequency::Yearly;
@@ -843,7 +882,16 @@ impl RecurrenceEditDraft {
             rule.by_second = parse_u8_selector_values(&structured_second_text, "BYSECOND")?;
         }
 
-        rule.by_set_pos = parse_i16_selector_values(&self.set_pos_text, "BYSETPOS")?;
+        let canonical_set_pos_text = format_selector_values(&self.rule.by_set_pos);
+        let structured_set_pos_text = format_recurrence_setpos_edit_rows(&self.set_pos_rows);
+        let set_pos_raw_override = self.set_pos_text != canonical_set_pos_text
+            && self.set_pos_text != structured_set_pos_text;
+        if set_pos_raw_override {
+            rule.by_set_pos = parse_i16_selector_values(&self.set_pos_text, "BYSETPOS")?;
+        } else {
+            validate_recurrence_setpos_edit_rows(&self.set_pos_rows)?;
+            rule.by_set_pos = parse_i16_selector_values(&structured_set_pos_text, "BYSETPOS")?;
+        }
 
         let canonical_rdate_text = format_exception_start_values(&self.rule.rdates);
         let structured_rdate_text = format_recurrence_exception_edit_rows(&self.rdate_rows);
@@ -3981,51 +4029,6 @@ struct MembershipPredicateOptions {
     calendars: Vec<TariaProjectedCalendarChoice>,
 }
 
-fn recurrence_selector_text_row(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(
-            egui::TextEdit::singleline(value)
-                .desired_width(150.0)
-                .hint_text(hint),
-        );
-    });
-}
-
-fn contextual_recurrence_selector_text_row(
-    ui: &mut egui::Ui,
-    selector: RecurrenceEditorSelector,
-    label: &str,
-    value: &mut String,
-    hint: &str,
-    available: bool,
-) {
-    if available {
-        recurrence_selector_text_row(ui, label, value, hint);
-        return;
-    }
-    if value.trim().is_empty() {
-        return;
-    }
-
-    ui.group(|ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{label} (preserved)")).strong());
-            ui.add_enabled(
-                false,
-                egui::TextEdit::singleline(value)
-                    .desired_width(150.0)
-                    .hint_text(hint),
-            );
-            if ui.small_button("Clear").clicked() {
-                value.clear();
-            }
-        });
-        ui.small(selector.unavailable_reason());
-        ui.small("The value is not discarded when frequency or time context changes.");
-    });
-}
-
 fn render_contextual_week_start(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft) {
     let has_week_no = !draft.week_no_text.trim().is_empty();
     let available = recurrence_editor_week_start_available(
@@ -4561,6 +4564,68 @@ fn render_structured_second(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, 
         });
 }
 
+fn render_structured_set_pos(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft) {
+    ui.label("BYSETPOS");
+    ui.small("One signed set position per row, using -366 through -1 or 1 through 366.");
+
+    let mut structured_changed = false;
+    let mut remove_index = None;
+    for (index, value) in draft.set_pos_rows.iter_mut().enumerate() {
+        ui.push_id(("bysetpos", index), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("#{}", index + 1));
+                structured_changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(value)
+                            .desired_width(84.0)
+                            .hint_text("1 or -1"),
+                    )
+                    .changed();
+                if ui.small_button("Remove").clicked() {
+                    remove_index = Some(index);
+                }
+            });
+        });
+    }
+
+    if let Some(index) = remove_index {
+        draft.set_pos_rows.remove(index);
+        structured_changed = true;
+    }
+
+    if ui.small_button("+ Add BYSETPOS").clicked() {
+        draft.set_pos_rows.push("1".to_string());
+        structured_changed = true;
+    }
+
+    if structured_changed {
+        draft.set_pos_text = format_recurrence_setpos_edit_rows(&draft.set_pos_rows);
+    }
+
+    egui::CollapsingHeader::new("Raw BYSETPOS syntax")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.small("Power-user form: comma- or space-separated signed positions such as 1,-1.");
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.set_pos_text)
+                    .desired_width(260.0)
+                    .hint_text("1,-1"),
+            );
+            if ui.small_button("Load raw syntax into rows").clicked()
+                && let Ok(rows) = parse_recurrence_setpos_edit_rows(&draft.set_pos_text)
+            {
+                draft.set_pos_text = format_recurrence_setpos_edit_rows(&rows);
+                draft.set_pos_rows = rows;
+            }
+        });
+
+    if !draft.set_pos_text.trim().is_empty() || !draft.set_pos_rows.is_empty() {
+        ui.small(
+            "BYSETPOS requires at least one other BY selector; live validation enforces that rule.",
+        );
+    }
+}
+
 fn render_structured_ordinal_byday(
     ui: &mut egui::Ui,
     draft: &mut RecurrenceEditDraft,
@@ -4970,19 +5035,7 @@ fn render_recurrence_editor(
     render_structured_hour(ui, draft, hour_available);
     render_structured_minute(ui, draft, minute_available);
     render_structured_second(ui, draft, second_available);
-    contextual_recurrence_selector_text_row(
-        ui,
-        RecurrenceEditorSelector::SetPos,
-        "BYSETPOS",
-        &mut draft.set_pos_text,
-        "1,-1",
-        true,
-    );
-    if !draft.set_pos_text.trim().is_empty() {
-        ui.small(
-            "BYSETPOS requires at least one other BY selector; live validation enforces that rule.",
-        );
-    }
+    render_structured_set_pos(ui, draft);
 
     ui.separator();
     ui.small("Recurrence exceptions");
@@ -9478,5 +9531,99 @@ mod tests {
 
         assert!(draft.second_text.is_empty());
         assert!(draft.second_rows.is_empty());
+    }
+
+    #[test]
+    fn recurrence_setpos_edit_rows_roundtrip_compact_syntax() {
+        let rows = recurrence_setpos_edit_rows(&[1, -1, 2]);
+
+        assert_eq!(rows, vec!["1", "-1", "2"]);
+        assert_eq!(format_recurrence_setpos_edit_rows(&rows), "1,-1,2");
+        assert_eq!(
+            parse_recurrence_setpos_edit_rows("1 -1,2").expect("parse"),
+            vec!["1", "-1", "2"]
+        );
+    }
+
+    #[test]
+    fn recurrence_edit_draft_applies_structured_setpos_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Structured BYSETPOS",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Monthly);
+        rule.by_weekday = vec![
+            RecurrenceWeekday::Monday,
+            RecurrenceWeekday::Tuesday,
+            RecurrenceWeekday::Wednesday,
+            RecurrenceWeekday::Thursday,
+            RecurrenceWeekday::Friday,
+        ];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.set_pos_rows = vec!["1".to_string(), "-1".to_string()];
+        draft.set_pos_text = format_recurrence_setpos_edit_rows(&draft.set_pos_rows);
+
+        let parsed = draft.parsed_rule().expect("structured rule");
+        assert_eq!(parsed.by_set_pos, vec![1, -1]);
+    }
+
+    #[test]
+    fn recurrence_edit_draft_raw_setpos_override_remains_supported() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Raw BYSETPOS",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Monthly);
+        rule.by_weekday = vec![RecurrenceWeekday::Monday];
+        rule.by_set_pos = vec![1];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.set_pos_text = "-1,2".to_string();
+
+        let parsed = draft.parsed_rule().expect("raw override");
+        assert_eq!(parsed.by_set_pos, vec![-1, 2]);
+        assert_eq!(draft.set_pos_rows, vec!["1"]);
+    }
+
+    #[test]
+    fn recurrence_setpos_edit_rows_reject_blank_position() {
+        let rows = vec![String::new()];
+
+        assert_eq!(
+            validate_recurrence_setpos_edit_rows(&rows),
+            Err("BYSETPOS row #1 needs a position or must be removed.".to_string())
+        );
+    }
+
+    #[test]
+    fn recurrence_preset_synchronizes_structured_setpos_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let event = TemporalEvent::new(
+            "Preset synchronizes structured BYSETPOS",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.apply_preset(RecurrencePreset::LastWeekdayOfMonth);
+        assert_eq!(draft.set_pos_text, "-1");
+        assert_eq!(draft.set_pos_rows, vec!["-1"]);
+
+        draft.apply_preset(RecurrencePreset::Daily);
+        assert!(draft.set_pos_text.is_empty());
+        assert!(draft.set_pos_rows.is_empty());
     }
 }
