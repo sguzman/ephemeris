@@ -43,6 +43,8 @@ The occurrence-override authoring slice is verified on `main` at `1db27c65042e57
 
 The structured occurrence-override editor is verified on `main` at `6d333cbbe85b5aaa9b62804e5951394444625d84`: format, check, strict Clippy, and all **329** library tests pass in GitHub Actions. Move, Cancel, Cancel + move, and Keep are explicit per-row actions with original/replacement fields and add/remove controls. The compact syntax remains available in a collapsed raw editor and still flows through the same parser/domain validator, so structured editing does not create a second recurrence model. Untouched persisted override payloads continue to be preserved at the domain-object level.
 
+A child staging slice at `bddb6e3580d30cc0998751a376583fbb1ef7f8e8` adds structured RDATE/EXDATE rows and targets **333** library tests. Each addition/exclusion is edited as an explicit occurrence-start row with add/remove controls and a collapsed raw compact-syntax fallback. Blank unfinished rows fail live validation instead of disappearing silently, and untouched persisted exception payloads remain unchanged at the domain-object level.
+
 DAILY reachability switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. YEARLY reachability likewise scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
 ## Implemented architecture
