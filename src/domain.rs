@@ -11268,4 +11268,350 @@ mod tests {
         assert!(rule.by_minute.is_empty());
         assert_eq!(rule.interval, 1);
     }
+
+    #[test]
+    fn hourly_frequency_roundtrips_text_and_parse() {
+        assert_eq!(RecurrenceFrequency::Hourly.as_str(), "hourly");
+        assert_eq!(
+            RecurrenceFrequency::parse(" HOURLY "),
+            Some(RecurrenceFrequency::Hourly)
+        );
+        assert!(RecurrenceFrequency::ALL.contains(&RecurrenceFrequency::Hourly));
+    }
+
+    #[test]
+    fn hourly_recurrence_rejects_date_only_base() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Hourly date-only",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Hourly));
+
+        assert!(matches!(
+            event.validate_recurrence(),
+            Err(RecurrenceError::FrequencyRequiresDateTime(
+                RecurrenceFrequency::Hourly,
+                "date_only"
+            ))
+        ));
+    }
+
+    #[test]
+    fn floating_hourly_byhour_limits_while_minutes_expand() {
+        let start = NaiveDateTime::parse_from_str("2026-10-05T08:30:20", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "Selected business hours",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Hourly);
+        rule.count = Some(4);
+        rule.by_hour = vec![9, 17];
+        rule.by_minute = vec![15, 45];
+        event.recurrence = Some(rule);
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M:%S").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            starts,
+            vec![
+                "2026-10-05 09:15:20",
+                "2026-10-05 09:45:20",
+                "2026-10-05 17:15:20",
+                "2026-10-05 17:45:20",
+            ]
+        );
+    }
+
+    #[test]
+    fn hourly_calendar_limiters_filter_active_hours() {
+        let start = NaiveDateTime::parse_from_str("2026-01-31T23:30:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "February first Sunday hours",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Hourly);
+        rule.count = Some(2);
+        rule.by_month = vec![2];
+        rule.by_month_day = vec![1];
+        rule.by_weekday = vec![RecurrenceWeekday::Sunday];
+        rule.by_hour = vec![0, 12];
+        event.recurrence = Some(rule);
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 1, 31).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 2, 2).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(starts, vec!["2026-02-01 00:30", "2026-02-01 12:30"]);
+    }
+
+    #[test]
+    fn hourly_byyearday_limits_active_hours() {
+        let start = NaiveDateTime::parse_from_str("2026-01-01T23:30:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "Second day hours",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Hourly);
+        rule.count = Some(2);
+        rule.by_year_day = vec![2];
+        rule.by_hour = vec![0, 12];
+        event.recurrence = Some(rule);
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 1, 3).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(starts, vec!["2026-01-02 00:30", "2026-01-02 12:30"]);
+    }
+
+    #[test]
+    fn hourly_minute_second_expansion_precedes_bysetpos() {
+        let start = NaiveDateTime::parse_from_str("2026-10-05T09:00:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "Fourth subhour slot",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Hourly);
+        rule.count = Some(2);
+        rule.by_hour = vec![9];
+        rule.by_minute = vec![15, 45];
+        rule.by_second = vec![5, 35];
+        rule.by_set_pos = vec![4];
+        event.recurrence = Some(rule);
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M:%S").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            starts,
+            vec!["2026-10-05 09:45:35", "2026-10-06 09:45:35"]
+        );
+    }
+
+    #[test]
+    fn exact_hourly_recurrence_skips_nonexistent_dst_hour_and_preserves_duration() {
+        let start_utc = DateTime::parse_from_rfc3339("2026-03-08T05:30:00Z")
+            .expect("start")
+            .with_timezone(&Utc);
+        let end_utc = DateTime::parse_from_rfc3339("2026-03-08T06:45:00Z")
+            .expect("end")
+            .with_timezone(&Utc);
+        let mut event = TemporalEvent::new(
+            "Hourly through spring forward",
+            TimeSpec::Instant {
+                start_utc,
+                end_utc: Some(end_utc),
+                source_timezone: Some("America/New_York".to_string()),
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Hourly);
+        rule.count = Some(3);
+        rule.by_minute = vec![15];
+        event.recurrence = Some(rule);
+
+        let zone = chrono_tz::America::New_York;
+        let occurrences = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 3, 8).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 3, 9).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        let starts = occurrences
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Instant { start_utc, .. } => start_utc
+                    .with_timezone(&zone)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string(),
+                other => panic!("expected instant, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            starts,
+            vec!["2026-03-08 01:15", "2026-03-08 03:15", "2026-03-08 04:15"]
+        );
+
+        for occurrence in occurrences {
+            match occurrence.time {
+                TimeSpec::Instant {
+                    start_utc,
+                    end_utc: Some(end_utc),
+                    ..
+                } => assert_eq!(end_utc - start_utc, chrono::Duration::minutes(75)),
+                other => panic!("expected bounded instant, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn hourly_reachability_rejects_unreachable_byhour_cycle() {
+        let start = NaiveDateTime::parse_from_str("2026-10-05T09:00:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Hourly);
+        rule.interval = 24;
+        rule.by_hour = vec![10];
+
+        assert!(!hourly_rule_has_reachable_candidate(
+            &TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+            &rule,
+        )
+        .expect("reachability"));
+    }
+
+    #[test]
+    fn hourly_same_day_override_validation_uses_timestamp_lower_bound() {
+        let start = NaiveDateTime::parse_from_str("2026-10-05T08:30:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let original = TimeSpec::Floating {
+            start: NaiveDateTime::parse_from_str("2026-10-05T17:45:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
+            end: None,
+            source_timezone: None,
+        };
+        let replacement = TimeSpec::Floating {
+            start: NaiveDateTime::parse_from_str("2026-10-05T18:00:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
+            end: None,
+            source_timezone: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Same-day moved hour",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Hourly);
+        rule.count = Some(1);
+        rule.by_hour = vec![17];
+        rule.by_minute = vec![45];
+        rule.overrides = vec![RecurrenceOverride {
+            original: original.clone(),
+            replacement: Some(replacement.clone()),
+            cancelled: false,
+        }];
+        event.recurrence = Some(rule);
+
+        event
+            .validate_recurrence()
+            .expect("same-day hourly override target");
+        let occurrences = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+        let moved = occurrences
+            .iter()
+            .find(|occurrence| occurrence.original_time == original)
+            .expect("moved hourly occurrence");
+
+        assert_eq!(moved.time, replacement);
+        assert_eq!(
+            moved.id,
+            occurrence_identity(event.id, &original).expect("stable identity")
+        );
+    }
+
+    #[test]
+    fn hourly_limiters_are_valid_but_ordinal_byday_and_byweekno_remain_invalid() {
+        let mut valid = RecurrenceRule::new(RecurrenceFrequency::Hourly);
+        valid.by_month = vec![1, 7];
+        valid.by_year_day = vec![1, -1];
+        valid.by_month_day = vec![1, -1];
+        valid.by_weekday = vec![RecurrenceWeekday::Monday];
+        valid.by_hour = vec![9, 17];
+        valid.validate().expect("hourly limiting selectors");
+
+        let mut ordinal = valid.clone();
+        ordinal.by_month_weekday =
+            vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)];
+        assert!(matches!(
+            ordinal.validate(),
+            Err(RecurrenceError::OrdinalByWeekdayRequiresMonthlyOrYearly)
+        ));
+
+        let mut week_no = valid;
+        week_no.by_week_no = vec![1];
+        assert!(matches!(
+            week_no.validate(),
+            Err(RecurrenceError::ByWeekNoRequiresYearly)
+        ));
+    }
+
 }
