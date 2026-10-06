@@ -408,12 +408,12 @@ Implemented recurrence foundation:
 - moved-in exception materialization when the original slot lies outside the active view horizon
 - override-target validation so detached overrides cannot manufacture occurrences outside the RRULE/RDATE set
 - recurrence definition + occurrence origin/index/identity/override inspection in the GUI
-- first canonical-series recurrence editor in the inspector: frequency, interval, COUNT, UNTIL, WKST, plain BYDAY, and BYMONTH; advanced selector fields are editable, RDATE/EXDATE exception starts now have direct authoring surfaces, moved/cancelled overrides remain preserved unchanged, read-only sources are protected, and save/remove routes through canonical-event recurrence validation
+- canonical-series recurrence editor in the inspector: frequency, interval, COUNT, UNTIL, WKST, plain BYDAY, BYMONTH, advanced selector fields, RDATE/EXDATE, and moved/cancelled occurrence overrides are directly editable; read-only sources are protected and save/remove routes through canonical-event recurrence validation
 
 Next Phase 8 work:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
-- richer recurrence/exception authoring and editing, now the primary Phase 8 product boundary; core series fields plus BYWEEKNO/BYYEARDAY/BYMONTHDAY/ordinal-BYDAY/BYHOUR/BYMINUTE/BYSECOND/BYSETPOS and RDATE/EXDATE now have editor surfaces, with moved/cancelled occurrence-override authoring still ahead
+- richer structured recurrence/exception editing ergonomics beyond the now-complete compact canonical editor, including more discoverable per-exception controls rather than text-only override syntax
 - recurrence-exception source-adapter interoperability for external calendar payloads
 - relations
 - collections/sequences
