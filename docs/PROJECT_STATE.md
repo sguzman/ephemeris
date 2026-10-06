@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`de6ad53273e9416318244637f87e336f223f8c13`
+`ae77e4c46b7d1c0968358e266dfe80c2c0476ffb`
 
 At that checkpoint:
 
@@ -26,8 +26,8 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **460 library tests** pass
-- **4 export-CLI tests** pass
+- **462 library tests** pass
+- **4 CLI tests** pass
 
 ## What works now
 
@@ -79,6 +79,12 @@ Refresh behavior is transactional:
 
 ICS import is available through both the `ephemeris-import` CLI and GUI drag/drop. A selected local ICS source can be refreshed explicitly from its original file in the source inspector, reusing the same transactional UID-stable import path. Stored ICS sources can also be exported atomically from the canonical store through the `ephemeris-export` CLI or the selected-source GUI inspector. Export preserves supported calendar-level source properties while serializing the current canonical event state.
 
+### Remote ICS / Webcal sources
+
+HTTP, HTTPS, `webcal://`, and `webcals://` feeds are supported as optional remote iCalendar sources. Remote acquisition runs off the egui thread against a separate SQLite connection, so a slow feed does not freeze the UI. `webcal` schemes normalize to HTTPS. Stable external source identity uses a SHA-256 digest of the normalized URL so private feed tokens are not exposed in source keys; the actual URL remains only as the refresh locator.
+
+Remote subscriptions can be added from the CLI or GUI and refreshed from the source inspector. Their refresh attempts use the same durable refresh-attempt store as local ICS while remaining visually separated from Taria release history. Success, failure, incomplete/interrupted state, target, timestamps, and summaries survive application restart.
+
 ### Taria
 
 Filesystem-first Taria integration remains the richer upstream path.
@@ -89,12 +95,12 @@ The application can detect a local Resourcearium checkout and run **Update Taria
 
 ## Immediate frontier
 
-The next interoperability slice is **refresh history and diagnostics for non-Taria sources**: explicit local ICS refresh now works, but its attempts should participate in the same durable success/failure history used by Taria refreshes.
+The next interoperability slice is **conditional remote-calendar refresh**: persist and reuse HTTP validators such as ETag / Last-Modified so unchanged Webcal feeds can return 304 without re-downloading and reparsing the entire calendar.
 
 After that, the Phase 9 priorities are:
 
-- remote ICS / webcal ingestion
 - broader external formats where useful
+- richer remote-source refresh policy and diagnostics
 - CalDAV only if its synchronization value justifies the added state machine
 
 The long-horizon domain roadmap then returns to event relations, collections/sequences, uncertainty, and duplicate/entity resolution.
