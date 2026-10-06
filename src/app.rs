@@ -1474,6 +1474,8 @@ impl EphemerisApp {
                 self.reload_or_report();
             }
             Err(error) => {
+                self.source_refresh_attempts =
+                    self.store.source_refresh_attempts(20).unwrap_or_default();
                 self.last_message = None;
                 self.last_error = Some(format!(
                     "Failed to import iCalendar {}: {error:#}",
@@ -1574,6 +1576,8 @@ impl EphemerisApp {
                 self.reload_or_report();
             }
             Err(error) => {
+                self.source_refresh_attempts =
+                    self.store.source_refresh_attempts(20).unwrap_or_default();
                 self.last_message = None;
                 self.last_error = Some(format!("Failed to import remote iCalendar: {error}"));
             }
@@ -1858,24 +1862,26 @@ impl EphemerisApp {
             ));
         });
 
+        let taria_attempts = self
+            .source_refresh_attempts
+            .iter()
+            .filter(|attempt| attempt.refresh_kind == "taria_workspace")
+            .collect::<Vec<_>>();
         ui.collapsing(
-            format!("Refresh history ({})", self.source_refresh_attempts.len()),
+            format!("Taria refresh history ({})", taria_attempts.len()),
             |ui| {
-                if self.source_refresh_attempts.is_empty() {
-                    ui.small("No persisted refresh attempts yet.");
+                if taria_attempts.is_empty() {
+                    ui.small("No persisted Taria refresh attempts yet.");
                 }
 
-                for attempt in &self.source_refresh_attempts {
+                for attempt in taria_attempts {
                     let status = match attempt.success {
                         Some(true) => "success",
                         Some(false) => "failed",
                         None if active_attempt_id == Some(attempt.id) => "running",
                         None => "incomplete",
                     };
-                    ui.strong(format!(
-                        "{} · {} · {}",
-                        status, attempt.refresh_kind, attempt.target
-                    ));
+                    ui.strong(format!("{status} · {}", attempt.target));
                     ui.small(format!("Started {}", attempt.started_at));
                     if let Some(completed_at) = attempt.completed_at.as_deref() {
                         ui.small(format!("Completed {completed_at}"));
@@ -2801,6 +2807,47 @@ impl EphemerisApp {
         }
     }
 
+    fn render_calendar_refresh_history(&self, ui: &mut egui::Ui) {
+        let attempts = self
+            .source_refresh_attempts
+            .iter()
+            .filter(|attempt| attempt.refresh_kind != "taria_workspace")
+            .collect::<Vec<_>>();
+
+        ui.collapsing(format!("Calendar refresh history ({})", attempts.len()), |ui| {
+            if attempts.is_empty() {
+                ui.small("No persisted ICS/Webcal refresh attempts yet.");
+                return;
+            }
+
+            for attempt in attempts {
+                let status = match attempt.success {
+                    Some(true) => "success",
+                    Some(false) => "failed",
+                    None => "incomplete",
+                };
+                let kind = match attempt.refresh_kind.as_str() {
+                    "ics_file" => "local ICS",
+                    "webcal" => "remote Webcal",
+                    other => other,
+                };
+                ui.strong(format!("{status} · {kind}"));
+                ui.small(format!("Target {}", attempt.target));
+                ui.small(format!("Started {}", attempt.started_at));
+                if let Some(completed_at) = attempt.completed_at.as_deref() {
+                    ui.small(format!("Completed {completed_at}"));
+                }
+                if let Some(summary) = attempt.summary.as_deref() {
+                    ui.small(summary);
+                }
+                if let Some(error) = attempt.error.as_deref() {
+                    ui.colored_label(Color32::LIGHT_RED, error);
+                }
+                ui.add_space(6.0);
+            }
+        });
+    }
+
     fn render_sources(&mut self, ui: &mut egui::Ui) {
         ui.set_width(280.0);
 
@@ -2837,6 +2884,7 @@ impl EphemerisApp {
         if importing_remote {
             ui.small("Fetching and importing in the background...");
         }
+        self.render_calendar_refresh_history(ui);
 
         let membership_options = MembershipPredicateOptions {
             bundles: self.taria_bundle_refs.clone(),
