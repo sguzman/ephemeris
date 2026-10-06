@@ -25,7 +25,10 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let output_path = args.next().map(PathBuf::from).ok_or_else(|| anyhow!(usage()))?;
+    let output_path = args
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!(usage()))?;
     if args.next().is_some() {
         return Err(anyhow!(usage()));
     }
