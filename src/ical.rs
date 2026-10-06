@@ -572,10 +572,11 @@ pub fn format_vevent(event: &IcalVevent) -> Result<String, IcalRecurrenceError> 
     }
 
     if let Some(rrule) = &event.rrule {
-        let formatted = format_rrule(&rrule.value)?;
-        let mut line = parse_ical_content_line(&formatted)?;
-        line.parameters = rrule.parameters.clone();
-        lines.push(line);
+        lines.push(IcalContentLine {
+            name: "RRULE".to_string(),
+            parameters: rrule.parameters.clone(),
+            value: format_rrule(&rrule.value)?,
+        });
     }
     if !event.rdates.is_empty() {
         lines.push(parse_ical_content_line(&format_rdate_property(
