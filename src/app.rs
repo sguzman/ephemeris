@@ -246,9 +246,7 @@ fn recurrence_ordinal_byday_edit_rows(
         .collect()
 }
 
-fn format_recurrence_ordinal_byday_edit_rows(
-    rows: &[RecurrenceOrdinalByDayEditRow],
-) -> String {
+fn format_recurrence_ordinal_byday_edit_rows(rows: &[RecurrenceOrdinalByDayEditRow]) -> String {
     rows.iter()
         .map(RecurrenceOrdinalByDayEditRow::compact_token)
         .collect::<Vec<_>>()
@@ -530,8 +528,7 @@ impl RecurrenceEditDraft {
         rule.by_year_day = parse_i16_selector_values(&self.year_day_text, "BYYEARDAY")?;
         rule.by_month_day = parse_i8_selector_values(&self.month_day_text, "BYMONTHDAY")?;
 
-        let canonical_ordinal_byday_text =
-            format_ordinal_byday_values(&self.rule.by_month_weekday);
+        let canonical_ordinal_byday_text = format_ordinal_byday_values(&self.rule.by_month_weekday);
         let structured_ordinal_byday_text =
             format_recurrence_ordinal_byday_edit_rows(&self.ordinal_byday_rows);
         let ordinal_byday_raw_override = self.ordinal_byday_text != canonical_ordinal_byday_text
@@ -540,8 +537,7 @@ impl RecurrenceEditDraft {
             rule.by_month_weekday = parse_ordinal_byday_values(&self.ordinal_byday_text)?;
         } else {
             validate_recurrence_ordinal_byday_edit_rows(&self.ordinal_byday_rows)?;
-            rule.by_month_weekday =
-                parse_ordinal_byday_values(&structured_ordinal_byday_text)?;
+            rule.by_month_weekday = parse_ordinal_byday_values(&structured_ordinal_byday_text)?;
         }
 
         rule.by_hour = parse_u8_selector_values(&self.hour_text, "BYHOUR")?;
@@ -3842,10 +3838,12 @@ fn render_structured_ordinal_byday(
     }
 
     if ui.small_button("+ Add ordinal BYDAY").clicked() {
-        draft.ordinal_byday_rows.push(RecurrenceOrdinalByDayEditRow {
-            ordinal_text: "1".to_string(),
-            weekday: RecurrenceWeekday::Monday,
-        });
+        draft
+            .ordinal_byday_rows
+            .push(RecurrenceOrdinalByDayEditRow {
+                ordinal_text: "1".to_string(),
+                weekday: RecurrenceWeekday::Monday,
+            });
         structured_changed = true;
     }
 
@@ -4193,11 +4191,7 @@ fn render_recurrence_editor(
         "1,15,-1",
         month_day_available,
     );
-    render_structured_ordinal_byday(
-        ui,
-        draft,
-        ordinal_byday_available,
-    );
+    render_structured_ordinal_byday(ui, draft, ordinal_byday_available);
     contextual_recurrence_selector_text_row(
         ui,
         RecurrenceEditorSelector::Hour,
@@ -8151,8 +8145,7 @@ mod tests {
             },
         );
         let mut rule = RecurrenceRule::new(RecurrenceFrequency::Monthly);
-        rule.by_month_weekday =
-            vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)];
+        rule.by_month_weekday = vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)];
         event.recurrence = Some(rule);
 
         let mut draft = RecurrenceEditDraft::from_event(&event);
@@ -8190,8 +8183,7 @@ mod tests {
             },
         );
         let mut rule = RecurrenceRule::new(RecurrenceFrequency::Monthly);
-        rule.by_month_weekday =
-            vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)];
+        rule.by_month_weekday = vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)];
         event.recurrence = Some(rule);
 
         let mut draft = RecurrenceEditDraft::from_event(&event);
@@ -8202,5 +8194,4 @@ mod tests {
         assert!(draft.ordinal_byday_text.is_empty());
         assert!(draft.ordinal_byday_rows.is_empty());
     }
-
 }
