@@ -3867,6 +3867,7 @@ fn render_structured_ordinal_byday(
                 && let Ok(rows) =
                     parse_recurrence_ordinal_byday_edit_rows(&draft.ordinal_byday_text)
             {
+                draft.ordinal_byday_text = format_recurrence_ordinal_byday_edit_rows(&rows);
                 draft.ordinal_byday_rows = rows;
             }
         });
