@@ -4036,9 +4036,7 @@ fn recurrence_period_lower_bound_local_datetime(
 ) -> Result<Option<NaiveDateTime>, RecurrenceError> {
     if !matches!(
         rule.frequency,
-        RecurrenceFrequency::Secondly
-            | RecurrenceFrequency::Minutely
-            | RecurrenceFrequency::Hourly
+        RecurrenceFrequency::Secondly | RecurrenceFrequency::Minutely | RecurrenceFrequency::Hourly
     ) {
         return Ok(None);
     }
