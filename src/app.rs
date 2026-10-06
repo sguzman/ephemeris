@@ -6711,6 +6711,170 @@ mod tests {
     }
 
     #[test]
+    fn recurrence_weekdays_preset_builds_daily_weekday_rule() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let event = TemporalEvent::new(
+            "Weekdays preset",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+
+        draft.apply_preset(RecurrencePreset::Weekdays);
+        let parsed = draft.parsed_rule().expect("weekday preset");
+
+        assert_eq!(parsed.frequency, RecurrenceFrequency::Daily);
+        assert_eq!(parsed.interval, 1);
+        assert_eq!(
+            parsed.by_weekday,
+            vec![
+                RecurrenceWeekday::Monday,
+                RecurrenceWeekday::Tuesday,
+                RecurrenceWeekday::Wednesday,
+                RecurrenceWeekday::Thursday,
+                RecurrenceWeekday::Friday,
+            ]
+        );
+        assert!(parsed.by_month.is_empty());
+        assert!(parsed.by_set_pos.is_empty());
+    }
+
+    #[test]
+    fn recurrence_last_weekday_preset_resets_conflicting_selectors() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let event = TemporalEvent::new(
+            "Last weekday preset",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.rule.frequency = RecurrenceFrequency::Yearly;
+        draft.rule.week_start = RecurrenceWeekday::Sunday;
+        draft.rule.by_weekday = vec![RecurrenceWeekday::Saturday];
+        draft.rule.by_month = vec![2, 8];
+        draft.interval_text = "3".to_string();
+        draft.week_no_text = "20".to_string();
+        draft.year_day_text = "100".to_string();
+        draft.month_day_text = "15".to_string();
+        draft.ordinal_byday_text = "1MO".to_string();
+        draft.hour_text = "9".to_string();
+        draft.minute_text = "30".to_string();
+        draft.second_text = "15".to_string();
+        draft.set_pos_text = "2".to_string();
+
+        draft.apply_preset(RecurrencePreset::LastWeekdayOfMonth);
+        let parsed = draft.parsed_rule().expect("last weekday preset");
+
+        assert_eq!(parsed.frequency, RecurrenceFrequency::Monthly);
+        assert_eq!(parsed.interval, 1);
+        assert_eq!(parsed.week_start, RecurrenceWeekday::Monday);
+        assert_eq!(
+            parsed.by_weekday,
+            vec![
+                RecurrenceWeekday::Monday,
+                RecurrenceWeekday::Tuesday,
+                RecurrenceWeekday::Wednesday,
+                RecurrenceWeekday::Thursday,
+                RecurrenceWeekday::Friday,
+            ]
+        );
+        assert_eq!(parsed.by_set_pos, vec![-1]);
+        assert!(parsed.by_month.is_empty());
+        assert!(parsed.by_week_no.is_empty());
+        assert!(parsed.by_year_day.is_empty());
+        assert!(parsed.by_month_day.is_empty());
+        assert!(parsed.by_month_weekday.is_empty());
+        assert!(parsed.by_hour.is_empty());
+        assert!(parsed.by_minute.is_empty());
+        assert!(parsed.by_second.is_empty());
+    }
+
+    #[test]
+    fn recurrence_basic_presets_use_frequency_defaults() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let event = TemporalEvent::new(
+            "Basic presets",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+
+        for (preset, frequency) in [
+            (RecurrencePreset::Daily, RecurrenceFrequency::Daily),
+            (RecurrencePreset::Weekly, RecurrenceFrequency::Weekly),
+            (RecurrencePreset::Monthly, RecurrenceFrequency::Monthly),
+            (RecurrencePreset::Yearly, RecurrenceFrequency::Yearly),
+        ] {
+            draft.apply_preset(preset);
+            let parsed = draft.parsed_rule().expect("basic preset");
+            assert_eq!(parsed.frequency, frequency);
+            assert_eq!(parsed.interval, 1);
+            assert!(parsed.by_weekday.is_empty());
+            assert!(parsed.by_month.is_empty());
+            assert!(parsed.by_set_pos.is_empty());
+        }
+    }
+
+    #[test]
+    fn recurrence_presets_preserve_bounds_and_exception_editor_state() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Preserve preset state",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(8);
+        rule.until = Some(NaiveDate::from_ymd_opt(2026, 12, 31).expect("until"));
+        rule.rdates = vec![TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 11, 1).expect("rdate"),
+            end_exclusive: None,
+        }];
+        rule.exdates = vec![TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("exdate"),
+            end_exclusive: None,
+        }];
+        rule.overrides = vec![RecurrenceOverride {
+            original: TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 8).expect("original"),
+                end_exclusive: None,
+            },
+            replacement: None,
+            cancelled: true,
+        }];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        let count_text = draft.count_text.clone();
+        let until_text = draft.until_text.clone();
+        let rdate_rows = draft.rdate_rows.clone();
+        let exdate_rows = draft.exdate_rows.clone();
+        let override_rows = draft.override_rows.clone();
+        let rdate_text = draft.rdate_text.clone();
+        let exdate_text = draft.exdate_text.clone();
+        let override_text = draft.override_text.clone();
+
+        draft.apply_preset(RecurrencePreset::Monthly);
+
+        assert_eq!(draft.count_text, count_text);
+        assert_eq!(draft.until_text, until_text);
+        assert_eq!(draft.rdate_rows, rdate_rows);
+        assert_eq!(draft.exdate_rows, exdate_rows);
+        assert_eq!(draft.override_rows, override_rows);
+        assert_eq!(draft.rdate_text, rdate_text);
+        assert_eq!(draft.exdate_text, exdate_text);
+        assert_eq!(draft.override_text, override_text);
+    }
+
+    #[test]
     fn recurrence_selector_numeric_parsers_accept_commas_and_spaces() {
         assert_eq!(
             parse_i8_selector_values("1, 15 -1", "BYMONTHDAY").expect("i8 selectors"),
