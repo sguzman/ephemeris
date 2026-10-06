@@ -1520,8 +1520,9 @@ impl EphemerisApp {
 
         let Some(database_path) = self.store.path().map(std::path::Path::to_path_buf) else {
             self.last_message = None;
-            self.last_error =
-                Some("Remote iCalendar import requires a file-backed Ephemeris database.".to_string());
+            self.last_error = Some(
+                "Remote iCalendar import requires a file-backed Ephemeris database.".to_string(),
+            );
             return;
         };
 
@@ -2815,8 +2816,8 @@ impl EphemerisApp {
                     .hint_text("https://…/calendar.ics")
                     .desired_width(190.0),
             );
-            let submit = response.lost_focus()
-                && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            let submit =
+                response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
             let ready = !self.remote_ics_url.trim().is_empty() && !importing_remote;
             if ui
                 .add_enabled(
