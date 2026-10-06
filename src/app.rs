@@ -3378,6 +3378,104 @@ fn recurrence_selector_text_row(ui: &mut egui::Ui, label: &str, value: &mut Stri
     });
 }
 
+fn render_structured_recurrence_overrides(
+    ui: &mut egui::Ui,
+    draft: &mut RecurrenceEditDraft,
+) {
+    ui.label("Occurrence overrides");
+    ui.small("Edit each exception explicitly; raw RFC-like syntax remains available below.");
+
+    let value_hint = recurrence_exception_value_hint(&draft.base_time);
+    let mut structured_changed = false;
+    let mut remove_index = None;
+
+    for index in 0..draft.override_rows.len() {
+        ui.push_id(("recurrence-override-row", index), |ui| {
+            let row = &mut draft.override_rows[index];
+            ui.horizontal(|ui| {
+                ui.label(format!("#{}", index + 1));
+                structured_changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(&mut row.original_text)
+                            .desired_width(150.0)
+                            .hint_text(value_hint),
+                    )
+                    .changed();
+
+                let previous_action = row.action;
+                egui::ComboBox::from_id_salt("action")
+                    .selected_text(row.action.label())
+                    .show_ui(ui, |ui| {
+                        for action in [
+                            RecurrenceOverrideEditAction::Move,
+                            RecurrenceOverrideEditAction::Cancel,
+                            RecurrenceOverrideEditAction::CancelMove,
+                            RecurrenceOverrideEditAction::Keep,
+                        ] {
+                            ui.selectable_value(&mut row.action, action, action.label());
+                        }
+                    });
+                structured_changed |= row.action != previous_action;
+
+                if row.action.needs_replacement() {
+                    structured_changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut row.replacement_text)
+                                .desired_width(150.0)
+                                .hint_text(value_hint),
+                        )
+                        .changed();
+                } else {
+                    ui.add_sized([150.0, 18.0], egui::Label::new("no replacement"));
+                }
+
+                if ui.small_button("Remove").clicked() {
+                    remove_index = Some(index);
+                }
+            });
+        });
+    }
+
+    if let Some(index) = remove_index {
+        draft.override_rows.remove(index);
+        structured_changed = true;
+    }
+
+    if ui.small_button("+ Add override").clicked() {
+        draft.override_rows.push(RecurrenceOverrideEditRow {
+            original_text: String::new(),
+            action: RecurrenceOverrideEditAction::Cancel,
+            replacement_text: String::new(),
+        });
+        structured_changed = true;
+    }
+
+    if structured_changed {
+        draft.override_text = format_recurrence_override_edit_rows(&draft.override_rows);
+    }
+
+    egui::CollapsingHeader::new("Raw override syntax")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.small(
+                "Power-user form: original=>replacement, original=>CANCEL, original=>CANCEL@replacement, or original=>KEEP.",
+            );
+            let override_hint = recurrence_override_hint(&draft.base_time);
+            ui.add(
+                egui::TextEdit::multiline(&mut draft.override_text)
+                    .desired_width(430.0)
+                    .desired_rows(3)
+                    .hint_text(override_hint),
+            );
+            if ui.small_button("Load raw syntax into rows").clicked()
+                && let Ok(rows) =
+                    parse_recurrence_override_edit_rows(&draft.override_text, &draft.base_time)
+            {
+                draft.override_rows = rows;
+            }
+        });
+}
+
 fn render_recurrence_editor(
     ui: &mut egui::Ui,
     draft: &mut RecurrenceEditDraft,
@@ -3480,17 +3578,7 @@ fn render_recurrence_editor(
     recurrence_selector_text_row(ui, "RDATE", &mut draft.rdate_text, exception_hint);
     recurrence_selector_text_row(ui, "EXDATE", &mut draft.exdate_text, exception_hint);
 
-    ui.label("Occurrence overrides");
-    ui.small(
-        "One per line: original=>replacement, original=>CANCEL, original=>CANCEL@replacement, or original=>KEEP.",
-    );
-    let override_hint = recurrence_override_hint(&draft.base_time);
-    ui.add(
-        egui::TextEdit::multiline(&mut draft.override_text)
-            .desired_width(430.0)
-            .desired_rows(3)
-            .hint_text(override_hint),
-    );
+    render_structured_recurrence_overrides(ui, draft);
 
     let validation = draft.parsed_rule();
     match &validation {
