@@ -281,6 +281,56 @@ fn validate_recurrence_ordinal_byday_edit_rows(
     Ok(())
 }
 
+fn recurrence_numeric_edit_rows<T: ToString>(values: &[T]) -> Vec<String> {
+    values.iter().map(ToString::to_string).collect()
+}
+
+fn format_recurrence_numeric_edit_rows(rows: &[String]) -> String {
+    rows.iter()
+        .map(|value| value.trim())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn validate_recurrence_numeric_edit_rows(rows: &[String], label: &str) -> Result<(), String> {
+    for (index, value) in rows.iter().enumerate() {
+        if value.trim().is_empty() {
+            return Err(format!(
+                "{label} row #{} needs a value or must be removed.",
+                index + 1
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_structured_numeric_selector<T, F>(
+    canonical_values: &[T],
+    raw_text: &str,
+    rows: &[String],
+    label: &str,
+    parser: F,
+) -> Result<Vec<T>, String>
+where
+    T: ToString,
+    F: Fn(&str, &str) -> Result<Vec<T>, String>,
+{
+    let canonical_text = canonical_values
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let structured_text = format_recurrence_numeric_edit_rows(rows);
+    let raw_override = raw_text != canonical_text && raw_text != structured_text;
+
+    if raw_override {
+        parser(raw_text, label)
+    } else {
+        validate_recurrence_numeric_edit_rows(rows, label)?;
+        parser(&structured_text, label)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RecurrenceOverrideEditRow {
     original_text: String,
@@ -385,14 +435,21 @@ struct RecurrenceEditDraft {
     count_text: String,
     until_text: String,
     week_no_text: String,
+    week_no_rows: Vec<String>,
     year_day_text: String,
+    year_day_rows: Vec<String>,
     month_day_text: String,
+    month_day_rows: Vec<String>,
     ordinal_byday_text: String,
     ordinal_byday_rows: Vec<RecurrenceOrdinalByDayEditRow>,
     hour_text: String,
+    hour_rows: Vec<String>,
     minute_text: String,
+    minute_rows: Vec<String>,
     second_text: String,
+    second_rows: Vec<String>,
     set_pos_text: String,
+    set_pos_rows: Vec<String>,
     rdate_text: String,
     rdate_rows: Vec<String>,
     exdate_text: String,
@@ -428,14 +485,21 @@ impl RecurrenceEditDraft {
                 .until
                 .map_or_else(String::new, |until| until.to_string()),
             week_no_text: format_selector_values(&rule.by_week_no),
+            week_no_rows: recurrence_numeric_edit_rows(&rule.by_week_no),
             year_day_text: format_selector_values(&rule.by_year_day),
+            year_day_rows: recurrence_numeric_edit_rows(&rule.by_year_day),
             month_day_text: format_selector_values(&rule.by_month_day),
+            month_day_rows: recurrence_numeric_edit_rows(&rule.by_month_day),
             ordinal_byday_text,
             ordinal_byday_rows,
             hour_text: format_selector_values(&rule.by_hour),
+            hour_rows: recurrence_numeric_edit_rows(&rule.by_hour),
             minute_text: format_selector_values(&rule.by_minute),
+            minute_rows: recurrence_numeric_edit_rows(&rule.by_minute),
             second_text: format_selector_values(&rule.by_second),
+            second_rows: recurrence_numeric_edit_rows(&rule.by_second),
             set_pos_text: format_selector_values(&rule.by_set_pos),
+            set_pos_rows: recurrence_numeric_edit_rows(&rule.by_set_pos),
             rdate_text,
             rdate_rows,
             exdate_text,
@@ -453,14 +517,21 @@ impl RecurrenceEditDraft {
         self.rule.by_weekday.clear();
         self.rule.by_month.clear();
         self.week_no_text.clear();
+        self.week_no_rows.clear();
         self.year_day_text.clear();
+        self.year_day_rows.clear();
         self.month_day_text.clear();
+        self.month_day_rows.clear();
         self.ordinal_byday_text.clear();
         self.ordinal_byday_rows.clear();
         self.hour_text.clear();
+        self.hour_rows.clear();
         self.minute_text.clear();
+        self.minute_rows.clear();
         self.second_text.clear();
+        self.second_rows.clear();
         self.set_pos_text.clear();
+        self.set_pos_rows.clear();
 
         match preset {
             RecurrencePreset::Daily => {
@@ -492,6 +563,7 @@ impl RecurrenceEditDraft {
                     RecurrenceWeekday::Friday,
                 ];
                 self.set_pos_text = "-1".to_string();
+                self.set_pos_rows = vec!["-1".to_string()];
             }
             RecurrencePreset::Yearly => {
                 self.rule.frequency = RecurrenceFrequency::Yearly;
@@ -524,9 +596,27 @@ impl RecurrenceEditDraft {
                     .map_err(|_| "Until must be YYYY-MM-DD or blank.".to_string())?,
             )
         };
-        rule.by_week_no = parse_i8_selector_values(&self.week_no_text, "BYWEEKNO")?;
-        rule.by_year_day = parse_i16_selector_values(&self.year_day_text, "BYYEARDAY")?;
-        rule.by_month_day = parse_i8_selector_values(&self.month_day_text, "BYMONTHDAY")?;
+        rule.by_week_no = parse_structured_numeric_selector(
+            &self.rule.by_week_no,
+            &self.week_no_text,
+            &self.week_no_rows,
+            "BYWEEKNO",
+            parse_i8_selector_values,
+        )?;
+        rule.by_year_day = parse_structured_numeric_selector(
+            &self.rule.by_year_day,
+            &self.year_day_text,
+            &self.year_day_rows,
+            "BYYEARDAY",
+            parse_i16_selector_values,
+        )?;
+        rule.by_month_day = parse_structured_numeric_selector(
+            &self.rule.by_month_day,
+            &self.month_day_text,
+            &self.month_day_rows,
+            "BYMONTHDAY",
+            parse_i8_selector_values,
+        )?;
 
         let canonical_ordinal_byday_text = format_ordinal_byday_values(&self.rule.by_month_weekday);
         let structured_ordinal_byday_text =
@@ -540,10 +630,34 @@ impl RecurrenceEditDraft {
             rule.by_month_weekday = parse_ordinal_byday_values(&structured_ordinal_byday_text)?;
         }
 
-        rule.by_hour = parse_u8_selector_values(&self.hour_text, "BYHOUR")?;
-        rule.by_minute = parse_u8_selector_values(&self.minute_text, "BYMINUTE")?;
-        rule.by_second = parse_u8_selector_values(&self.second_text, "BYSECOND")?;
-        rule.by_set_pos = parse_i16_selector_values(&self.set_pos_text, "BYSETPOS")?;
+        rule.by_hour = parse_structured_numeric_selector(
+            &self.rule.by_hour,
+            &self.hour_text,
+            &self.hour_rows,
+            "BYHOUR",
+            parse_u8_selector_values,
+        )?;
+        rule.by_minute = parse_structured_numeric_selector(
+            &self.rule.by_minute,
+            &self.minute_text,
+            &self.minute_rows,
+            "BYMINUTE",
+            parse_u8_selector_values,
+        )?;
+        rule.by_second = parse_structured_numeric_selector(
+            &self.rule.by_second,
+            &self.second_text,
+            &self.second_rows,
+            "BYSECOND",
+            parse_u8_selector_values,
+        )?;
+        rule.by_set_pos = parse_structured_numeric_selector(
+            &self.rule.by_set_pos,
+            &self.set_pos_text,
+            &self.set_pos_rows,
+            "BYSETPOS",
+            parse_i16_selector_values,
+        )?;
 
         let canonical_rdate_text = format_exception_start_values(&self.rule.rdates);
         let structured_rdate_text = format_recurrence_exception_edit_rows(&self.rdate_rows);
@@ -3681,49 +3795,99 @@ struct MembershipPredicateOptions {
     calendars: Vec<TariaProjectedCalendarChoice>,
 }
 
-fn recurrence_selector_text_row(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(
-            egui::TextEdit::singleline(value)
-                .desired_width(150.0)
-                .hint_text(hint),
-        );
-    });
-}
-
-fn contextual_recurrence_selector_text_row(
+fn render_structured_numeric_selector<F>(
     ui: &mut egui::Ui,
     selector: RecurrenceEditorSelector,
     label: &str,
-    value: &mut String,
+    rows: &mut Vec<String>,
+    raw_text: &mut String,
     hint: &str,
+    default_value: &str,
     available: bool,
-) {
-    if available {
-        recurrence_selector_text_row(ui, label, value, hint);
-        return;
-    }
-    if value.trim().is_empty() {
+    parse_raw: F,
+) where
+    F: Fn(&str) -> Result<Vec<String>, String>,
+{
+    if !available {
+        if raw_text.trim().is_empty() && rows.is_empty() {
+            return;
+        }
+
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("{label} (preserved)")).strong());
+                ui.add_enabled(
+                    false,
+                    egui::TextEdit::singleline(raw_text)
+                        .desired_width(150.0)
+                        .hint_text(hint),
+                );
+                if ui.small_button("Clear").clicked() {
+                    raw_text.clear();
+                    rows.clear();
+                }
+            });
+            ui.small(selector.unavailable_reason());
+            ui.small("The structured rows are preserved until cleared or the context is restored.");
+        });
         return;
     }
 
-    ui.group(|ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{label} (preserved)")).strong());
-            ui.add_enabled(
-                false,
-                egui::TextEdit::singleline(value)
-                    .desired_width(150.0)
+    ui.label(label);
+    ui.small("One numeric selector per row; raw compact syntax remains available below.");
+
+    let mut structured_changed = false;
+    let mut remove_index = None;
+    for (index, value) in rows.iter_mut().enumerate() {
+        ui.push_id((label, index), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("#{}", index + 1));
+                structured_changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(value)
+                            .desired_width(100.0)
+                            .hint_text(hint),
+                    )
+                    .changed();
+                if ui.small_button("Remove").clicked() {
+                    remove_index = Some(index);
+                }
+            });
+        });
+    }
+
+    if let Some(index) = remove_index {
+        rows.remove(index);
+        structured_changed = true;
+    }
+
+    if ui.small_button(format!("+ Add {label} value")).clicked() {
+        rows.push(default_value.to_string());
+        structured_changed = true;
+    }
+
+    if structured_changed {
+        *raw_text = format_recurrence_numeric_edit_rows(rows);
+    }
+
+    egui::CollapsingHeader::new(format!("Raw {label} syntax"))
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.small("Power-user form: comma- or space-separated numeric selectors.");
+            ui.add(
+                egui::TextEdit::singleline(raw_text)
+                    .desired_width(260.0)
                     .hint_text(hint),
             );
-            if ui.small_button("Clear").clicked() {
-                value.clear();
+            if ui
+                .small_button(format!("Load raw {label} syntax into rows"))
+                .clicked()
+                && let Ok(parsed_rows) = parse_raw(raw_text)
+            {
+                *raw_text = format_recurrence_numeric_edit_rows(&parsed_rows);
+                *rows = parsed_rows;
             }
         });
-        ui.small(selector.unavailable_reason());
-        ui.small("The value is not discarded when frequency or time context changes.");
-    });
 }
 
 fn render_contextual_week_start(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft) {
@@ -4167,62 +4331,104 @@ fn render_recurrence_editor(
         frequency,
         &draft.base_time,
     );
-    contextual_recurrence_selector_text_row(
+    render_structured_numeric_selector(
         ui,
         RecurrenceEditorSelector::WeekNo,
         "BYWEEKNO",
+        &mut draft.week_no_rows,
         &mut draft.week_no_text,
-        "20,-1",
+        "20 or -1",
+        "1",
         week_no_available,
+        |raw| {
+            parse_i8_selector_values(raw, "BYWEEKNO")
+                .map(|values| recurrence_numeric_edit_rows(&values))
+        },
     );
-    contextual_recurrence_selector_text_row(
+    render_structured_numeric_selector(
         ui,
         RecurrenceEditorSelector::YearDay,
         "BYYEARDAY",
+        &mut draft.year_day_rows,
         &mut draft.year_day_text,
-        "1,100,-1",
+        "1, 100, or -1",
+        "1",
         year_day_available,
+        |raw| {
+            parse_i16_selector_values(raw, "BYYEARDAY")
+                .map(|values| recurrence_numeric_edit_rows(&values))
+        },
     );
-    contextual_recurrence_selector_text_row(
+    render_structured_numeric_selector(
         ui,
         RecurrenceEditorSelector::MonthDay,
         "BYMONTHDAY",
+        &mut draft.month_day_rows,
         &mut draft.month_day_text,
-        "1,15,-1",
+        "1, 15, or -1",
+        "1",
         month_day_available,
+        |raw| {
+            parse_i8_selector_values(raw, "BYMONTHDAY")
+                .map(|values| recurrence_numeric_edit_rows(&values))
+        },
     );
     render_structured_ordinal_byday(ui, draft, ordinal_byday_available);
-    contextual_recurrence_selector_text_row(
+    render_structured_numeric_selector(
         ui,
         RecurrenceEditorSelector::Hour,
         "BYHOUR",
+        &mut draft.hour_rows,
         &mut draft.hour_text,
-        "9,17",
+        "0..23",
+        "0",
         hour_available,
+        |raw| {
+            parse_u8_selector_values(raw, "BYHOUR")
+                .map(|values| recurrence_numeric_edit_rows(&values))
+        },
     );
-    contextual_recurrence_selector_text_row(
+    render_structured_numeric_selector(
         ui,
         RecurrenceEditorSelector::Minute,
         "BYMINUTE",
+        &mut draft.minute_rows,
         &mut draft.minute_text,
-        "0,30",
+        "0..59",
+        "0",
         minute_available,
+        |raw| {
+            parse_u8_selector_values(raw, "BYMINUTE")
+                .map(|values| recurrence_numeric_edit_rows(&values))
+        },
     );
-    contextual_recurrence_selector_text_row(
+    render_structured_numeric_selector(
         ui,
         RecurrenceEditorSelector::Second,
         "BYSECOND",
+        &mut draft.second_rows,
         &mut draft.second_text,
-        "0,15,30,45",
+        "0..59",
+        "0",
         second_available,
+        |raw| {
+            parse_u8_selector_values(raw, "BYSECOND")
+                .map(|values| recurrence_numeric_edit_rows(&values))
+        },
     );
-    contextual_recurrence_selector_text_row(
+    render_structured_numeric_selector(
         ui,
         RecurrenceEditorSelector::SetPos,
         "BYSETPOS",
+        &mut draft.set_pos_rows,
         &mut draft.set_pos_text,
-        "1,-1",
+        "1 or -1",
+        "1",
         true,
+        |raw| {
+            parse_i16_selector_values(raw, "BYSETPOS")
+                .map(|values| recurrence_numeric_edit_rows(&values))
+        },
     );
     if !draft.set_pos_text.trim().is_empty() {
         ui.small(
@@ -8194,4 +8400,136 @@ mod tests {
         assert!(draft.ordinal_byday_text.is_empty());
         assert!(draft.ordinal_byday_rows.is_empty());
     }
+
+    #[test]
+    fn recurrence_numeric_edit_rows_initialize_from_existing_rule() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Structured numeric selectors",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.by_week_no = vec![20, -1];
+        rule.by_year_day = vec![1, -1];
+        rule.by_month_day = vec![1, -1];
+        rule.by_hour = vec![9, 17];
+        rule.by_minute = vec![0, 30];
+        rule.by_second = vec![15, 45];
+        rule.by_set_pos = vec![1, -1];
+        event.recurrence = Some(rule);
+
+        let draft = RecurrenceEditDraft::from_event(&event);
+        assert_eq!(draft.week_no_rows, vec!["20", "-1"]);
+        assert_eq!(draft.year_day_rows, vec!["1", "-1"]);
+        assert_eq!(draft.month_day_rows, vec!["1", "-1"]);
+        assert_eq!(draft.hour_rows, vec!["9", "17"]);
+        assert_eq!(draft.minute_rows, vec!["0", "30"]);
+        assert_eq!(draft.second_rows, vec!["15", "45"]);
+        assert_eq!(draft.set_pos_rows, vec!["1", "-1"]);
+    }
+
+    #[test]
+    fn recurrence_structured_numeric_rows_drive_parsed_rule() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let event = TemporalEvent::new(
+            "Structured numeric edit",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.rule.frequency = RecurrenceFrequency::Yearly;
+        draft.week_no_rows = vec!["20".to_string(), "-1".to_string()];
+        draft.week_no_text = "20,-1".to_string();
+        draft.year_day_rows = vec!["1".to_string(), "-1".to_string()];
+        draft.year_day_text = "1,-1".to_string();
+        draft.month_day_rows = vec!["1".to_string(), "-1".to_string()];
+        draft.month_day_text = "1,-1".to_string();
+        draft.hour_rows = vec!["9".to_string(), "17".to_string()];
+        draft.hour_text = "9,17".to_string();
+        draft.minute_rows = vec!["0".to_string(), "30".to_string()];
+        draft.minute_text = "0,30".to_string();
+        draft.second_rows = vec!["15".to_string()];
+        draft.second_text = "15".to_string();
+        draft.set_pos_rows = vec!["1".to_string(), "-1".to_string()];
+        draft.set_pos_text = "1,-1".to_string();
+
+        let parsed = draft.parsed_rule().expect("structured numeric rule");
+        assert_eq!(parsed.by_week_no, vec![20, -1]);
+        assert_eq!(parsed.by_year_day, vec![1, -1]);
+        assert_eq!(parsed.by_month_day, vec![1, -1]);
+        assert_eq!(parsed.by_hour, vec![9, 17]);
+        assert_eq!(parsed.by_minute, vec![0, 30]);
+        assert_eq!(parsed.by_second, vec![15]);
+        assert_eq!(parsed.by_set_pos, vec![1, -1]);
+    }
+
+    #[test]
+    fn recurrence_numeric_raw_override_remains_authoritative() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Raw numeric override",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.by_year_day = vec![1];
+        rule.by_hour = vec![9];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.year_day_text = "100,-1".to_string();
+        draft.hour_text = "17,23".to_string();
+
+        let parsed = draft.parsed_rule().expect("raw numeric override");
+        assert_eq!(parsed.by_year_day, vec![100, -1]);
+        assert_eq!(parsed.by_hour, vec![17, 23]);
+        assert_eq!(draft.year_day_rows, vec!["1"]);
+        assert_eq!(draft.hour_rows, vec!["9"]);
+    }
+
+    #[test]
+    fn recurrence_numeric_rows_reject_blank_values() {
+        let rows = vec!["1".to_string(), String::new()];
+        assert!(validate_recurrence_numeric_edit_rows(&rows, "BYMONTHDAY").is_err());
+    }
+
+    #[test]
+    fn recurrence_presets_keep_numeric_rows_synchronized() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let event = TemporalEvent::new(
+            "Preset synchronization",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.week_no_text = "20".to_string();
+        draft.week_no_rows = vec!["20".to_string()];
+        draft.month_day_text = "15".to_string();
+        draft.month_day_rows = vec!["15".to_string()];
+        draft.set_pos_text = "2".to_string();
+        draft.set_pos_rows = vec!["2".to_string()];
+
+        draft.apply_preset(RecurrencePreset::LastWeekdayOfMonth);
+        assert!(draft.week_no_rows.is_empty());
+        assert!(draft.month_day_rows.is_empty());
+        assert_eq!(draft.set_pos_text, "-1");
+        assert_eq!(draft.set_pos_rows, vec!["-1"]);
+
+        draft.apply_preset(RecurrencePreset::Daily);
+        assert!(draft.set_pos_text.is_empty());
+        assert!(draft.set_pos_rows.is_empty());
+    }
+
 }
