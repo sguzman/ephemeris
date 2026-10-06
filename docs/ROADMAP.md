@@ -426,7 +426,7 @@ Next Phase 8 work:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
 - richer structured recurrence editing ergonomics beyond presets, structured exceptions, contextual selector visibility, and the fully structured advanced BY-selector set, especially higher-level controls for cadence/bounds and explanations for uncommon combinations
-- recurrence-exception source-adapter interoperability for external calendar payloads is bidirectional for the supported RFC subset: RRULE, strict RDATE/EXDATE parse/format, strict RECURRENCE-ID original-slot parse/format, DTSTART/DTEND transport, RFC content-line and VEVENT/VCALENDAR envelopes, typed VEVENT binding, master/detached temporal-exception assembly, canonical TemporalEvent projection, strict VCALENDAR grouping/ingestion, canonical VEVENT/VCALENDAR export, transactional local-ICS source/store import, CLI import, and GUI drag/drop import are implemented; `RANGE=THISANDFUTURE`, occurrence-specific non-temporal overrides, DURATION transport, RDATE-only recurrence, VTIMEZONE, and VALARM remain deliberately unsupported until their canonical/preservation semantics exist; stored-source ICS export is implemented; explicit local-source refresh ergonomics are next
+- recurrence-exception source-adapter interoperability for external calendar payloads is bidirectional for the supported RFC subset: RRULE, strict RDATE/EXDATE parse/format, strict RECURRENCE-ID original-slot parse/format, DTSTART/DTEND transport, RFC content-line and VEVENT/VCALENDAR envelopes, typed VEVENT binding, master/detached temporal-exception assembly, canonical TemporalEvent projection, strict VCALENDAR grouping/ingestion, canonical VEVENT/VCALENDAR export, transactional local-ICS source/store import, CLI import, and GUI drag/drop import are implemented; `RANGE=THISANDFUTURE`, occurrence-specific non-temporal overrides, DURATION transport, RDATE-only recurrence, VTIMEZONE, and VALARM remain deliberately unsupported until their canonical/preservation semantics exist; stored-source ICS export and explicit local-source refresh are implemented; non-Taria refresh history/diagnostics are next
 - relations
 - collections/sequences
 - uncertainty
@@ -435,11 +435,11 @@ Next Phase 8 work:
 
 ## Phase 9 - External interoperability
 
-Status: **active — bidirectional RFC 5545 transport, local ICS store import, CLI/GUI import, and CLI/GUI stored-source export are implemented; explicit source refresh ergonomics are next**
+Status: **active — bidirectional RFC 5545 transport, local ICS store import, CLI/GUI import/export, and explicit local-source refresh are implemented; non-Taria refresh history/diagnostics are next**
 
 Goals:
 
-- ICS import/export projection — transport, local import, and stored-source CLI/GUI export implemented; explicit refresh ergonomics next
+- ICS import/export projection — transport, local import, stored-source CLI/GUI export, and explicit local refresh implemented; durable refresh history/diagnostics next
 - webcal/remote ICS ingestion
 - CalDAV where valuable
 - JSCalendar/jCal
