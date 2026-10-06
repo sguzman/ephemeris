@@ -432,26 +432,22 @@ pub fn parse_recurrence_id_property(
         TimeSpec::Instant {
             source_timezone: Some(expected_timezone),
             ..
-        } => {
-            if tzid.as_deref() != Some(expected_timezone.as_str()) || raw_value.ends_with('Z') {
-                return Err(IcalRecurrenceError::TemporalKindMismatch {
-                    property: "RECURRENCE-ID",
-                    expected: base.kind_name(),
-                    actual: "non-source-local date-time",
-                });
-            }
+        } if tzid.as_deref() != Some(expected_timezone.as_str()) || raw_value.ends_with('Z') => {
+            return Err(IcalRecurrenceError::TemporalKindMismatch {
+                property: "RECURRENCE-ID",
+                expected: base.kind_name(),
+                actual: "non-source-local date-time",
+            });
         }
         TimeSpec::Instant {
             source_timezone: None,
             ..
-        } => {
-            if tzid.is_some() || !raw_value.ends_with('Z') {
-                return Err(IcalRecurrenceError::TemporalKindMismatch {
-                    property: "RECURRENCE-ID",
-                    expected: base.kind_name(),
-                    actual: "non-UTC date-time",
-                });
-            }
+        } if tzid.is_some() || !raw_value.ends_with('Z') => {
+            return Err(IcalRecurrenceError::TemporalKindMismatch {
+                property: "RECURRENCE-ID",
+                expected: base.kind_name(),
+                actual: "non-UTC date-time",
+            });
         }
         _ => {}
     }
