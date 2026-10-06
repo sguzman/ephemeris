@@ -7,9 +7,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::domain::{SourceAuthority, SourceKind, TemporalSource};
-use crate::ical::{
-    IcalVcalendar, format_ical_content_line, parse_vcalendar, unescape_ical_text,
-};
+use crate::ical::{IcalVcalendar, format_ical_content_line, parse_vcalendar, unescape_ical_text};
 use crate::store::TemporalStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,15 +94,17 @@ fn calendar_display_name(calendar: &IcalVcalendar, locator: Option<&str>) -> Str
         .iter()
         .find(|property| property.name == "X-WR-CALNAME")
     {
-        let decoded = unescape_ical_text(&property.value)
-            .unwrap_or_else(|_| property.value.clone());
+        let decoded =
+            unescape_ical_text(&property.value).unwrap_or_else(|_| property.value.clone());
         if !decoded.trim().is_empty() {
             return decoded;
         }
     }
 
     if let Some(locator) = locator
-        && let Some(name) = Path::new(locator).file_name().and_then(|name| name.to_str())
+        && let Some(name) = Path::new(locator)
+            .file_name()
+            .and_then(|name| name.to_str())
         && !name.is_empty()
     {
         return name.to_string();
@@ -207,8 +207,8 @@ mod tests {
     #[test]
     fn refresh_updates_changed_uid_in_place() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let first = import_ics_text(&store, FIXTURE, "ics:test:update", None)
-            .expect("first import");
+        let first =
+            import_ics_text(&store, FIXTURE, "ics:test:update", None).expect("first import");
         let before = store
             .event_by_source_record(first.source_id, "first@example.com")
             .expect("event query")
@@ -218,8 +218,7 @@ mod tests {
             "DTSTART:20261007T090000Z\r\nSUMMARY:First",
             "DTSTART:20261007T110000Z\r\nSUMMARY:First updated",
         );
-        let report = import_ics_text(&store, &changed, "ics:test:update", None)
-            .expect("refresh");
+        let report = import_ics_text(&store, &changed, "ics:test:update", None).expect("refresh");
 
         assert_eq!(report.created, 0);
         assert_eq!(report.updated, 1);
@@ -237,8 +236,8 @@ mod tests {
     #[test]
     fn refresh_retains_events_missing_from_later_snapshot() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let first = import_ics_text(&store, FIXTURE, "ics:test:missing", None)
-            .expect("first import");
+        let first =
+            import_ics_text(&store, FIXTURE, "ics:test:missing", None).expect("first import");
 
         let reduced = FIXTURE.replace(
             concat!(
@@ -251,14 +250,15 @@ mod tests {
             ),
             "",
         );
-        let report = import_ics_text(&store, &reduced, "ics:test:missing", None)
-            .expect("refresh");
+        let report = import_ics_text(&store, &reduced, "ics:test:missing", None).expect("refresh");
 
         assert_eq!(report.retained_missing, 1);
-        assert!(store
-            .event_by_source_record(first.source_id, "second@example.com")
-            .expect("event query")
-            .is_some());
+        assert!(
+            store
+                .event_by_source_record(first.source_id, "second@example.com")
+                .expect("event query")
+                .is_some()
+        );
     }
 
     #[test]
@@ -288,9 +288,11 @@ mod tests {
         .expect_err("invalid calendar must fail");
 
         assert!(error.to_string().contains("failed to parse iCalendar"));
-        assert!(store
-            .source_by_external_ref("ics:test:invalid")
-            .expect("source query")
-            .is_none());
+        assert!(
+            store
+                .source_by_external_ref("ics:test:invalid")
+                .expect("source query")
+                .is_none()
+        );
     }
 }
