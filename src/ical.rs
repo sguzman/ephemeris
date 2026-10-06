@@ -53,6 +53,7 @@ pub enum IcalRecurrenceError {
     UnsupportedComponent(String),
     MissingMaster(String),
     DuplicateMaster(String),
+    UnsupportedCanonicalStatus(String),
     InvalidTimezone(String),
     TemporalKindMismatch {
         property: &'static str,
@@ -162,6 +163,9 @@ impl fmt::Display for IcalRecurrenceError {
             }
             Self::DuplicateMaster(uid) => {
                 write!(formatter, "VEVENT UID {uid} has more than one master component")
+            }
+            Self::UnsupportedCanonicalStatus(status) => {
+                write!(formatter, "canonical event status {status} has no lossless VEVENT STATUS mapping")
             }
             Self::InvalidTimezone(value) => {
                 write!(formatter, "unsupported or invalid iCalendar TZID {value}")
@@ -432,6 +436,229 @@ pub fn format_vevent_content_lines(
     }
     physical.push("END:VEVENT".to_string());
     Ok(format!("{}\r\n", physical.join("\r\n")))
+}
+
+/// Export one canonical TemporalEvent into its VEVENT master and detached
+/// recurrence components.
+///
+/// Required RFC identity fields are deterministic: imported iCalendar UID is
+/// reused when available; otherwise the canonical UUID becomes a URN UID.
+/// DTSTAMP uses the event's canonical updated_at truncated to RFC seconds.
+pub fn export_temporal_event(
+    event: &TemporalEvent,
+) -> Result<Vec<IcalVevent>, IcalRecurrenceError> {
+    event.validate_recurrence()?;
+
+    let template = stored_ical_master(event)?;
+    let uid = stored_ical_uid(event)
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("urn:uuid:{}", event.id));
+    let dtstamp = DateTime::<Utc>::from_timestamp(event.updated_at.timestamp(), 0)
+        .ok_or(IcalRecurrenceError::ArithmeticOverflow)?;
+    let status = export_vevent_status(event.status)?;
+
+    let imported_untitled = template
+        .as_ref()
+        .is_some_and(|source| source.summary.is_none() && event.normalized_title == uid);
+    let summary = if imported_untitled {
+        None
+    } else {
+        Some(IcalProperty {
+            value: event.normalized_title.clone(),
+            parameters: template
+                .as_ref()
+                .and_then(|source| source.summary.as_ref())
+                .map_or_else(Vec::new, |property| property.parameters.clone()),
+        })
+    };
+
+    let description = event.description.as_ref().map(|value| IcalProperty {
+        value: value.clone(),
+        parameters: template
+            .as_ref()
+            .and_then(|source| source.description.as_ref())
+            .map_or_else(Vec::new, |property| property.parameters.clone()),
+    });
+
+    let mut master = IcalVevent {
+        uid: IcalProperty {
+            value: uid.clone(),
+            parameters: template
+                .as_ref()
+                .map_or_else(Vec::new, |source| source.uid.parameters.clone()),
+        },
+        dtstamp: IcalProperty {
+            value: dtstamp,
+            parameters: Vec::new(),
+        },
+        time: event.time.clone(),
+        summary,
+        description,
+        status: status.map(|value| IcalProperty {
+            value,
+            parameters: template
+                .as_ref()
+                .and_then(|source| source.status.as_ref())
+                .map_or_else(Vec::new, |property| property.parameters.clone()),
+        }),
+        sequence: template
+            .as_ref()
+            .and_then(|source| source.sequence.as_ref())
+            .cloned(),
+        rrule: None,
+        rdates: Vec::new(),
+        exdates: Vec::new(),
+        recurrence_id: None,
+        extra_properties: template
+            .as_ref()
+            .map_or_else(Vec::new, |source| source.extra_properties.clone()),
+    };
+
+    let Some(rule) = event.recurrence.as_ref() else {
+        // Force the time boundary now so unsupported DateOnly/imprecise kinds
+        // fail during canonical export rather than only during final formatting.
+        format_vevent_time_properties(&master.time)?;
+        return Ok(vec![master]);
+    };
+
+    let mut core_rule = rule.clone();
+    core_rule.rdates.clear();
+    core_rule.exdates.clear();
+    core_rule.overrides.clear();
+    master.rrule = Some(IcalProperty {
+        value: core_rule,
+        parameters: template
+            .as_ref()
+            .and_then(|source| source.rrule.as_ref())
+            .map_or_else(Vec::new, |property| property.parameters.clone()),
+    });
+    master.rdates = rule.rdates.clone();
+    master.exdates = rule.exdates.clone();
+
+    // Validate every serializable boundary before building detached components.
+    format_vevent(&master)?;
+
+    let mut components = Vec::with_capacity(rule.overrides.len() + 1);
+    components.push(master.clone());
+
+    for occurrence_override in &rule.overrides {
+        let recurrence_id = parse_ical_content_line(&format_recurrence_id_property(
+            &occurrence_override.original,
+            &event.time,
+        )?)?;
+        let time = occurrence_override
+            .replacement
+            .clone()
+            .unwrap_or_else(|| occurrence_override.original.clone());
+        let detached = IcalVevent {
+            uid: IcalProperty {
+                value: uid.clone(),
+                parameters: master.uid.parameters.clone(),
+            },
+            dtstamp: IcalProperty {
+                value: dtstamp,
+                parameters: Vec::new(),
+            },
+            time,
+            summary: None,
+            description: None,
+            status: occurrence_override.cancelled.then_some(IcalProperty {
+                value: IcalVeventStatus::Cancelled,
+                parameters: Vec::new(),
+            }),
+            sequence: master.sequence.clone(),
+            rrule: None,
+            rdates: Vec::new(),
+            exdates: Vec::new(),
+            recurrence_id: Some(recurrence_id),
+            extra_properties: Vec::new(),
+        };
+        format_vevent(&detached)?;
+        components.push(detached);
+    }
+
+    Ok(components)
+}
+
+/// Build a strict RFC 5545 calendar from canonical events.
+pub fn export_temporal_events_vcalendar(
+    events: &[TemporalEvent],
+    prodid: &str,
+) -> Result<IcalVcalendar, IcalRecurrenceError> {
+    if prodid.trim().is_empty() {
+        return Err(IcalRecurrenceError::InvalidPropertyValue {
+            property: "PRODID",
+            value: prodid.to_string(),
+        });
+    }
+
+    let mut vevents = Vec::new();
+    for event in events {
+        vevents.extend(export_temporal_event(event)?);
+    }
+
+    Ok(IcalVcalendar {
+        properties: vec![
+            IcalContentLine {
+                name: "PRODID".to_string(),
+                parameters: Vec::new(),
+                value: prodid.to_string(),
+            },
+            IcalContentLine {
+                name: "VERSION".to_string(),
+                parameters: Vec::new(),
+                value: "2.0".to_string(),
+            },
+            IcalContentLine {
+                name: "CALSCALE".to_string(),
+                parameters: Vec::new(),
+                value: "GREGORIAN".to_string(),
+            },
+        ],
+        events: vevents,
+    })
+}
+
+pub fn format_temporal_events_vcalendar(
+    events: &[TemporalEvent],
+    prodid: &str,
+) -> Result<String, IcalRecurrenceError> {
+    format_vcalendar(&export_temporal_events_vcalendar(events, prodid)?)
+}
+
+fn stored_ical_uid(event: &TemporalEvent) -> Option<&str> {
+    event
+        .properties
+        .get("ical")
+        .and_then(|value| value.get("uid"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+}
+
+fn stored_ical_master(event: &TemporalEvent) -> Result<Option<IcalVevent>, IcalRecurrenceError> {
+    let Some(raw) = event
+        .properties
+        .get("ical")
+        .and_then(|value| value.get("master_component"))
+        .and_then(|value| value.as_str())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(parse_vevent(raw)?))
+}
+
+fn export_vevent_status(
+    status: EventStatus,
+) -> Result<Option<IcalVeventStatus>, IcalRecurrenceError> {
+    match status {
+        EventStatus::Scheduled => Ok(None),
+        EventStatus::Tentative => Ok(Some(IcalVeventStatus::Tentative)),
+        EventStatus::Confirmed => Ok(Some(IcalVeventStatus::Confirmed)),
+        EventStatus::Cancelled => Ok(Some(IcalVeventStatus::Cancelled)),
+        other => Err(IcalRecurrenceError::UnsupportedCanonicalStatus(
+            other.as_str().to_string(),
+        )),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2845,6 +3072,218 @@ and continues here\r\nSUMMARY:Example\r\n";
             )),
             Err(IcalRecurrenceError::InvalidPropertyValue {
                 property: "SEQUENCE",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn canonical_standalone_event_exports_and_roundtrips_through_vcalendar() {
+        let start = DateTime::parse_from_rfc3339("2026-10-07T14:00:00Z")
+            .expect("start")
+            .with_timezone(&Utc);
+        let mut event = TemporalEvent::new(
+            "Project review",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        event.description = Some("Decisions, next steps".to_string());
+        event.status = EventStatus::Confirmed;
+        event.updated_at = DateTime::parse_from_rfc3339("2026-10-06T12:34:56.987Z")
+            .expect("updated")
+            .with_timezone(&Utc);
+
+        let encoded =
+            format_temporal_events_vcalendar(&[event.clone()], "-//Ephemeris Test//EN")
+                .expect("export");
+        assert!(encoded.contains(&format!("UID:urn:uuid:{}", event.id)));
+        assert!(encoded.contains("DTSTAMP:20261006T123456Z"));
+        assert!(encoded.contains("SUMMARY:Project review"));
+        assert!(encoded.contains("STATUS:CONFIRMED"));
+
+        let imported = parse_vcalendar(&encoded)
+            .expect("parse export")
+            .canonical_events()
+            .expect("canonical reimport");
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].normalized_title, event.normalized_title);
+        assert_eq!(imported[0].description, event.description);
+        assert_eq!(imported[0].status, event.status);
+        assert_eq!(imported[0].time, event.time);
+    }
+
+    #[test]
+    fn canonical_recurrence_exports_detached_override_components_and_roundtrips() {
+        let start = DateTime::parse_from_rfc3339("2026-11-02T09:00:00Z")
+            .expect("start")
+            .with_timezone(&Utc);
+        let original = TimeSpec::Instant {
+            start_utc: start + Duration::days(1),
+            end_utc: Some(start + Duration::days(1) + Duration::hours(1)),
+            source_timezone: None,
+        };
+        let replacement = TimeSpec::Instant {
+            start_utc: start + Duration::days(1) + Duration::hours(2),
+            end_utc: Some(start + Duration::days(1) + Duration::hours(3)),
+            source_timezone: None,
+        };
+        let cancelled_original = TimeSpec::Instant {
+            start_utc: start + Duration::days(2),
+            end_utc: Some(start + Duration::days(2) + Duration::hours(1)),
+            source_timezone: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Daily sync",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        event.updated_at = DateTime::parse_from_rfc3339("2026-10-06T12:00:00Z")
+            .expect("updated")
+            .with_timezone(&Utc);
+        event.recurrence = Some(RecurrenceRule {
+            frequency: RecurrenceFrequency::Daily,
+            count: Some(3),
+            overrides: vec![
+                RecurrenceOverride {
+                    original: original.clone(),
+                    replacement: Some(replacement.clone()),
+                    cancelled: false,
+                },
+                RecurrenceOverride {
+                    original: cancelled_original.clone(),
+                    replacement: None,
+                    cancelled: true,
+                },
+            ],
+            ..RecurrenceRule::default()
+        });
+        event.validate_recurrence().expect("canonical recurrence");
+
+        let calendar =
+            export_temporal_events_vcalendar(&[event.clone()], "-//Ephemeris Test//EN")
+                .expect("calendar");
+        assert_eq!(calendar.events.len(), 3);
+        assert!(calendar.events[0].recurrence_id.is_none());
+        assert!(calendar.events[1].recurrence_id.is_some());
+        assert_eq!(calendar.events[1].time, replacement);
+        assert_eq!(
+            calendar.events[2].status.as_ref().map(|status| status.value),
+            Some(IcalVeventStatus::Cancelled)
+        );
+
+        let roundtrip = parse_vcalendar(&format_vcalendar(&calendar).expect("format"))
+            .expect("parse")
+            .canonical_events()
+            .expect("canonical events");
+        let recurrence = roundtrip[0].recurrence.as_ref().expect("recurrence");
+        assert_eq!(recurrence.overrides, event.recurrence.as_ref().unwrap().overrides);
+    }
+
+    #[test]
+    fn canonical_export_preserves_imported_unknown_master_properties_and_text_parameters() {
+        let source = parse_vcalendar(concat!(
+            "BEGIN:VCALENDAR\r\n",
+            "PRODID:-//Source//EN\r\n",
+            "VERSION:2.0\r\n",
+            "BEGIN:VEVENT\r\n",
+            "UID:preserve@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART:20261007T090000Z\r\n",
+            "SUMMARY;LANGUAGE=es:Revisión\r\n",
+            "LOCATION:Sala 4\r\n",
+            "END:VEVENT\r\n",
+            "END:VCALENDAR\r\n"
+        ))
+        .expect("source");
+        let mut event = source
+            .canonical_events()
+            .expect("canonical")
+            .pop()
+            .expect("event");
+        event.normalized_title = "Revisión final".to_string();
+
+        let exported = export_temporal_event(&event).expect("export");
+        assert_eq!(exported.len(), 1);
+        assert_eq!(exported[0].uid.value, "preserve@example.com");
+        assert_eq!(
+            exported[0]
+                .summary
+                .as_ref()
+                .expect("summary")
+                .parameters,
+            vec![("LANGUAGE".to_string(), "es".to_string())]
+        );
+        assert_eq!(exported[0].extra_properties.len(), 1);
+        assert_eq!(exported[0].extra_properties[0].name, "LOCATION");
+        assert_eq!(exported[0].summary.as_ref().unwrap().value, "Revisión final");
+    }
+
+    #[test]
+    fn canonical_export_does_not_invent_summary_for_imported_untitled_event() {
+        let source = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:untitled@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART;VALUE=DATE:20261007\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("source");
+        let event = source.canonical_event().expect("canonical");
+
+        let exported = export_temporal_event(&event).expect("export");
+        assert!(exported[0].summary.is_none());
+        assert_eq!(exported[0].uid.value, "untitled@example.com");
+    }
+
+    #[test]
+    fn canonical_export_rejects_non_rfc_status_and_imprecise_date_only_time() {
+        let mut completed = TemporalEvent::new(
+            "Completed",
+            TimeSpec::AllDay {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        completed.status = EventStatus::Completed;
+        assert_eq!(
+            export_temporal_event(&completed),
+            Err(IcalRecurrenceError::UnsupportedCanonicalStatus(
+                "completed".to_string()
+            ))
+        );
+
+        let date_only = TemporalEvent::new(
+            "Imprecise date",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        assert!(matches!(
+            export_temporal_event(&date_only),
+            Err(IcalRecurrenceError::UnsupportedVeventTimeKind(_))
+        ));
+    }
+
+    #[test]
+    fn canonical_export_rejects_empty_prodid() {
+        let event = TemporalEvent::new(
+            "Example",
+            TimeSpec::AllDay {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        assert!(matches!(
+            export_temporal_events_vcalendar(&[event], "   "),
+            Err(IcalRecurrenceError::InvalidPropertyValue {
+                property: "PRODID",
                 ..
             })
         ));
