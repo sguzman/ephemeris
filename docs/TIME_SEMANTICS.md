@@ -142,7 +142,7 @@ Conceptually, the visible occurrence set is built from RRULE candidates plus RDA
 Still required for fuller interoperable recurrence semantics:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented seven-frequency BY-part matrix, with `BYSECOND=60` intentionally deferred until leap-second timestamps can be represented faithfully;
-- richer recurrence-editor ergonomics beyond the structured exception controls, especially higher-level recurrence presets and contextual selector affordances;
+- richer recurrence-editor ergonomics beyond structured exceptions and canonical presets, especially contextual selector affordances;
 - external recurrence/exception source-adapter interoperability;
 - source-adapter mapping for external recurrence-exception representations.
 
