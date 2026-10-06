@@ -418,11 +418,12 @@ Implemented recurrence foundation:
 - structured BYWEEKNO authoring with one signed week-number row per selector, add/remove controls, live validation, and a collapsed compact `20,-1` raw-syntax fallback
 - structured BYYEARDAY authoring with one signed year-day row per selector, add/remove controls, live validation, and a collapsed compact `1,100,-1` raw-syntax fallback
 - structured BYHOUR authoring with one civil-hour row per selector, add/remove controls, live validation, and a collapsed compact `9,17` raw-syntax fallback
+- structured BYMINUTE authoring with one civil-minute row per selector, add/remove controls, live validation, and a collapsed compact `0,30` raw-syntax fallback
 
 Next Phase 8 work:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
-- richer structured recurrence editing ergonomics beyond presets, structured exceptions, contextual selector visibility, ordinal-BYDAY/BYMONTHDAY/BYWEEKNO/BYYEARDAY/BYHOUR rows, especially higher-level controls for the remaining numeric selectors and explanations for uncommon combinations
+- richer structured recurrence editing ergonomics beyond presets, structured exceptions, contextual selector visibility, ordinal-BYDAY/BYMONTHDAY/BYWEEKNO/BYYEARDAY/BYHOUR/BYMINUTE rows, especially higher-level controls for the remaining numeric selectors and explanations for uncommon combinations
 - recurrence-exception source-adapter interoperability for external calendar payloads
 - relations
 - collections/sequences
