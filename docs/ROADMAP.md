@@ -367,7 +367,7 @@ Status: **active - recurrence selectors and exceptions implemented**
 Implemented recurrence foundation:
 
 - recurrence definitions persisted on canonical events in schema v14
-- daily / weekly / monthly / yearly frequency
+- hourly / daily / weekly / monthly / yearly frequency
 - interval, count, and inclusive-until bounds
 - daily BYDAY filtering over active interval days
 - daily BYMONTH limiting over active interval days, including composition with daily BYDAY and finite Gregorian-cycle reachability detection
@@ -392,6 +392,7 @@ Implemented recurrence foundation:
 - BYHOUR expansion for `0..=23` on floating/exact date-time recurrence bases, preserving DTSTART minute/second and source-local DST semantics, applied before BYMINUTE/BYSECOND/BYSETPOS
 - BYMINUTE expansion for `0..=59` on floating/exact date-time recurrence bases, preserving DTSTART second and duration, composing cartesianly with BYHOUR and applying before BYSECOND/BYSETPOS
 - BYSECOND expansion for ordinary civil seconds `0..=59` on floating/exact date-time recurrence bases, composing cartesianly with BYHOUR/BYMINUTE before BYSETPOS; RFC 5545 leap-second value `60` is explicitly rejected until the time model can represent it faithfully
+- HOURLY frequency over floating/exact date-time bases, advancing in source-local wall-clock hours; BYMONTH/BYYEARDAY/BYMONTHDAY/plain-BYDAY/BYHOUR limit the active hour, BYMINUTE/BYSECOND expand it, and BYSETPOS applies afterward
 - signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied generically after the supported BY-selector candidate set is resolved within each recurrence interval
 - active-window occurrence expansion rather than eager infinite materialization
 - deterministic occurrence identity and canonical-event lineage
@@ -408,7 +409,7 @@ Implemented recurrence foundation:
 
 Next Phase 8 work:
 
-- broader RRULE dimensions and selector families beyond daily/weekly/monthly/yearly plain BYDAY, all-frequency BYMONTH, daily/monthly/yearly BYMONTHDAY, month/year-scoped ordinal BYDAY, BYWEEKNO/BYYEARDAY/BYHOUR/BYMINUTE/BYSECOND/BYSETPOS, and the implemented selector combinations plus recurrence-exception interoperability
+- broader RRULE dimensions and selector families beyond hourly/daily/weekly/monthly/yearly recurrence and their currently implemented selector combinations, all-frequency BYMONTH, daily/monthly/yearly BYMONTHDAY, month/year-scoped ordinal BYDAY, BYWEEKNO/BYYEARDAY/BYHOUR/BYMINUTE/BYSECOND/BYSETPOS, and the implemented selector combinations plus recurrence-exception interoperability
 - richer recurrence/exception authoring and editing
 - relations
 - collections/sequences
