@@ -1,6 +1,7 @@
 pub mod app;
 pub mod calendar;
 pub mod domain;
+pub mod ical;
 pub mod query;
 pub mod state;
 pub mod store;
