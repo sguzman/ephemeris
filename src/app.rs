@@ -3439,6 +3439,78 @@ fn recurrence_selector_text_row(ui: &mut egui::Ui, label: &str, value: &mut Stri
     });
 }
 
+fn render_structured_exception_dates(
+    ui: &mut egui::Ui,
+    title: &str,
+    parser_label: &str,
+    rows: &mut Vec<String>,
+    raw_text: &mut String,
+    base_time: &TimeSpec,
+) {
+    ui.label(title);
+    ui.small("One occurrence start per row; raw compact syntax remains available below.");
+
+    let value_hint = recurrence_exception_value_hint(base_time);
+    let mut structured_changed = false;
+    let mut remove_index = None;
+
+    for (index, value) in rows.iter_mut().enumerate() {
+        ui.push_id((parser_label, index), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("#{}", index + 1));
+                structured_changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(value)
+                            .desired_width(240.0)
+                            .hint_text(value_hint),
+                    )
+                    .changed();
+                if ui.small_button("Remove").clicked() {
+                    remove_index = Some(index);
+                }
+            });
+        });
+    }
+
+    if let Some(index) = remove_index {
+        rows.remove(index);
+        structured_changed = true;
+    }
+
+    if ui
+        .small_button(format!("+ Add {parser_label}"))
+        .clicked()
+    {
+        rows.push(String::new());
+        structured_changed = true;
+    }
+
+    if structured_changed {
+        *raw_text = format_recurrence_exception_edit_rows(rows);
+    }
+
+    egui::CollapsingHeader::new(format!("Raw {parser_label} syntax"))
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.small("Power-user form: comma- or space-separated occurrence starts.");
+            let raw_hint = recurrence_exception_hint(base_time);
+            ui.add(
+                egui::TextEdit::multiline(raw_text)
+                    .desired_width(430.0)
+                    .desired_rows(2)
+                    .hint_text(raw_hint),
+            );
+            if ui
+                .small_button(format!("Load raw {parser_label} syntax into rows"))
+                .clicked()
+                && let Ok(parsed_rows) =
+                    parse_recurrence_exception_edit_rows(raw_text, base_time, parser_label)
+            {
+                *rows = parsed_rows;
+            }
+        });
+}
+
 fn render_structured_recurrence_overrides(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft) {
     ui.label("Occurrence overrides");
     ui.small("Edit each exception explicitly; raw RFC-like syntax remains available below.");
@@ -3631,11 +3703,23 @@ fn render_recurrence_editor(
     recurrence_selector_text_row(ui, "BYSETPOS", &mut draft.set_pos_text, "1,-1");
 
     ui.separator();
-    ui.small("Exception dates: comma- or space-separated occurrence starts.");
-    let exception_hint = recurrence_exception_hint(&draft.base_time);
-    recurrence_selector_text_row(ui, "RDATE", &mut draft.rdate_text, exception_hint);
-    recurrence_selector_text_row(ui, "EXDATE", &mut draft.exdate_text, exception_hint);
-
+    ui.small("Recurrence exceptions");
+    render_structured_exception_dates(
+        ui,
+        "RDATE additions",
+        "RDATE",
+        &mut draft.rdate_rows,
+        &mut draft.rdate_text,
+        &draft.base_time,
+    );
+    render_structured_exception_dates(
+        ui,
+        "EXDATE exclusions",
+        "EXDATE",
+        &mut draft.exdate_rows,
+        &mut draft.exdate_text,
+        &draft.base_time,
+    );
     render_structured_recurrence_overrides(ui, draft);
 
     let validation = draft.parsed_rule();
