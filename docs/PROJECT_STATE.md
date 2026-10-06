@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`a84146c418b60540879f041074397a0833b61c84`
+`f20fafbdbb73b51e935579e972e1abcb8f6f92a9`
 
 At that checkpoint:
 
@@ -26,9 +26,8 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **453 library tests** pass
-
-Later documentation-only commits do not change this code checkpoint.
+- **457 library tests** pass
+- **3 export-CLI tests** pass
 
 ## What works now
 
@@ -78,7 +77,7 @@ Refresh behavior is transactional:
 - records absent from a later snapshot are retained rather than inferred deleted or cancelled
 - invalid calendars fail before source creation
 
-ICS import is available through both the `ephemeris-import` CLI and GUI drag/drop.
+ICS import is available through both the `ephemeris-import` CLI and GUI drag/drop. Stored ICS sources can also be exported atomically from the canonical store through the `ephemeris-export` CLI or the selected-source GUI inspector. Export preserves supported calendar-level source properties while serializing the current canonical event state.
 
 ### Taria
 
@@ -90,13 +89,12 @@ The application can detect a local Resourcearium checkout and run **Update Taria
 
 ## Immediate frontier
 
-The next interoperability slice is **stored-source ICS export**: select canonical events from the store and write a strict VCALENDAR payload to disk through the already-verified exporter.
+The next interoperability slice is **explicit ICS source refresh ergonomics**: a stored local ICS source should be refreshable directly from its source inspector instead of requiring another drag/drop or CLI import.
 
 After that, the Phase 9 priorities are:
 
-- a GUI export surface
-- refresh/export ergonomics for ICS sources
 - remote ICS / webcal ingestion
+- refresh history and diagnostics for non-Taria sources
 - broader external formats where useful
 - CalDAV only if its synchronization value justifies the added state machine
 
