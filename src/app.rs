@@ -158,12 +158,11 @@ fn parse_recurrence_exception_edit_rows(
         .map(|values| recurrence_exception_edit_rows(&values))
 }
 
-fn validate_recurrence_exception_edit_rows(
-    rows: &[String],
-    label: &str,
-) -> Result<(), String> {
+fn validate_recurrence_exception_edit_rows(rows: &[String], label: &str) -> Result<(), String> {
     if rows.iter().any(|value| value.trim().is_empty()) {
-        Err(format!("{label} rows must contain an occurrence start or be removed."))
+        Err(format!(
+            "{label} rows must contain an occurrence start or be removed."
+        ))
     } else {
         Ok(())
     }
@@ -294,8 +293,8 @@ impl RecurrenceEditDraft {
 
         let canonical_rdate_text = format_exception_start_values(&self.rule.rdates);
         let structured_rdate_text = format_recurrence_exception_edit_rows(&self.rdate_rows);
-        let rdate_raw_override = self.rdate_text != canonical_rdate_text
-            && self.rdate_text != structured_rdate_text;
+        let rdate_raw_override =
+            self.rdate_text != canonical_rdate_text && self.rdate_text != structured_rdate_text;
         if rdate_raw_override {
             rule.rdates = parse_exception_start_values(&self.rdate_text, &self.base_time, "RDATE")?;
         } else {
@@ -308,8 +307,8 @@ impl RecurrenceEditDraft {
 
         let canonical_exdate_text = format_exception_start_values(&self.rule.exdates);
         let structured_exdate_text = format_recurrence_exception_edit_rows(&self.exdate_rows);
-        let exdate_raw_override = self.exdate_text != canonical_exdate_text
-            && self.exdate_text != structured_exdate_text;
+        let exdate_raw_override =
+            self.exdate_text != canonical_exdate_text && self.exdate_text != structured_exdate_text;
         if exdate_raw_override {
             rule.exdates =
                 parse_exception_start_values(&self.exdate_text, &self.base_time, "EXDATE")?;
@@ -3477,10 +3476,7 @@ fn render_structured_exception_dates(
         structured_changed = true;
     }
 
-    if ui
-        .small_button(format!("+ Add {parser_label}"))
-        .clicked()
-    {
+    if ui.small_button(format!("+ Add {parser_label}")).clicked() {
         rows.push(String::new());
         structured_changed = true;
     }
@@ -6892,7 +6888,9 @@ mod tests {
         event.recurrence = Some(rule.clone());
 
         let draft = RecurrenceEditDraft::from_event(&event);
-        let parsed = draft.parsed_rule().expect("unchanged structured exceptions");
+        let parsed = draft
+            .parsed_rule()
+            .expect("unchanged structured exceptions");
 
         assert_eq!(parsed.rdates, rule.rdates);
         assert_eq!(parsed.exdates, rule.exdates);
