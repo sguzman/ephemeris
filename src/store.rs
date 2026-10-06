@@ -279,6 +279,21 @@ impl TemporalStore {
         Ok(())
     }
 
+    pub fn source_by_id(&self, id: Uuid) -> anyhow::Result<Option<TemporalSource>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, external_ref, name, publisher, authority, kind, locator,
+                   enabled, read_only, properties_json, created_at, updated_at
+            FROM temporal_sources
+            WHERE id = ?1
+            "#,
+        )?;
+
+        stmt.query_row(params![id.to_string()], decode_source)
+            .optional()
+            .context("failed to query temporal source by id")
+    }
+
     pub fn source_by_external_ref(
         &self,
         external_ref: &str,
