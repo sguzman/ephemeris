@@ -681,13 +681,13 @@ fn parse_status_property(
 fn parse_sequence_property(
     line: IcalContentLine,
 ) -> Result<IcalProperty<u32>, IcalRecurrenceError> {
-    let signed = line
-        .value
-        .parse::<i32>()
-        .map_err(|_| IcalRecurrenceError::InvalidPropertyValue {
-            property: "SEQUENCE",
-            value: line.value.clone(),
-        })?;
+    let signed =
+        line.value
+            .parse::<i32>()
+            .map_err(|_| IcalRecurrenceError::InvalidPropertyValue {
+                property: "SEQUENCE",
+                value: line.value.clone(),
+            })?;
     let value = u32::try_from(signed).map_err(|_| IcalRecurrenceError::InvalidPropertyValue {
         property: "SEQUENCE",
         value: line.value.clone(),
@@ -2264,18 +2264,27 @@ and continues here\r\nSUMMARY:Example\r\n";
         let event = parse_vevent(raw).expect("typed VEVENT");
         assert_eq!(event.uid.value, "series-123@example.com");
         assert_eq!(
-            event.summary.as_ref().map(|property| property.value.as_str()),
+            event
+                .summary
+                .as_ref()
+                .map(|property| property.value.as_str()),
             Some("Team, sync")
         );
         assert_eq!(
-            event.description.as_ref().map(|property| property.value.as_str()),
+            event
+                .description
+                .as_ref()
+                .map(|property| property.value.as_str()),
             Some("Line 1\nLine 2")
         );
         assert_eq!(
             event.status.as_ref().map(|property| property.value),
             Some(IcalVeventStatus::Confirmed)
         );
-        assert_eq!(event.sequence.as_ref().map(|property| property.value), Some(2));
+        assert_eq!(
+            event.sequence.as_ref().map(|property| property.value),
+            Some(2)
+        );
         assert_eq!(event.rdates.len(), 1);
         assert_eq!(event.exdates.len(), 1);
         assert_eq!(event.extra_properties.len(), 1);
