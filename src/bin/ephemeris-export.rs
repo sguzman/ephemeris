@@ -58,7 +58,7 @@ fn list_ics_sources(store: &TemporalStore) -> anyhow::Result<()> {
 
     for source in sources
         .into_iter()
-        .filter(|source| source.kind == SourceKind::Ics)
+        .filter(|source| matches!(source.kind, SourceKind::Ics | SourceKind::Webcal))
     {
         found = true;
         let count = counts.get(&source.id).copied().unwrap_or(0);
@@ -76,7 +76,7 @@ fn list_ics_sources(store: &TemporalStore) -> anyhow::Result<()> {
     }
 
     if !found {
-        println!("No imported ICS sources.");
+        println!("No imported iCalendar sources.");
     }
 
     Ok(())
@@ -105,7 +105,9 @@ fn resolve_ics_source(store: &TemporalStore, selector: &str) -> anyhow::Result<T
     let matches = store
         .list_sources()?
         .into_iter()
-        .filter(|source| source.kind == SourceKind::Ics && source.name == selector)
+        .filter(|source| {
+            matches!(source.kind, SourceKind::Ics | SourceKind::Webcal) && source.name == selector
+        })
         .collect::<Vec<_>>();
 
     match matches.as_slice() {
@@ -120,11 +122,11 @@ fn resolve_ics_source(store: &TemporalStore, selector: &str) -> anyhow::Result<T
 }
 
 fn require_ics_source(source: TemporalSource, selector: &str) -> anyhow::Result<TemporalSource> {
-    if source.kind == SourceKind::Ics {
+    if matches!(source.kind, SourceKind::Ics | SourceKind::Webcal) {
         Ok(source)
     } else {
         Err(anyhow!(
-            "source {selector:?} is {}, not an ICS source",
+            "source {selector:?} is {}, not an iCalendar source",
             source.kind.as_str()
         ))
     }
@@ -133,7 +135,7 @@ fn require_ics_source(source: TemporalSource, selector: &str) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ephemeris::ics::import_ics_text;
+    use ephemeris::ics::{import_ics_text, import_remote_ics_text};
 
     const FIXTURE: &str = concat!(
         "BEGIN:VCALENDAR\r\n",
@@ -163,6 +165,22 @@ mod tests {
         assert_eq!(by_id.id, imported.source_id);
         assert_eq!(by_ref.id, imported.source_id);
         assert_eq!(by_name.id, imported.source_id);
+    }
+
+    #[test]
+    fn source_resolution_accepts_webcal_source() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let imported = import_remote_ics_text(
+            &store,
+            FIXTURE,
+            "webcal://example.com/calendar.ics",
+        )
+        .expect("import webcal");
+
+        let source = resolve_ics_source(&store, &imported.source_id.to_string())
+            .expect("resolve webcal source");
+        assert_eq!(source.kind, SourceKind::Webcal);
+        assert_eq!(source.id, imported.source_id);
     }
 
     #[test]
