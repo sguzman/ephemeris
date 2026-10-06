@@ -288,11 +288,9 @@ fn parse_exception_start_values(
                     .with_timezone(&Utc);
                 let end_utc = end_utc
                     .as_ref()
-                    .map(|end| end.signed_duration_since(base_start.clone()))
+                    .map(|end| end.signed_duration_since(*base_start))
                     .map(|duration| {
-                        start_utc
-                            .clone()
-                            .checked_add_signed(duration)
+                        start_utc.checked_add_signed(duration)
                             .ok_or_else(|| {
                                 format!("{label} value '{token}' overflows its duration.")
                             })
@@ -6252,12 +6250,12 @@ mod tests {
             parsed,
             vec![
                 TimeSpec::DateOnly {
-                    start: NaiveDate::from_ymd_opt(2026, 3, 10).unwrap(),
-                    end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 3, 13).unwrap()),
+                    start: NaiveDate::from_ymd_opt(2026, 3, 10).expect("expected date"),
+                    end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 3, 13).expect("expected date")),
                 },
                 TimeSpec::DateOnly {
-                    start: NaiveDate::from_ymd_opt(2026, 4, 15).unwrap(),
-                    end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 4, 18).unwrap()),
+                    start: NaiveDate::from_ymd_opt(2026, 4, 15).expect("expected date"),
+                    end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 4, 18).expect("expected date")),
                 },
             ]
         );
@@ -6269,7 +6267,7 @@ mod tests {
             .expect("start")
             .with_timezone(&Utc);
         let base = TimeSpec::Instant {
-            start_utc: start_utc.clone(),
+            start_utc,
             end_utc: Some(start_utc + ChronoDuration::minutes(90)),
             source_timezone: Some("America/New_York".to_string()),
         };
@@ -6286,16 +6284,16 @@ mod tests {
         };
 
         assert_eq!(
-            start_utc.clone(),
+            *start_utc,
             DateTime::parse_from_rfc3339("2026-04-01T13:00:00Z")
-                .unwrap()
+                .expect("expected start")
                 .with_timezone(&Utc)
         );
         assert_eq!(
-            end_utc.clone(),
+            *end_utc,
             Some(
                 DateTime::parse_from_rfc3339("2026-04-01T14:30:00Z")
-                    .unwrap()
+                    .expect("expected end")
                     .with_timezone(&Utc)
             )
         );
@@ -6319,14 +6317,14 @@ mod tests {
             },
         );
         let original = TimeSpec::DateOnly {
-            start: NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+            start: NaiveDate::from_ymd_opt(2026, 10, 12).expect("original date"),
             end_exclusive: None,
         };
         let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
         rule.overrides = vec![RecurrenceOverride {
             original: original.clone(),
             replacement: Some(TimeSpec::DateOnly {
-                start: NaiveDate::from_ymd_opt(2026, 10, 13).unwrap(),
+                start: NaiveDate::from_ymd_opt(2026, 10, 13).expect("replacement date"),
                 end_exclusive: None,
             }),
             cancelled: false,
@@ -6367,7 +6365,7 @@ mod tests {
 
         let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
         let original = TimeSpec::DateOnly {
-            start: NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+            start: NaiveDate::from_ymd_opt(2026, 10, 12).expect("original date"),
             end_exclusive: None,
         };
         let mut event = TemporalEvent::new(
