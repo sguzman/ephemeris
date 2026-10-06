@@ -2958,12 +2958,7 @@ struct MembershipPredicateOptions {
     calendars: Vec<TariaProjectedCalendarChoice>,
 }
 
-fn recurrence_selector_text_row(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut String,
-    hint: &str,
-) {
+fn recurrence_selector_text_row(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
     ui.horizontal(|ui| {
         ui.label(label);
         ui.add(
@@ -6048,5 +6043,4 @@ mod tests {
         assert_eq!(parsed.by_second, vec![15]);
         assert_eq!(parsed.by_set_pos, vec![1, -1]);
     }
-
 }
