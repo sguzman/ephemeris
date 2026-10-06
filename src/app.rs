@@ -105,6 +105,92 @@ impl RecurrencePreset {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecurrenceEditorSelector {
+    WeekNo,
+    YearDay,
+    MonthDay,
+    OrdinalByDay,
+    Hour,
+    Minute,
+    Second,
+    SetPos,
+}
+
+impl RecurrenceEditorSelector {
+    const fn unavailable_reason(self) -> &'static str {
+        match self {
+            Self::WeekNo => "BYWEEKNO is available only for YEARLY recurrence.",
+            Self::YearDay => {
+                "BYYEARDAY is available for SECONDLY, MINUTELY, HOURLY, and YEARLY recurrence."
+            }
+            Self::MonthDay => "BYMONTHDAY is unavailable for WEEKLY recurrence.",
+            Self::OrdinalByDay => {
+                "Ordinal BYDAY is available only for MONTHLY and YEARLY recurrence."
+            }
+            Self::Hour | Self::Minute | Self::Second => {
+                "Time-of-day selectors require a floating or exact date-time series."
+            }
+            Self::SetPos => "BYSETPOS is available in every recurrence frequency.",
+        }
+    }
+}
+
+fn recurrence_editor_base_is_datetime(base_time: &TimeSpec) -> bool {
+    matches!(
+        base_time,
+        TimeSpec::Floating { .. } | TimeSpec::Instant { .. }
+    )
+}
+
+fn recurrence_editor_frequency_available(
+    frequency: RecurrenceFrequency,
+    base_time: &TimeSpec,
+) -> bool {
+    recurrence_editor_base_is_datetime(base_time)
+        || !matches!(
+            frequency,
+            RecurrenceFrequency::Secondly
+                | RecurrenceFrequency::Minutely
+                | RecurrenceFrequency::Hourly
+        )
+}
+
+fn recurrence_editor_selector_available(
+    selector: RecurrenceEditorSelector,
+    frequency: RecurrenceFrequency,
+    base_time: &TimeSpec,
+) -> bool {
+    match selector {
+        RecurrenceEditorSelector::WeekNo => frequency == RecurrenceFrequency::Yearly,
+        RecurrenceEditorSelector::YearDay => matches!(
+            frequency,
+            RecurrenceFrequency::Secondly
+                | RecurrenceFrequency::Minutely
+                | RecurrenceFrequency::Hourly
+                | RecurrenceFrequency::Yearly
+        ),
+        RecurrenceEditorSelector::MonthDay => frequency != RecurrenceFrequency::Weekly,
+        RecurrenceEditorSelector::OrdinalByDay => matches!(
+            frequency,
+            RecurrenceFrequency::Monthly | RecurrenceFrequency::Yearly
+        ),
+        RecurrenceEditorSelector::Hour
+        | RecurrenceEditorSelector::Minute
+        | RecurrenceEditorSelector::Second => recurrence_editor_base_is_datetime(base_time),
+        RecurrenceEditorSelector::SetPos => true,
+    }
+}
+
+fn recurrence_editor_week_start_available(
+    frequency: RecurrenceFrequency,
+    has_plain_byday: bool,
+    has_week_no: bool,
+) -> bool {
+    (frequency == RecurrenceFrequency::Weekly && has_plain_byday)
+        || (frequency == RecurrenceFrequency::Yearly && has_week_no)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecurrenceOverrideEditAction {
     Move,
     Cancel,
@@ -3521,6 +3607,83 @@ fn recurrence_selector_text_row(ui: &mut egui::Ui, label: &str, value: &mut Stri
     });
 }
 
+fn contextual_recurrence_selector_text_row(
+    ui: &mut egui::Ui,
+    selector: RecurrenceEditorSelector,
+    label: &str,
+    value: &mut String,
+    hint: &str,
+    available: bool,
+) {
+    if available {
+        recurrence_selector_text_row(ui, label, value, hint);
+        return;
+    }
+    if value.trim().is_empty() {
+        return;
+    }
+
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{label} (preserved)")).strong());
+            ui.add_enabled(
+                false,
+                egui::TextEdit::singleline(value)
+                    .desired_width(150.0)
+                    .hint_text(hint),
+            );
+            if ui.small_button("Clear").clicked() {
+                value.clear();
+            }
+        });
+        ui.small(selector.unavailable_reason());
+        ui.small("The value is not discarded when frequency or time context changes.");
+    });
+}
+
+fn render_contextual_week_start(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft) {
+    let has_week_no = !draft.week_no_text.trim().is_empty();
+    let available = recurrence_editor_week_start_available(
+        draft.rule.frequency,
+        !draft.rule.by_weekday.is_empty(),
+        has_week_no,
+    );
+
+    if available {
+        egui::ComboBox::from_label("Week start")
+            .selected_text(draft.rule.week_start.short_label())
+            .show_ui(ui, |ui| {
+                for weekday in RecurrenceWeekday::ALL {
+                    ui.selectable_value(
+                        &mut draft.rule.week_start,
+                        weekday,
+                        weekday.short_label(),
+                    );
+                }
+            });
+        return;
+    }
+
+    if draft.rule.week_start != RecurrenceWeekday::Monday {
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Week start (preserved)").strong());
+                ui.label(draft.rule.week_start.short_label());
+                if ui.small_button("Reset to Monday").clicked() {
+                    draft.rule.week_start = RecurrenceWeekday::Monday;
+                }
+            });
+            ui.small(
+                "Custom WKST is active only for WEEKLY+BYDAY or YEARLY+BYWEEKNO; the current value is preserved until reset or that context is restored.",
+            );
+        });
+    } else if draft.rule.frequency == RecurrenceFrequency::Weekly {
+        ui.small("Week start becomes editable after at least one BYDAY weekday is selected.");
+    } else if draft.rule.frequency == RecurrenceFrequency::Yearly {
+        ui.small("Week start becomes editable when BYWEEKNO is populated.");
+    }
+}
+
 fn render_structured_exception_dates(
     ui: &mut egui::Ui,
     title: &str,
@@ -3712,9 +3875,18 @@ fn render_recurrence_editor(
         .selected_text(draft.rule.frequency.as_str())
         .show_ui(ui, |ui| {
             for frequency in RecurrenceFrequency::ALL {
-                ui.selectable_value(&mut draft.rule.frequency, frequency, frequency.as_str());
+                if recurrence_editor_frequency_available(frequency, &draft.base_time) {
+                    ui.selectable_value(
+                        &mut draft.rule.frequency,
+                        frequency,
+                        frequency.as_str(),
+                    );
+                }
             }
         });
+    if !recurrence_editor_base_is_datetime(&draft.base_time) {
+        ui.small("Secondly, minutely, and hourly frequencies require a date-time series and are hidden.");
+    }
 
     ui.horizontal(|ui| {
         ui.label("Interval");
@@ -3741,14 +3913,6 @@ fn render_recurrence_editor(
         );
     });
 
-    egui::ComboBox::from_label("Week start")
-        .selected_text(draft.rule.week_start.short_label())
-        .show_ui(ui, |ui| {
-            for weekday in RecurrenceWeekday::ALL {
-                ui.selectable_value(&mut draft.rule.week_start, weekday, weekday.short_label());
-            }
-        });
-
     ui.label("BYDAY");
     ui.horizontal_wrapped(|ui| {
         for weekday in RecurrenceWeekday::ALL {
@@ -3762,6 +3926,7 @@ fn render_recurrence_editor(
             }
         }
     });
+    render_contextual_week_start(ui, draft);
 
     ui.label("BYMONTH");
     ui.horizontal_wrapped(|ui| {
@@ -3778,20 +3943,106 @@ fn render_recurrence_editor(
     });
 
     ui.separator();
-    ui.small("Advanced selectors: comma- or space-separated values; leave blank for none.");
-    recurrence_selector_text_row(ui, "BYWEEKNO", &mut draft.week_no_text, "20,-1");
-    recurrence_selector_text_row(ui, "BYYEARDAY", &mut draft.year_day_text, "1,100,-1");
-    recurrence_selector_text_row(ui, "BYMONTHDAY", &mut draft.month_day_text, "1,15,-1");
-    recurrence_selector_text_row(
+    ui.small(
+        "Advanced selectors adapt to the current frequency and event time kind. Inapplicable empty fields are hidden; existing values are preserved and can be explicitly cleared.",
+    );
+    let frequency = draft.rule.frequency;
+    let base_time = &draft.base_time;
+    contextual_recurrence_selector_text_row(
         ui,
+        RecurrenceEditorSelector::WeekNo,
+        "BYWEEKNO",
+        &mut draft.week_no_text,
+        "20,-1",
+        recurrence_editor_selector_available(
+            RecurrenceEditorSelector::WeekNo,
+            frequency,
+            base_time,
+        ),
+    );
+    contextual_recurrence_selector_text_row(
+        ui,
+        RecurrenceEditorSelector::YearDay,
+        "BYYEARDAY",
+        &mut draft.year_day_text,
+        "1,100,-1",
+        recurrence_editor_selector_available(
+            RecurrenceEditorSelector::YearDay,
+            frequency,
+            base_time,
+        ),
+    );
+    contextual_recurrence_selector_text_row(
+        ui,
+        RecurrenceEditorSelector::MonthDay,
+        "BYMONTHDAY",
+        &mut draft.month_day_text,
+        "1,15,-1",
+        recurrence_editor_selector_available(
+            RecurrenceEditorSelector::MonthDay,
+            frequency,
+            base_time,
+        ),
+    );
+    contextual_recurrence_selector_text_row(
+        ui,
+        RecurrenceEditorSelector::OrdinalByDay,
         "Ordinal BYDAY",
         &mut draft.ordinal_byday_text,
         "1MO,-1FR",
+        recurrence_editor_selector_available(
+            RecurrenceEditorSelector::OrdinalByDay,
+            frequency,
+            base_time,
+        ),
     );
-    recurrence_selector_text_row(ui, "BYHOUR", &mut draft.hour_text, "9,17");
-    recurrence_selector_text_row(ui, "BYMINUTE", &mut draft.minute_text, "0,30");
-    recurrence_selector_text_row(ui, "BYSECOND", &mut draft.second_text, "0,15,30,45");
-    recurrence_selector_text_row(ui, "BYSETPOS", &mut draft.set_pos_text, "1,-1");
+    contextual_recurrence_selector_text_row(
+        ui,
+        RecurrenceEditorSelector::Hour,
+        "BYHOUR",
+        &mut draft.hour_text,
+        "9,17",
+        recurrence_editor_selector_available(
+            RecurrenceEditorSelector::Hour,
+            frequency,
+            base_time,
+        ),
+    );
+    contextual_recurrence_selector_text_row(
+        ui,
+        RecurrenceEditorSelector::Minute,
+        "BYMINUTE",
+        &mut draft.minute_text,
+        "0,30",
+        recurrence_editor_selector_available(
+            RecurrenceEditorSelector::Minute,
+            frequency,
+            base_time,
+        ),
+    );
+    contextual_recurrence_selector_text_row(
+        ui,
+        RecurrenceEditorSelector::Second,
+        "BYSECOND",
+        &mut draft.second_text,
+        "0,15,30,45",
+        recurrence_editor_selector_available(
+            RecurrenceEditorSelector::Second,
+            frequency,
+            base_time,
+        ),
+    );
+    contextual_recurrence_selector_text_row(
+        ui,
+        RecurrenceEditorSelector::SetPos,
+        "BYSETPOS",
+        &mut draft.set_pos_text,
+        "1,-1",
+        true,
+    );
+    if !draft.set_pos_text.trim().is_empty() {
+        ui.small("BYSETPOS requires at least one other BY selector; live validation enforces that rule.");
+    }
 
     ui.separator();
     ui.small("Recurrence exceptions");
@@ -7434,4 +7685,203 @@ mod tests {
         assert!(parse_recurrence_override_values("=>CANCEL", &base).is_err());
         assert!(parse_recurrence_override_values("2026-10-06=>", &base).is_err());
     }
+
+    #[test]
+    fn recurrence_editor_frequency_availability_respects_base_time_kind() {
+        let date_only = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 6).expect("date"),
+            end_exclusive: None,
+        };
+        let floating = TimeSpec::Floating {
+            start: NaiveDate::from_ymd_opt(2026, 10, 6)
+                .expect("date")
+                .and_hms_opt(9, 0, 0)
+                .expect("time"),
+            end: None,
+            source_timezone: None,
+        };
+
+        for frequency in [
+            RecurrenceFrequency::Secondly,
+            RecurrenceFrequency::Minutely,
+            RecurrenceFrequency::Hourly,
+        ] {
+            assert!(!recurrence_editor_frequency_available(frequency, &date_only));
+            assert!(recurrence_editor_frequency_available(frequency, &floating));
+        }
+        for frequency in [
+            RecurrenceFrequency::Daily,
+            RecurrenceFrequency::Weekly,
+            RecurrenceFrequency::Monthly,
+            RecurrenceFrequency::Yearly,
+        ] {
+            assert!(recurrence_editor_frequency_available(frequency, &date_only));
+        }
+    }
+
+    #[test]
+    fn recurrence_editor_selector_availability_matches_domain_frequency_matrix() {
+        let timed = TimeSpec::Floating {
+            start: NaiveDate::from_ymd_opt(2026, 10, 6)
+                .expect("date")
+                .and_hms_opt(9, 0, 0)
+                .expect("time"),
+            end: None,
+            source_timezone: None,
+        };
+
+        assert!(recurrence_editor_selector_available(
+            RecurrenceEditorSelector::WeekNo,
+            RecurrenceFrequency::Yearly,
+            &timed,
+        ));
+        assert!(!recurrence_editor_selector_available(
+            RecurrenceEditorSelector::WeekNo,
+            RecurrenceFrequency::Monthly,
+            &timed,
+        ));
+
+        for frequency in [
+            RecurrenceFrequency::Secondly,
+            RecurrenceFrequency::Minutely,
+            RecurrenceFrequency::Hourly,
+            RecurrenceFrequency::Yearly,
+        ] {
+            assert!(recurrence_editor_selector_available(
+                RecurrenceEditorSelector::YearDay,
+                frequency,
+                &timed,
+            ));
+        }
+        for frequency in [
+            RecurrenceFrequency::Daily,
+            RecurrenceFrequency::Weekly,
+            RecurrenceFrequency::Monthly,
+        ] {
+            assert!(!recurrence_editor_selector_available(
+                RecurrenceEditorSelector::YearDay,
+                frequency,
+                &timed,
+            ));
+        }
+
+        assert!(!recurrence_editor_selector_available(
+            RecurrenceEditorSelector::MonthDay,
+            RecurrenceFrequency::Weekly,
+            &timed,
+        ));
+        assert!(recurrence_editor_selector_available(
+            RecurrenceEditorSelector::MonthDay,
+            RecurrenceFrequency::Daily,
+            &timed,
+        ));
+
+        for frequency in [RecurrenceFrequency::Monthly, RecurrenceFrequency::Yearly] {
+            assert!(recurrence_editor_selector_available(
+                RecurrenceEditorSelector::OrdinalByDay,
+                frequency,
+                &timed,
+            ));
+        }
+        assert!(!recurrence_editor_selector_available(
+            RecurrenceEditorSelector::OrdinalByDay,
+            RecurrenceFrequency::Weekly,
+            &timed,
+        ));
+    }
+
+    #[test]
+    fn recurrence_editor_time_selectors_require_datetime_base() {
+        let date_only = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 6).expect("date"),
+            end_exclusive: None,
+        };
+        let exact = TimeSpec::Instant {
+            start_utc: DateTime::parse_from_rfc3339("2026-10-06T15:00:00Z")
+                .expect("timestamp")
+                .with_timezone(&Utc),
+            end_utc: None,
+            source_timezone: Some("America/Mexico_City".to_string()),
+        };
+
+        for selector in [
+            RecurrenceEditorSelector::Hour,
+            RecurrenceEditorSelector::Minute,
+            RecurrenceEditorSelector::Second,
+        ] {
+            assert!(!recurrence_editor_selector_available(
+                selector,
+                RecurrenceFrequency::Daily,
+                &date_only,
+            ));
+            assert!(recurrence_editor_selector_available(
+                selector,
+                RecurrenceFrequency::Daily,
+                &exact,
+            ));
+        }
+    }
+
+    #[test]
+    fn recurrence_editor_week_start_affordance_tracks_real_week_context() {
+        assert!(recurrence_editor_week_start_available(
+            RecurrenceFrequency::Weekly,
+            true,
+            false,
+        ));
+        assert!(!recurrence_editor_week_start_available(
+            RecurrenceFrequency::Weekly,
+            false,
+            false,
+        ));
+        assert!(recurrence_editor_week_start_available(
+            RecurrenceFrequency::Yearly,
+            false,
+            true,
+        ));
+        assert!(!recurrence_editor_week_start_available(
+            RecurrenceFrequency::Yearly,
+            true,
+            false,
+        ));
+        assert!(!recurrence_editor_week_start_available(
+            RecurrenceFrequency::Daily,
+            true,
+            true,
+        ));
+    }
+
+    #[test]
+    fn recurrence_editor_preserves_hidden_selector_text_across_frequency_change() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Preserve hidden selector",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.by_week_no = vec![20, -1];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.rule.frequency = RecurrenceFrequency::Daily;
+
+        assert!(!recurrence_editor_selector_available(
+            RecurrenceEditorSelector::WeekNo,
+            draft.rule.frequency,
+            &draft.base_time,
+        ));
+        assert_eq!(draft.week_no_text, "20,-1");
+        assert!(draft.parsed_rule().is_err());
+
+        draft.rule.frequency = RecurrenceFrequency::Yearly;
+        assert_eq!(
+            draft.parsed_rule().expect("restored yearly rule").by_week_no,
+            vec![20, -1]
+        );
+    }
+
 }
