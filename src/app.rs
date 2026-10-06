@@ -782,8 +782,8 @@ impl RecurrenceEditDraft {
 
         let canonical_minute_text = format_selector_values(&self.rule.by_minute);
         let structured_minute_text = format_recurrence_minute_edit_rows(&self.minute_rows);
-        let minute_raw_override =
-            self.minute_text != canonical_minute_text && self.minute_text != structured_minute_text;
+        let minute_raw_override = self.minute_text != canonical_minute_text
+            && self.minute_text != structured_minute_text;
         if minute_raw_override {
             rule.by_minute = parse_u8_selector_values(&self.minute_text, "BYMINUTE")?;
         } else {
@@ -4345,7 +4345,6 @@ fn render_structured_hour(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, av
             }
         });
 }
-
 
 fn render_structured_minute(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, available: bool) {
     if !available {
