@@ -3611,8 +3611,18 @@ impl EphemerisApp {
                     }
 
                     ui.separator();
-                    ui.strong("iCalendar export");
-                    ui.small("Exports the current canonical source state to a new .ics file.");
+                    ui.strong("iCalendar source");
+                    if let Some(locator) = source.locator.as_deref() {
+                        ui.small("Refresh re-reads the original local file using stable source and UID identity.");
+                        if ui.button("Refresh ICS").clicked() {
+                            self.import_ics_path(std::path::Path::new(locator));
+                        }
+                    } else {
+                        ui.small("This ICS source has no local file locator, so it cannot be refreshed from disk.");
+                    }
+
+                    ui.add_space(4.0);
+                    ui.small("Export writes the current canonical source state to a new .ics file.");
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut self.ics_export_path)
                             .hint_text("/path/to/export.ics")
