@@ -41,7 +41,9 @@ const TARIA_STALE_AFTER_HOURS: i64 = 7 * 24;
 fn is_ics_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("ics") || value.eq_ignore_ascii_case("ical"))
+        .is_some_and(|value| {
+            value.eq_ignore_ascii_case("ics") || value.eq_ignore_ascii_case("ical")
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
