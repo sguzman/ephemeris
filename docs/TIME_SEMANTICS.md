@@ -137,12 +137,12 @@ Yearly BYMONTH recurrence defines the active month set inside each recurrence ye
 
 Monthly/yearly recurrence without explicit monthly/yearly selectors preserves the original calendar month/day. An invalid target date is skipped rather than coerced to month-end. Count applies to valid RRULE-generated occurrences across selected weekly BYDAY, monthly plain/ordinal BYDAY and BYMONTHDAY candidates, and yearly selector candidates; RDATE additions do not consume the RRULE count, and EXDATE is applied after candidate generation.
 
-Conceptually, the visible occurrence set is built from RRULE candidates plus RDATE additions, with EXDATE removing matching original slots and occurrence overrides transforming matching slots. A moved override changes the rendered time without changing the identity of the original slot. A cancelled override remains materialized with cancelled lifecycle status; cancellation is therefore not equivalent to EXDATE disappearance.
+Conceptually, the visible occurrence set is built from RRULE candidates plus RDATE additions, with EXDATE removing matching original slots and occurrence overrides transforming matching slots. The canonical-series editor now authors RDATE and EXDATE as occurrence start values in the series' existing temporal kind. Edited exception entries inherit the canonical event's duration and source-timezone metadata; unchanged persisted exception payloads remain unchanged. Live editor validation runs through canonical recurrence validation, so malformed temporal values and EXDATE/override conflicts disable save before persistence. A moved override changes the rendered time without changing the identity of the original slot. A cancelled override remains materialized with cancelled lifecycle status; cancellation is therefore not equivalent to EXDATE disappearance.
 
 Still required for fuller interoperable recurrence semantics:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented seven-frequency BY-part matrix, with `BYSECOND=60` intentionally deferred until leap-second timestamps can be represented faithfully;
-- richer recurrence/exception authoring and editing;
+- moved/cancelled occurrence-override authoring and richer exception editing;
 - external recurrence/exception source-adapter interoperability;
 - source-adapter mapping for external recurrence-exception representations.
 
