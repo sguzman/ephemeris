@@ -2,6 +2,9 @@
 
 # Implementation History
 
+> **Archive:** this file preserves detailed implementation checkpoints as they were recorded over time. Statements such as "next", "future", or "remains ahead" describe the state at that historical checkpoint and are not the current project status. See [PROJECT_STATE.md](PROJECT_STATE.md) for the authoritative present state.
+
+
 Last verified implementation milestone: 2026-10-06.
 
 ## Current status
