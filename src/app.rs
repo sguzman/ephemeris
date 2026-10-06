@@ -3654,11 +3654,7 @@ fn render_contextual_week_start(ui: &mut egui::Ui, draft: &mut RecurrenceEditDra
             .selected_text(draft.rule.week_start.short_label())
             .show_ui(ui, |ui| {
                 for weekday in RecurrenceWeekday::ALL {
-                    ui.selectable_value(
-                        &mut draft.rule.week_start,
-                        weekday,
-                        weekday.short_label(),
-                    );
+                    ui.selectable_value(&mut draft.rule.week_start, weekday, weekday.short_label());
                 }
             });
         return;
@@ -3876,16 +3872,14 @@ fn render_recurrence_editor(
         .show_ui(ui, |ui| {
             for frequency in RecurrenceFrequency::ALL {
                 if recurrence_editor_frequency_available(frequency, &draft.base_time) {
-                    ui.selectable_value(
-                        &mut draft.rule.frequency,
-                        frequency,
-                        frequency.as_str(),
-                    );
+                    ui.selectable_value(&mut draft.rule.frequency, frequency, frequency.as_str());
                 }
             }
         });
     if !recurrence_editor_base_is_datetime(&draft.base_time) {
-        ui.small("Secondly, minutely, and hourly frequencies require a date-time series and are hidden.");
+        ui.small(
+            "Secondly, minutely, and hourly frequencies require a date-time series and are hidden.",
+        );
     }
 
     ui.horizontal(|ui| {
@@ -4002,11 +3996,7 @@ fn render_recurrence_editor(
         "BYHOUR",
         &mut draft.hour_text,
         "9,17",
-        recurrence_editor_selector_available(
-            RecurrenceEditorSelector::Hour,
-            frequency,
-            base_time,
-        ),
+        recurrence_editor_selector_available(RecurrenceEditorSelector::Hour, frequency, base_time),
     );
     contextual_recurrence_selector_text_row(
         ui,
@@ -4041,7 +4031,9 @@ fn render_recurrence_editor(
         true,
     );
     if !draft.set_pos_text.trim().is_empty() {
-        ui.small("BYSETPOS requires at least one other BY selector; live validation enforces that rule.");
+        ui.small(
+            "BYSETPOS requires at least one other BY selector; live validation enforces that rule.",
+        );
     }
 
     ui.separator();
@@ -7706,7 +7698,9 @@ mod tests {
             RecurrenceFrequency::Minutely,
             RecurrenceFrequency::Hourly,
         ] {
-            assert!(!recurrence_editor_frequency_available(frequency, &date_only));
+            assert!(!recurrence_editor_frequency_available(
+                frequency, &date_only
+            ));
             assert!(recurrence_editor_frequency_available(frequency, &floating));
         }
         for frequency in [
@@ -7879,9 +7873,11 @@ mod tests {
 
         draft.rule.frequency = RecurrenceFrequency::Yearly;
         assert_eq!(
-            draft.parsed_rule().expect("restored yearly rule").by_week_no,
+            draft
+                .parsed_rule()
+                .expect("restored yearly rule")
+                .by_week_no,
             vec![20, -1]
         );
     }
-
 }
