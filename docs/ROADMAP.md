@@ -420,11 +420,12 @@ Implemented recurrence foundation:
 - structured BYHOUR authoring with one civil-hour row per selector, add/remove controls, live validation, and a collapsed compact `9,17` raw-syntax fallback
 - structured BYMINUTE authoring with one civil-minute row per selector, add/remove controls, live validation, and a collapsed compact `0,30` raw-syntax fallback
 - structured BYSECOND authoring with one ordinary civil-second row per selector, add/remove controls, live validation, and a collapsed compact `0,15,30,45` raw-syntax fallback; leap-second value `60` remains deliberately unsupported
+- structured BYSETPOS authoring with one signed position per row, add/remove controls, live validation, preset synchronization, and a collapsed compact `1,-1` raw-syntax fallback
 
 Next Phase 8 work:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
-- richer structured recurrence editing ergonomics beyond presets, structured exceptions, contextual selector visibility, ordinal-BYDAY/BYMONTHDAY/BYWEEKNO/BYYEARDAY/BYHOUR/BYMINUTE/BYSECOND rows, especially higher-level controls for the remaining numeric selectors and explanations for uncommon combinations
+- richer structured recurrence editing ergonomics beyond presets, structured exceptions, contextual selector visibility, and the fully structured advanced BY-selector set, especially higher-level controls for cadence/bounds and explanations for uncommon combinations
 - recurrence-exception source-adapter interoperability for external calendar payloads
 - relations
 - collections/sequences
