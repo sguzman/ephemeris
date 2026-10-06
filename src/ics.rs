@@ -41,18 +41,24 @@ pub fn import_ics_file(
     path: impl AsRef<Path>,
 ) -> anyhow::Result<IcsImportReport> {
     let path = path.as_ref();
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read iCalendar file {}", path.display()))?;
-    let canonical = canonical_ics_file_path(path)?;
-    let locator = canonical.display().to_string();
-    let external_ref = ics_external_ref_for_canonical_path(&canonical);
-    import_ics_text(store, &raw, &external_ref, Some(&locator))
+    let target = format!("ics:file:{}", path.display());
+    run_recorded_import(store, "ics_file", &target, || {
+        let raw = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read iCalendar file {}", path.display()))?;
+        let canonical = canonical_ics_file_path(path)?;
+        let locator = canonical.display().to_string();
+        let external_ref = ics_external_ref_for_canonical_path(&canonical);
+        import_ics_text(store, &raw, &external_ref, Some(&locator))
+    })
 }
 
 pub fn import_remote_ics(store: &TemporalStore, url: &str) -> anyhow::Result<IcsImportReport> {
     let normalized_url = normalize_remote_ics_url(url)?;
-    let raw = fetch_remote_ics_text(&normalized_url)?;
-    import_remote_ics_text(store, &raw, &normalized_url)
+    let target = remote_ics_external_ref(&normalized_url);
+    run_recorded_import(store, "webcal", &target, || {
+        let raw = fetch_remote_ics_text(&normalized_url)?;
+        import_remote_ics_text(store, &raw, &normalized_url)
+    })
 }
 
 pub fn import_remote_ics_text(
@@ -237,6 +243,44 @@ fn export_ics_source_record(
         total_events: events.len(),
         output_path,
     })
+}
+
+fn run_recorded_import(
+    store: &TemporalStore,
+    refresh_kind: &str,
+    target: &str,
+    operation: impl FnOnce() -> anyhow::Result<IcsImportReport>,
+) -> anyhow::Result<IcsImportReport> {
+    let attempt_id = store.begin_refresh_attempt(refresh_kind, target)?;
+    let result = operation();
+
+    let history_result = match &result {
+        Ok(report) => {
+            let summary = format!(
+                "{} events · {} created · {} updated · {} unchanged · {} retained missing",
+                report.total_events,
+                report.created,
+                report.updated,
+                report.unchanged,
+                report.retained_missing
+            );
+            store.finish_refresh_attempt(attempt_id, true, None, Some(&summary), None)
+        }
+        Err(error) => {
+            let safe_error = error.to_string();
+            store.finish_refresh_attempt(attempt_id, false, None, None, Some(&safe_error))
+        }
+    };
+
+    match (result, history_result) {
+        (Ok(report), Ok(())) => Ok(report),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(history_error)) => Err(history_error)
+            .context("iCalendar import succeeded but refresh history could not be completed"),
+        (Err(error), Err(history_error)) => Err(error).context(format!(
+            "refresh history also failed to complete: {history_error:#}"
+        )),
+    }
 }
 
 fn fetch_remote_ics_text(url: &str) -> anyhow::Result<String> {
@@ -559,6 +603,58 @@ mod tests {
         .expect("remote refresh");
         assert_eq!(second.source_id, first.source_id);
         assert_eq!(second.unchanged, 2);
+    }
+
+    #[test]
+    fn file_import_records_success_and_failure_refresh_attempts() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let directory = tempfile::tempdir().expect("tempdir");
+        let valid_path = directory.path().join("valid.ics");
+        std::fs::write(&valid_path, FIXTURE).expect("write valid fixture");
+
+        import_ics_file(&store, &valid_path).expect("successful import");
+
+        let invalid_path = directory.path().join("invalid.ics");
+        std::fs::write(
+            &invalid_path,
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n",
+        )
+        .expect("write invalid fixture");
+        import_ics_file(&store, &invalid_path).expect_err("invalid import must fail");
+
+        let attempts = store.source_refresh_attempts(10).expect("refresh attempts");
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].refresh_kind, "ics_file");
+        assert_eq!(attempts[0].success, Some(false));
+        assert!(attempts[0].error.is_some());
+        assert_eq!(attempts[1].refresh_kind, "ics_file");
+        assert_eq!(attempts[1].success, Some(true));
+        assert!(attempts[1]
+            .summary
+            .as_deref()
+            .is_some_and(|summary| summary.contains("2 events")));
+    }
+
+    #[test]
+    fn recorded_webcal_attempt_uses_hashed_target_and_safe_failure_text() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let normalized = normalize_remote_ics_url(
+            "webcal://example.com/private/feed.ics?token=secret",
+        )
+        .expect("normalize");
+        let target = remote_ics_external_ref(&normalized);
+
+        run_recorded_import(&store, "webcal", &target, || {
+            Err(anyhow::anyhow!("synthetic remote failure"))
+        })
+        .expect_err("synthetic failure");
+
+        let attempts = store.source_refresh_attempts(10).expect("refresh attempts");
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].refresh_kind, "webcal");
+        assert!(attempts[0].target.starts_with("webcal:url-sha256:"));
+        assert!(!attempts[0].target.contains("secret"));
+        assert_eq!(attempts[0].error.as_deref(), Some("synthetic remote failure"));
     }
 
     #[test]
