@@ -440,6 +440,7 @@ impl TemporalSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecurrenceFrequency {
+    Hourly,
     Daily,
     Weekly,
     Monthly,
@@ -447,10 +448,17 @@ pub enum RecurrenceFrequency {
 }
 
 impl RecurrenceFrequency {
-    pub const ALL: [Self; 4] = [Self::Daily, Self::Weekly, Self::Monthly, Self::Yearly];
+    pub const ALL: [Self; 5] = [
+        Self::Hourly,
+        Self::Daily,
+        Self::Weekly,
+        Self::Monthly,
+        Self::Yearly,
+    ];
 
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Hourly => "hourly",
             Self::Daily => "daily",
             Self::Weekly => "weekly",
             Self::Monthly => "monthly",
@@ -623,6 +631,7 @@ impl RecurrenceRule {
         let yearly_week_context =
             self.frequency == RecurrenceFrequency::Yearly && !self.by_week_no.is_empty();
         if !self.by_weekday.is_empty()
+            && self.frequency != RecurrenceFrequency::Hourly
             && self.frequency != RecurrenceFrequency::Daily
             && self.frequency != RecurrenceFrequency::Weekly
             && self.frequency != RecurrenceFrequency::Monthly
@@ -665,8 +674,11 @@ impl RecurrenceRule {
                 return Err(RecurrenceError::DuplicateByWeekNo(*week_no));
             }
         }
-        if !self.by_year_day.is_empty() && self.frequency != RecurrenceFrequency::Yearly {
-            return Err(RecurrenceError::ByYearDayRequiresYearly);
+        if !self.by_year_day.is_empty()
+            && self.frequency != RecurrenceFrequency::Hourly
+            && self.frequency != RecurrenceFrequency::Yearly
+        {
+            return Err(RecurrenceError::ByYearDayRequiresSupportedContext);
         }
         let mut year_days = HashSet::new();
         for day in &self.by_year_day {
@@ -678,6 +690,7 @@ impl RecurrenceRule {
             }
         }
         if !self.by_month_day.is_empty()
+            && self.frequency != RecurrenceFrequency::Hourly
             && self.frequency != RecurrenceFrequency::Daily
             && self.frequency != RecurrenceFrequency::Monthly
             && self.frequency != RecurrenceFrequency::Yearly
@@ -830,6 +843,7 @@ pub struct EventOccurrence {
 pub enum RecurrenceError {
     ZeroInterval,
     ZeroCount,
+    FrequencyRequiresDateTime(RecurrenceFrequency, &'static str),
     ByWeekdayRequiresSupportedContext,
     WeekStartRequiresWeekContext,
     DuplicateByWeekday(&'static str),
@@ -838,7 +852,7 @@ pub enum RecurrenceError {
     ByWeekNoRequiresYearly,
     InvalidByWeekNo(i8),
     DuplicateByWeekNo(i8),
-    ByYearDayRequiresYearly,
+    ByYearDayRequiresSupportedContext,
     InvalidByYearDay(i16),
     DuplicateByYearDay(i16),
     ByMonthDayRequiresSupportedContext,
@@ -878,8 +892,13 @@ impl fmt::Display for RecurrenceError {
         match self {
             Self::ZeroInterval => formatter.write_str("recurrence interval must be at least 1"),
             Self::ZeroCount => formatter.write_str("recurrence count must be at least 1"),
+            Self::FrequencyRequiresDateTime(frequency, kind) => write!(
+                formatter,
+                "{} recurrence requires a date-time base, got {kind}",
+                frequency.as_str()
+            ),
             Self::ByWeekdayRequiresSupportedContext => formatter.write_str(
-                "plain BYDAY weekday selection requires daily, weekly, monthly, or yearly recurrence",
+                "plain BYDAY weekday selection requires hourly, daily, weekly, monthly, or yearly recurrence",
             ),
             Self::WeekStartRequiresWeekContext => formatter.write_str(
                 "custom WKST requires weekly BYDAY recurrence or yearly BYWEEKNO recurrence",
@@ -908,9 +927,8 @@ impl fmt::Display for RecurrenceError {
             Self::DuplicateByWeekNo(week_no) => {
                 write!(formatter, "duplicate BYWEEKNO value {week_no}")
             }
-            Self::ByYearDayRequiresYearly => {
-                formatter.write_str("BYYEARDAY selection is supported only for yearly recurrence")
-            }
+            Self::ByYearDayRequiresSupportedContext => formatter
+                .write_str("BYYEARDAY selection is supported for hourly or yearly recurrence"),
             Self::InvalidByYearDay(day) => {
                 write!(
                     formatter,
@@ -921,7 +939,7 @@ impl fmt::Display for RecurrenceError {
                 write!(formatter, "duplicate BYYEARDAY value {day}")
             }
             Self::ByMonthDayRequiresSupportedContext => formatter.write_str(
-                "BYMONTHDAY selection requires daily, monthly, or yearly recurrence",
+                "BYMONTHDAY selection requires hourly, daily, monthly, or yearly recurrence",
             ),
             Self::InvalidByMonthDay(day) => {
                 write!(
@@ -1109,6 +1127,17 @@ impl TemporalEvent {
 
         rule.validate()?;
         validate_recurrence_time(&self.time)?;
+        if rule.frequency == RecurrenceFrequency::Hourly
+            && matches!(
+                &self.time,
+                TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. }
+            )
+        {
+            return Err(RecurrenceError::FrequencyRequiresDateTime(
+                rule.frequency,
+                self.time.kind_name(),
+            ));
+        }
         if !rule.by_hour.is_empty()
             && matches!(
                 &self.time,
@@ -1382,14 +1411,18 @@ fn recurrence_candidates_for_period(
     period: u32,
 ) -> Result<Vec<TimeSpec>, RecurrenceError> {
     let candidates = recurrence_candidates_before_set_pos(base, rule, period)?;
-    let candidates = expand_by_hours(base, candidates, &rule.by_hour, period)?;
+    let candidates = if rule.frequency == RecurrenceFrequency::Hourly {
+        candidates
+    } else {
+        expand_by_hours(base, candidates, &rule.by_hour, period)?
+    };
     let candidates = expand_by_minutes(base, candidates, &rule.by_minute, period)?;
     let candidates = expand_by_seconds(base, candidates, &rule.by_second, period)?;
     Ok(apply_set_positions(candidates, &rule.by_set_pos))
 }
 
 fn recurrence_time_multiplier(rule: &RecurrenceRule) -> usize {
-    let hours = if rule.by_hour.is_empty() {
+    let hours = if rule.frequency == RecurrenceFrequency::Hourly || rule.by_hour.is_empty() {
         1
     } else {
         rule.by_hour.len()
@@ -1742,6 +1775,9 @@ fn recurrence_candidates_before_set_pos(
     rule: &RecurrenceRule,
     period: u32,
 ) -> Result<Vec<TimeSpec>, RecurrenceError> {
+    if rule.frequency == RecurrenceFrequency::Hourly {
+        return hourly_recurrence_candidates(base, rule, period);
+    }
     if rule.frequency == RecurrenceFrequency::Daily
         && (!rule.by_weekday.is_empty()
             || !rule.by_month.is_empty()
@@ -1847,10 +1883,47 @@ fn recurrence_rule_has_reachable_candidate(
     rule: &RecurrenceRule,
 ) -> Result<bool, RecurrenceError> {
     match rule.frequency {
+        RecurrenceFrequency::Hourly => hourly_rule_has_reachable_candidate(base, rule),
         RecurrenceFrequency::Daily => daily_rule_has_reachable_candidate(base, rule),
         RecurrenceFrequency::Weekly => weekly_rule_has_reachable_candidate(base, rule),
         RecurrenceFrequency::Monthly => monthly_rule_has_reachable_candidate(base, rule),
         RecurrenceFrequency::Yearly => yearly_rule_has_reachable_candidate(base, rule),
+    }
+}
+
+fn hourly_rule_has_reachable_candidate(
+    base: &TimeSpec,
+    rule: &RecurrenceRule,
+) -> Result<bool, RecurrenceError> {
+    if rule.frequency != RecurrenceFrequency::Hourly {
+        return Ok(true);
+    }
+
+    let candidate_count = recurrence_time_multiplier(rule);
+    if !set_positions_select_any(candidate_count, &rule.by_set_pos) {
+        return Ok(false);
+    }
+    if rule.by_hour.is_empty() {
+        return Ok(true);
+    }
+
+    let start_hour = u64::from(recurrence_rule_hour(base)?);
+    let step = u64::from(rule.interval % 24);
+    let mut hour = start_hour;
+    let mut seen = [false; 24];
+
+    loop {
+        let index = usize::try_from(hour).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+        if seen[index] {
+            return Ok(false);
+        }
+        if rule.by_hour.contains(
+            &u8::try_from(hour).map_err(|_| RecurrenceError::ArithmeticOverflow)?,
+        ) {
+            return Ok(true);
+        }
+        seen[index] = true;
+        hour = (hour + step) % 24;
     }
 }
 
@@ -1920,6 +1993,66 @@ fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
         right = remainder;
     }
     left
+}
+
+fn hourly_recurrence_candidates(
+    base: &TimeSpec,
+    rule: &RecurrenceRule,
+    period: u32,
+) -> Result<Vec<TimeSpec>, RecurrenceError> {
+    let Some(candidate) = shift_recurrence_time(base, rule, period)? else {
+        return Ok(Vec::new());
+    };
+    let candidate_date = recurrence_rule_date(&candidate)?;
+
+    if !rule.by_month.is_empty()
+        && !u8::try_from(candidate_date.month())
+            .ok()
+            .is_some_and(|month| rule.by_month.contains(&month))
+    {
+        return Ok(Vec::new());
+    }
+
+    if !rule.by_year_day.is_empty()
+        && !rule
+            .by_year_day
+            .iter()
+            .filter_map(|selector| resolve_year_day(candidate_date.year(), *selector))
+            .any(|date| date == candidate_date)
+    {
+        return Ok(Vec::new());
+    }
+
+    if !rule.by_month_day.is_empty() {
+        let month_start =
+            NaiveDate::from_ymd_opt(candidate_date.year(), candidate_date.month(), 1)
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+        if !rule
+            .by_month_day
+            .iter()
+            .filter_map(|selector| resolve_month_day(month_start, *selector))
+            .any(|date| date == candidate_date)
+        {
+            return Ok(Vec::new());
+        }
+    }
+
+    if !rule.by_weekday.is_empty() {
+        let weekday = u64::from(candidate_date.weekday().num_days_from_monday());
+        if !rule
+            .by_weekday
+            .iter()
+            .any(|selector| selector.offset_from_monday() == weekday)
+        {
+            return Ok(Vec::new());
+        }
+    }
+
+    if !rule.by_hour.is_empty() && !rule.by_hour.contains(&recurrence_rule_hour(&candidate)?) {
+        return Ok(Vec::new());
+    }
+
+    Ok(vec![candidate])
 }
 
 fn daily_rule_has_reachable_candidate(
@@ -3314,6 +3447,11 @@ fn recurrence_period_lower_bound_date(
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
 
     match rule.frequency {
+        RecurrenceFrequency::Hourly => {
+            let base_local = recurrence_rule_local_datetime(base)?;
+            let shifted = base_local.checked_add_signed(Duration::hours(i64::from(steps)));
+            Ok(shifted.map(|value| value.date()))
+        }
         RecurrenceFrequency::Daily => Ok(base_date.checked_add_days(Days::new(u64::from(steps)))),
         RecurrenceFrequency::Weekly => {
             let base_weekday = u64::from(base_date.weekday().num_days_from_monday());
@@ -3344,6 +3482,39 @@ fn recurrence_period_lower_bound_date(
     }
 }
 
+fn recurrence_rule_local_datetime(time: &TimeSpec) -> Result<NaiveDateTime, RecurrenceError> {
+    match time {
+        TimeSpec::Floating { start, .. } => Ok(*start),
+        TimeSpec::Instant {
+            start_utc,
+            source_timezone,
+            ..
+        } => {
+            let timezone = match source_timezone.as_deref() {
+                Some(raw) => raw
+                    .parse::<Tz>()
+                    .map_err(|_| RecurrenceError::InvalidSourceTimezone(raw.to_string()))?,
+                None => chrono_tz::UTC,
+            };
+            Ok(start_utc.with_timezone(&timezone).naive_local())
+        }
+        TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => Err(
+            RecurrenceError::FrequencyRequiresDateTime(
+                RecurrenceFrequency::Hourly,
+                time.kind_name(),
+            ),
+        ),
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+            Err(RecurrenceError::UnsupportedTimeKind(time.kind_name()))
+        }
+    }
+}
+
+fn recurrence_rule_hour(time: &TimeSpec) -> Result<u8, RecurrenceError> {
+    u8::try_from(recurrence_rule_local_datetime(time)?.hour())
+        .map_err(|_| RecurrenceError::ArithmeticOverflow)
+}
+
 fn recurrence_rule_date(time: &TimeSpec) -> Result<NaiveDate, RecurrenceError> {
     match time {
         TimeSpec::DateOnly { start, .. } | TimeSpec::AllDay { start, .. } => Ok(*start),
@@ -3372,6 +3543,10 @@ fn shift_naive_datetime(
     frequency: RecurrenceFrequency,
     steps: u32,
 ) -> Result<Option<NaiveDateTime>, RecurrenceError> {
+    if frequency == RecurrenceFrequency::Hourly {
+        return Ok(value.checked_add_signed(Duration::hours(i64::from(steps))));
+    }
+
     let Some(date) = shift_date(value.date(), frequency, steps)? else {
         return Ok(None);
     };
@@ -3384,6 +3559,10 @@ fn shift_date(
     steps: u32,
 ) -> Result<Option<NaiveDate>, RecurrenceError> {
     match frequency {
+        RecurrenceFrequency::Hourly => Err(RecurrenceError::FrequencyRequiresDateTime(
+            RecurrenceFrequency::Hourly,
+            "date_only",
+        )),
         RecurrenceFrequency::Daily => Ok(value.checked_add_days(Days::new(u64::from(steps)))),
         RecurrenceFrequency::Weekly => {
             let days = u64::from(steps)
@@ -5365,7 +5544,7 @@ mod tests {
         wrong_frequency.by_year_day = vec![1];
         assert!(matches!(
             wrong_frequency.validate(),
-            Err(RecurrenceError::ByYearDayRequiresYearly)
+            Err(RecurrenceError::ByYearDayRequiresSupportedContext)
         ));
 
         for invalid_day in [-367, 0, 367] {
