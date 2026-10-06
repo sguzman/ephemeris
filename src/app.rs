@@ -72,6 +72,96 @@ struct OccurrenceContext {
     cancelled_by_override: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecurrenceOverrideEditAction {
+    Move,
+    Cancel,
+    CancelMove,
+    Keep,
+}
+
+impl RecurrenceOverrideEditAction {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Move => "Move",
+            Self::Cancel => "Cancel",
+            Self::CancelMove => "Cancel + move",
+            Self::Keep => "Keep",
+        }
+    }
+
+    const fn needs_replacement(self) -> bool {
+        matches!(self, Self::Move | Self::CancelMove)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecurrenceOverrideEditRow {
+    original_text: String,
+    action: RecurrenceOverrideEditAction,
+    replacement_text: String,
+}
+
+impl RecurrenceOverrideEditRow {
+    fn from_override(occurrence_override: &RecurrenceOverride) -> Self {
+        let action = match (
+            occurrence_override.cancelled,
+            occurrence_override.replacement.as_ref(),
+        ) {
+            (false, Some(_)) => RecurrenceOverrideEditAction::Move,
+            (true, None) => RecurrenceOverrideEditAction::Cancel,
+            (true, Some(_)) => RecurrenceOverrideEditAction::CancelMove,
+            (false, None) => RecurrenceOverrideEditAction::Keep,
+        };
+        Self {
+            original_text: format_exception_start_value(&occurrence_override.original),
+            action,
+            replacement_text: occurrence_override
+                .replacement
+                .as_ref()
+                .map_or_else(String::new, format_exception_start_value),
+        }
+    }
+
+    fn compact_entry(&self) -> String {
+        let original = self.original_text.trim();
+        match self.action {
+            RecurrenceOverrideEditAction::Move => {
+                format!("{original}=>{}", self.replacement_text.trim())
+            }
+            RecurrenceOverrideEditAction::Cancel => format!("{original}=>CANCEL"),
+            RecurrenceOverrideEditAction::CancelMove => {
+                format!("{original}=>CANCEL@{}", self.replacement_text.trim())
+            }
+            RecurrenceOverrideEditAction::Keep => format!("{original}=>KEEP"),
+        }
+    }
+}
+
+fn recurrence_override_edit_rows(
+    values: &[RecurrenceOverride],
+) -> Vec<RecurrenceOverrideEditRow> {
+    values
+        .iter()
+        .map(RecurrenceOverrideEditRow::from_override)
+        .collect()
+}
+
+fn format_recurrence_override_edit_rows(rows: &[RecurrenceOverrideEditRow]) -> String {
+    rows.iter()
+        .map(RecurrenceOverrideEditRow::compact_entry)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn parse_recurrence_override_edit_rows(
+    raw: &str,
+    base_time: &TimeSpec,
+) -> Result<Vec<RecurrenceOverrideEditRow>, String> {
+    parse_recurrence_override_values(raw, base_time)
+        .map(|values| recurrence_override_edit_rows(&values))
+}
+
 #[derive(Debug, Clone)]
 struct RecurrenceEditDraft {
     event_id: Uuid,
@@ -91,6 +181,7 @@ struct RecurrenceEditDraft {
     rdate_text: String,
     exdate_text: String,
     override_text: String,
+    override_rows: Vec<RecurrenceOverrideEditRow>,
     base_time: TimeSpec,
 }
 
@@ -101,6 +192,8 @@ impl RecurrenceEditDraft {
             .recurrence
             .clone()
             .unwrap_or_else(|| RecurrenceRule::new(RecurrenceFrequency::Daily));
+        let override_text = format_recurrence_override_values(&rule.overrides);
+        let override_rows = recurrence_override_edit_rows(&rule.overrides);
         Self {
             event_id: event.id,
             had_recurrence,
@@ -121,7 +214,8 @@ impl RecurrenceEditDraft {
             set_pos_text: format_selector_values(&rule.by_set_pos),
             rdate_text: format_exception_start_values(&rule.rdates),
             exdate_text: format_exception_start_values(&rule.exdates),
-            override_text: format_recurrence_override_values(&rule.overrides),
+            override_text,
+            override_rows,
             base_time: event.time.clone(),
             rule,
         }
@@ -168,9 +262,19 @@ impl RecurrenceEditDraft {
             rule.exdates =
                 parse_exception_start_values(&self.exdate_text, &self.base_time, "EXDATE")?;
         }
-        if self.override_text != format_recurrence_override_values(&self.rule.overrides) {
+        let canonical_override_text = format_recurrence_override_values(&self.rule.overrides);
+        let structured_override_text =
+            format_recurrence_override_edit_rows(&self.override_rows);
+        let edited_override_text = if self.override_text != canonical_override_text
+            && self.override_text != structured_override_text
+        {
+            &self.override_text
+        } else {
+            &structured_override_text
+        };
+        if edited_override_text != &canonical_override_text {
             rule.overrides =
-                parse_recurrence_override_values(&self.override_text, &self.base_time)?;
+                parse_recurrence_override_values(edited_override_text, &self.base_time)?;
         }
 
         rule.validate().map_err(|error| error.to_string())?;
@@ -434,13 +538,17 @@ fn parse_recurrence_override_values(
         .collect()
 }
 
-fn recurrence_override_hint(base_time: &TimeSpec) -> String {
-    let occurrence = match base_time {
+fn recurrence_exception_value_hint(base_time: &TimeSpec) -> &'static str {
+    match base_time {
         TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => "2026-03-10",
         TimeSpec::Floating { .. } => "2026-03-10T09:00:00",
         TimeSpec::Instant { .. } => "2026-03-10T15:00:00Z",
         TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => "",
-    };
+    }
+}
+
+fn recurrence_override_hint(base_time: &TimeSpec) -> String {
+    let occurrence = recurrence_exception_value_hint(base_time);
     if occurrence.is_empty() {
         String::new()
     } else {
