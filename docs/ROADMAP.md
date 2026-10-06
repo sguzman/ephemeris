@@ -435,7 +435,7 @@ Next Phase 8 work:
 
 ## Phase 9 - External interoperability
 
-Status: **started — core RFC 5545 projection transport implemented; source/store and user-facing integration next**
+Status: **active — bidirectional RFC 5545 transport, local ICS store import, CLI import, and GUI drag/drop import are implemented; stored-source export is next**
 
 Goals:
 
