@@ -12310,7 +12310,7 @@ mod tests {
         let starts = event
             .occurrences_in_window(
                 NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
-                NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(),
                 chrono_tz::UTC,
             )
             .expect("expand")
