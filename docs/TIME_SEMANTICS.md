@@ -142,7 +142,7 @@ Conceptually, the visible occurrence set is built from RRULE candidates plus RDA
 Still required for fuller interoperable recurrence semantics:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented seven-frequency BY-part matrix, with `BYSECOND=60` intentionally deferred until leap-second timestamps can be represented faithfully;
-- richer recurrence-editor ergonomics beyond structured exceptions, canonical presets, contextual selector visibility, structured ordinal BYDAY, and structured BYMONTHDAY, especially higher-level controls for remaining numeric selectors and uncommon combinations;
+- richer recurrence-editor ergonomics beyond structured exceptions, canonical presets, contextual selector visibility, structured ordinal BYDAY, structured BYMONTHDAY, and structured BYWEEKNO, especially higher-level controls for remaining numeric selectors and uncommon combinations;
 - external recurrence/exception source-adapter interoperability;
 - source-adapter mapping for external recurrence-exception representations.
 
@@ -153,6 +153,8 @@ The recurrence editor's selector surface is contextual but non-destructive. Adva
 Ordinal BYDAY has a structured editor layered over the same persisted selector vector. Each row contains a signed ordinal and weekday; adding/removing/editing rows serializes back to the ordinary compact token form (`1MO`, `-1FR`, and so on). A collapsed raw editor remains available for power users. Raw text is authoritative when it diverges from both persisted and structured forms; loading raw syntax into rows canonicalizes the text and returns authority to the structured rows. Presets clear both forms together, and contextual clearing of an unavailable ordinal selector clears both forms together, so no hidden parallel state can survive.
 
 BYMONTHDAY follows the same non-parallel editing contract. Each structured row contains one signed civil day; positive values count from month start and negative values count backward from month end. Row edits serialize to the ordinary compact selector form (`1,15,-1`), while a collapsed raw editor remains available. Raw text overrides rows only while it diverges from both persisted and structured forms; loading raw syntax canonicalizes it back into rows. Presets and contextual clearing clear both forms together.
+
+BYWEEKNO uses the same contract for signed week numbers. Each row represents one positive or negative numbered week, serializes to the existing compact list form such as `20,-1`, and remains subject to the canonical YEARLY-only range/duplicate/WKST validation. Raw text stays authoritative only while it intentionally diverges from persisted and structured forms; loading raw syntax canonicalizes it into rows, and presets/contextual clearing keep both representations synchronized.
 
 The system distinguishes the persisted recurrence definition from materialized view occurrences.
 
