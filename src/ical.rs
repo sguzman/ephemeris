@@ -33,6 +33,8 @@ pub enum IcalRecurrenceError {
     UnsupportedPeriod,
     UnsupportedRecurrenceRange(String),
     RecurrenceIdRequiresSingleValue,
+    EventTimeRequiresSingleValue(&'static str),
+    UnsupportedVeventTimeKind(&'static str),
     InvalidTimezone(String),
     TemporalKindMismatch {
         property: &'static str,
@@ -99,6 +101,12 @@ impl fmt::Display for IcalRecurrenceError {
             ),
             Self::RecurrenceIdRequiresSingleValue => {
                 formatter.write_str("RECURRENCE-ID requires exactly one date or date-time value")
+            }
+            Self::EventTimeRequiresSingleValue(property) => {
+                write!(formatter, "{property} requires exactly one date or date-time value")
+            }
+            Self::UnsupportedVeventTimeKind(kind) => {
+                write!(formatter, "VEVENT transport cannot losslessly represent {kind}")
             }
             Self::InvalidTimezone(value) => {
                 write!(formatter, "unsupported or invalid iCalendar TZID {value}")
@@ -503,6 +511,386 @@ pub fn format_recurrence_id_property(
             Err(IcalRecurrenceError::UnsupportedBaseKind(base.kind_name()))
         }
     }
+}
+
+/// Parse VEVENT DTSTART and optional DTEND into the canonical event time.
+///
+/// DATE values become explicit all-day events. Ephemeris DateOnly values are
+/// intentionally not produced here because an RFC 5545 VEVENT DATE asserts
+/// all-day/date semantics rather than merely imprecise civil-date precision.
+pub fn parse_vevent_time_properties(
+    dtstart: &str,
+    dtend: Option<&str>,
+) -> Result<TimeSpec, IcalRecurrenceError> {
+    let start_property = parse_date_property(dtstart, "DTSTART")?;
+    if start_property.values.len() != 1 {
+        return Err(IcalRecurrenceError::EventTimeRequiresSingleValue("DTSTART"));
+    }
+    let start_value = start_property.values[0];
+    let start_value_type = start_property
+        .value_type
+        .as_deref()
+        .unwrap_or("DATE-TIME");
+    if !matches!(start_value_type, "DATE" | "DATE-TIME") {
+        return Err(IcalRecurrenceError::UnsupportedValueType(
+            start_value_type.to_string(),
+        ));
+    }
+
+    if start_value_type == "DATE" {
+        if start_property.tzid.is_some() {
+            return Err(IcalRecurrenceError::UnsupportedParameter(
+                "TZID".to_string(),
+            ));
+        }
+        let start = NaiveDate::parse_from_str(start_value, "%Y%m%d").map_err(|_| {
+            IcalRecurrenceError::InvalidPropertyValue {
+                property: "DTSTART",
+                value: start_value.to_string(),
+            }
+        })?;
+        let end_exclusive = match dtend {
+            Some(raw_end) => {
+                let end_property = parse_date_property(raw_end, "DTEND")?;
+                if end_property.values.len() != 1 {
+                    return Err(IcalRecurrenceError::EventTimeRequiresSingleValue("DTEND"));
+                }
+                let end_value_type = end_property
+                    .value_type
+                    .as_deref()
+                    .unwrap_or("DATE-TIME");
+                if end_value_type != "DATE" {
+                    return Err(IcalRecurrenceError::TemporalKindMismatch {
+                        property: "DTEND",
+                        expected: "date",
+                        actual: value_type_kind(end_value_type),
+                    });
+                }
+                if end_property.tzid.is_some() {
+                    return Err(IcalRecurrenceError::UnsupportedParameter(
+                        "TZID".to_string(),
+                    ));
+                }
+                let raw_value = end_property.values[0];
+                let end = NaiveDate::parse_from_str(raw_value, "%Y%m%d").map_err(|_| {
+                    IcalRecurrenceError::InvalidPropertyValue {
+                        property: "DTEND",
+                        value: raw_value.to_string(),
+                    }
+                })?;
+                if end <= start {
+                    return Err(IcalRecurrenceError::InvalidPropertyValue {
+                        property: "DTEND",
+                        value: raw_value.to_string(),
+                    });
+                }
+                Some(end)
+            }
+            None => None,
+        };
+        return Ok(TimeSpec::AllDay {
+            start,
+            end_exclusive,
+        });
+    }
+
+    let start_time = parse_vevent_datetime_value(
+        "DTSTART",
+        start_value,
+        start_property.tzid.as_deref(),
+    )?;
+    let end_time = match dtend {
+        Some(raw_end) => {
+            let end_property = parse_date_property(raw_end, "DTEND")?;
+            if end_property.values.len() != 1 {
+                return Err(IcalRecurrenceError::EventTimeRequiresSingleValue("DTEND"));
+            }
+            let end_value_type = end_property
+                .value_type
+                .as_deref()
+                .unwrap_or("DATE-TIME");
+            if end_value_type != "DATE-TIME" {
+                return Err(IcalRecurrenceError::TemporalKindMismatch {
+                    property: "DTEND",
+                    expected: "date-time",
+                    actual: value_type_kind(end_value_type),
+                });
+            }
+            Some(parse_vevent_datetime_value(
+                "DTEND",
+                end_property.values[0],
+                end_property.tzid.as_deref(),
+            )?)
+        }
+        None => None,
+    };
+
+    match start_time {
+        ParsedVeventDateTime::Floating(start) => {
+            let end = match end_time {
+                Some(ParsedVeventDateTime::Floating(end)) => {
+                    if end <= start {
+                        return Err(IcalRecurrenceError::InvalidPropertyValue {
+                            property: "DTEND",
+                            value: end.to_string(),
+                        });
+                    }
+                    Some(end)
+                }
+                Some(other) => {
+                    return Err(IcalRecurrenceError::TemporalKindMismatch {
+                        property: "DTEND",
+                        expected: "floating date-time",
+                        actual: other.kind_name(),
+                    });
+                }
+                None => None,
+            };
+            Ok(TimeSpec::Floating {
+                start,
+                end,
+                source_timezone: None,
+            })
+        }
+        ParsedVeventDateTime::Utc(start_utc) => {
+            let end_utc = match end_time {
+                Some(ParsedVeventDateTime::Utc(end_utc)) => {
+                    if end_utc <= start_utc {
+                        return Err(IcalRecurrenceError::InvalidPropertyValue {
+                            property: "DTEND",
+                            value: end_utc.to_rfc3339(),
+                        });
+                    }
+                    Some(end_utc)
+                }
+                Some(other) => {
+                    return Err(IcalRecurrenceError::TemporalKindMismatch {
+                        property: "DTEND",
+                        expected: "UTC date-time",
+                        actual: other.kind_name(),
+                    });
+                }
+                None => None,
+            };
+            Ok(TimeSpec::Instant {
+                start_utc,
+                end_utc,
+                source_timezone: None,
+            })
+        }
+        ParsedVeventDateTime::Zoned {
+            utc: start_utc,
+            timezone,
+        } => {
+            let end_utc = match end_time {
+                Some(ParsedVeventDateTime::Zoned {
+                    utc: end_utc,
+                    timezone: end_timezone,
+                }) if end_timezone == timezone => {
+                    if end_utc <= start_utc {
+                        return Err(IcalRecurrenceError::InvalidPropertyValue {
+                            property: "DTEND",
+                            value: end_utc.to_rfc3339(),
+                        });
+                    }
+                    Some(end_utc)
+                }
+                Some(ParsedVeventDateTime::Zoned {
+                    timezone: end_timezone,
+                    ..
+                }) => {
+                    return Err(IcalRecurrenceError::TimezoneMismatch {
+                        expected: Some(timezone),
+                        actual: end_timezone,
+                    });
+                }
+                Some(other) => {
+                    return Err(IcalRecurrenceError::TemporalKindMismatch {
+                        property: "DTEND",
+                        expected: "zoned local date-time",
+                        actual: other.kind_name(),
+                    });
+                }
+                None => None,
+            };
+            Ok(TimeSpec::Instant {
+                start_utc,
+                end_utc,
+                source_timezone: Some(timezone),
+            })
+        }
+    }
+}
+
+/// Serialize a canonical event time as VEVENT DTSTART and optional DTEND.
+///
+/// DateOnly is rejected: emitting it as VALUE=DATE would strengthen uncertain
+/// civil-date precision into all-day semantics.
+pub fn format_vevent_time_properties(
+    time: &TimeSpec,
+) -> Result<(String, Option<String>), IcalRecurrenceError> {
+    match time {
+        TimeSpec::AllDay {
+            start,
+            end_exclusive,
+        } => {
+            let end = match end_exclusive {
+                Some(end) if end <= start => {
+                    return Err(IcalRecurrenceError::InvalidPropertyValue {
+                        property: "DTEND",
+                        value: end.to_string(),
+                    });
+                }
+                Some(end) => Some(format!("DTEND;VALUE=DATE:{}", end.format("%Y%m%d"))),
+                None => None,
+            };
+            Ok((
+                format!("DTSTART;VALUE=DATE:{}", start.format("%Y%m%d")),
+                end,
+            ))
+        }
+        TimeSpec::DateOnly { .. } => Err(IcalRecurrenceError::UnsupportedVeventTimeKind(
+            "date-only precision without explicit all-day semantics",
+        )),
+        TimeSpec::Floating {
+            start,
+            end,
+            source_timezone,
+        } => {
+            if source_timezone.is_some() {
+                return Err(IcalRecurrenceError::UnsupportedVeventTimeKind(
+                    "floating date-time with source-timezone metadata",
+                ));
+            }
+            reject_fractional_seconds("DTSTART", *start)?;
+            let encoded_end = match end {
+                Some(end) if end <= start => {
+                    return Err(IcalRecurrenceError::InvalidPropertyValue {
+                        property: "DTEND",
+                        value: end.to_string(),
+                    });
+                }
+                Some(end) => {
+                    reject_fractional_seconds("DTEND", *end)?;
+                    Some(format!("DTEND:{}", end.format("%Y%m%dT%H%M%S")))
+                }
+                None => None,
+            };
+            Ok((
+                format!("DTSTART:{}", start.format("%Y%m%dT%H%M%S")),
+                encoded_end,
+            ))
+        }
+        TimeSpec::Instant {
+            start_utc,
+            end_utc,
+            source_timezone,
+        } => {
+            reject_fractional_seconds("DTSTART", start_utc.naive_utc())?;
+            if let Some(end) = end_utc
+                && end <= start_utc
+            {
+                return Err(IcalRecurrenceError::InvalidPropertyValue {
+                    property: "DTEND",
+                    value: end.to_rfc3339(),
+                });
+            }
+            match source_timezone {
+                Some(raw_timezone) => {
+                    let timezone = raw_timezone
+                        .parse::<Tz>()
+                        .map_err(|_| IcalRecurrenceError::InvalidTimezone(raw_timezone.clone()))?;
+                    let local_start = start_utc.with_timezone(&timezone);
+                    let encoded_end = match end_utc {
+                        Some(end) => {
+                            reject_fractional_seconds("DTEND", end.naive_utc())?;
+                            let local_end = end.with_timezone(&timezone);
+                            Some(format!(
+                                "DTEND;TZID={raw_timezone}:{}",
+                                local_end.format("%Y%m%dT%H%M%S")
+                            ))
+                        }
+                        None => None,
+                    };
+                    Ok((
+                        format!(
+                            "DTSTART;TZID={raw_timezone}:{}",
+                            local_start.format("%Y%m%dT%H%M%S")
+                        ),
+                        encoded_end,
+                    ))
+                }
+                None => {
+                    let encoded_end = match end_utc {
+                        Some(end) => {
+                            reject_fractional_seconds("DTEND", end.naive_utc())?;
+                            Some(format!("DTEND:{}Z", end.format("%Y%m%dT%H%M%S")))
+                        }
+                        None => None,
+                    };
+                    Ok((
+                        format!("DTSTART:{}Z", start_utc.format("%Y%m%dT%H%M%S")),
+                        encoded_end,
+                    ))
+                }
+            }
+        }
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+            Err(IcalRecurrenceError::UnsupportedVeventTimeKind(time.kind_name()))
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ParsedVeventDateTime {
+    Floating(NaiveDateTime),
+    Utc(DateTime<Utc>),
+    Zoned { utc: DateTime<Utc>, timezone: String },
+}
+
+impl ParsedVeventDateTime {
+    const fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Floating(_) => "floating date-time",
+            Self::Utc(_) => "UTC date-time",
+            Self::Zoned { .. } => "zoned local date-time",
+        }
+    }
+}
+
+fn parse_vevent_datetime_value(
+    property: &'static str,
+    raw: &str,
+    tzid: Option<&str>,
+) -> Result<ParsedVeventDateTime, IcalRecurrenceError> {
+    if let Some(raw_timezone) = tzid {
+        if raw.ends_with('Z') {
+            return Err(IcalRecurrenceError::InvalidPropertyValue {
+                property,
+                value: raw.to_string(),
+            });
+        }
+        let timezone = raw_timezone
+            .parse::<Tz>()
+            .map_err(|_| IcalRecurrenceError::InvalidTimezone(raw_timezone.to_string()))?;
+        let local = parse_basic_datetime(property, raw)?;
+        let utc = resolve_ical_local_datetime(property, timezone, local)?;
+        return Ok(ParsedVeventDateTime::Zoned {
+            utc,
+            timezone: raw_timezone.to_string(),
+        });
+    }
+
+    if let Some(utc_raw) = raw.strip_suffix('Z') {
+        let utc = parse_basic_datetime(property, utc_raw)?;
+        return Ok(ParsedVeventDateTime::Utc(
+            DateTime::<Utc>::from_naive_utc_and_offset(utc, Utc),
+        ));
+    }
+
+    Ok(ParsedVeventDateTime::Floating(parse_basic_datetime(
+        property, raw,
+    )?))
 }
 
 fn parse_recurrence_date_property(
@@ -1126,6 +1514,174 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vevent_time_roundtrips_all_day_with_noninclusive_end() {
+        let parsed = parse_vevent_time_properties(
+            "DTSTART;VALUE=DATE:20260704",
+            Some("DTEND;VALUE=DATE:20260707"),
+        )
+        .expect("all-day VEVENT time");
+        assert_eq!(
+            parsed,
+            TimeSpec::AllDay {
+                start: NaiveDate::from_ymd_opt(2026, 7, 4).expect("start"),
+                end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 7, 7).expect("end")),
+            }
+        );
+        assert_eq!(
+            format_vevent_time_properties(&parsed).expect("format"),
+            (
+                "DTSTART;VALUE=DATE:20260704".to_string(),
+                Some("DTEND;VALUE=DATE:20260707".to_string()),
+            )
+        );
+    }
+
+    #[test]
+    fn vevent_time_roundtrips_floating_and_utc_date_times() {
+        let floating = parse_vevent_time_properties(
+            "DTSTART:20260704T090000",
+            Some("DTEND:20260704T103000"),
+        )
+        .expect("floating VEVENT time");
+        assert!(matches!(
+            floating,
+            TimeSpec::Floating {
+                source_timezone: None,
+                ..
+            }
+        ));
+        assert_eq!(
+            format_vevent_time_properties(&floating).expect("floating format"),
+            (
+                "DTSTART:20260704T090000".to_string(),
+                Some("DTEND:20260704T103000".to_string()),
+            )
+        );
+
+        let utc = parse_vevent_time_properties(
+            "DTSTART:20260704T140000Z",
+            Some("DTEND:20260704T153000Z"),
+        )
+        .expect("UTC VEVENT time");
+        assert!(matches!(
+            utc,
+            TimeSpec::Instant {
+                source_timezone: None,
+                ..
+            }
+        ));
+        assert_eq!(
+            format_vevent_time_properties(&utc).expect("UTC format"),
+            (
+                "DTSTART:20260704T140000Z".to_string(),
+                Some("DTEND:20260704T153000Z".to_string()),
+            )
+        );
+    }
+
+    #[test]
+    fn vevent_time_roundtrips_tzid_across_dst_with_exact_duration() {
+        let parsed = parse_vevent_time_properties(
+            "DTSTART;TZID=America/New_York:20260308T013000",
+            Some("DTEND;TZID=America/New_York:20260308T033000"),
+        )
+        .expect("TZID VEVENT time");
+
+        let TimeSpec::Instant {
+            start_utc,
+            end_utc: Some(end_utc),
+            source_timezone,
+        } = &parsed
+        else {
+            panic!("expected zoned instant");
+        };
+        assert_eq!(*end_utc - *start_utc, Duration::hours(1));
+        assert_eq!(source_timezone.as_deref(), Some("America/New_York"));
+        assert_eq!(
+            format_vevent_time_properties(&parsed).expect("TZID format"),
+            (
+                "DTSTART;TZID=America/New_York:20260308T013000".to_string(),
+                Some("DTEND;TZID=America/New_York:20260308T033000".to_string()),
+            )
+        );
+    }
+
+    #[test]
+    fn vevent_time_preserves_rfc_default_missing_end_shapes() {
+        let all_day =
+            parse_vevent_time_properties("DTSTART;VALUE=DATE:20260704", None).expect("all-day");
+        assert!(matches!(
+            all_day,
+            TimeSpec::AllDay {
+                end_exclusive: None,
+                ..
+            }
+        ));
+
+        let timed =
+            parse_vevent_time_properties("DTSTART:20260704T090000Z", None).expect("timed");
+        assert!(matches!(
+            timed,
+            TimeSpec::Instant { end_utc: None, .. }
+        ));
+    }
+
+    #[test]
+    fn vevent_time_rejects_lossy_date_only_and_mismatched_end_forms() {
+        let date_only = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 7, 4).expect("date"),
+            end_exclusive: None,
+        };
+        assert!(matches!(
+            format_vevent_time_properties(&date_only),
+            Err(IcalRecurrenceError::UnsupportedVeventTimeKind(_))
+        ));
+
+        assert!(matches!(
+            parse_vevent_time_properties(
+                "DTSTART;VALUE=DATE:20260704",
+                Some("DTEND:20260705T000000Z")
+            ),
+            Err(IcalRecurrenceError::TemporalKindMismatch { .. })
+        ));
+
+        assert!(matches!(
+            parse_vevent_time_properties(
+                "DTSTART;TZID=America/New_York:20260704T090000",
+                Some("DTEND;TZID=America/Chicago:20260704T103000")
+            ),
+            Err(IcalRecurrenceError::TimezoneMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn vevent_time_rejects_nonpositive_end_and_unrepresentable_floating_metadata() {
+        assert!(matches!(
+            parse_vevent_time_properties(
+                "DTSTART:20260704T090000",
+                Some("DTEND:20260704T090000")
+            ),
+            Err(IcalRecurrenceError::InvalidPropertyValue {
+                property: "DTEND",
+                ..
+            })
+        ));
+
+        let floating_with_metadata = TimeSpec::Floating {
+            start: NaiveDate::from_ymd_opt(2026, 7, 4)
+                .expect("day")
+                .and_hms_opt(9, 0, 0)
+                .expect("time"),
+            end: None,
+            source_timezone: Some("America/New_York".to_string()),
+        };
+        assert!(matches!(
+            format_vevent_time_properties(&floating_with_metadata),
+            Err(IcalRecurrenceError::UnsupportedVeventTimeKind(_))
+        ));
+    }
 
     #[test]
     fn recurrence_id_roundtrips_date_and_preserves_original_slot_shape() {
