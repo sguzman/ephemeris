@@ -360,6 +360,11 @@ fn parse_recurrence_date_property(
 ) -> Result<Vec<TimeSpec>, IcalRecurrenceError> {
     let property = parse_date_property(raw, expected_name)?;
     let value_type = property.value_type.as_deref().unwrap_or("DATE-TIME");
+    if !matches!(value_type, "DATE" | "DATE-TIME" | "PERIOD") {
+        return Err(IcalRecurrenceError::UnsupportedValueType(
+            value_type.to_string(),
+        ));
+    }
     if value_type == "PERIOD" {
         if allow_period {
             return Err(IcalRecurrenceError::UnsupportedPeriod);
@@ -518,7 +523,7 @@ fn parse_recurrence_date_value(
                     .parse::<Tz>()
                     .map_err(|_| IcalRecurrenceError::InvalidTimezone(raw_tzid.to_string()))?;
                 let local = parse_basic_datetime(property, raw)?;
-                resolve_ical_local_datetime(timezone, local)?
+                resolve_ical_local_datetime(property, timezone, local)?
             } else {
                 let utc_raw = raw.strip_suffix('Z').ok_or_else(|| {
                     IcalRecurrenceError::TemporalKindMismatch {
@@ -560,6 +565,7 @@ fn parse_basic_datetime(
 }
 
 fn resolve_ical_local_datetime(
+    property: &'static str,
     timezone: Tz,
     local: NaiveDateTime,
 ) -> Result<DateTime<Utc>, IcalRecurrenceError> {
@@ -594,7 +600,7 @@ fn resolve_ical_local_datetime(
                 }
             }
             Err(IcalRecurrenceError::InvalidPropertyValue {
-                property: "DATE-TIME",
+                property,
                 value: local.to_string(),
             })
         }
@@ -1174,6 +1180,30 @@ mod tests {
             ),
             Err(IcalRecurrenceError::TimezoneMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn accepts_quoted_matching_tzid_and_rejects_unknown_value_type() {
+        let base = TimeSpec::Instant {
+            start_utc: DateTime::parse_from_rfc3339("2026-01-01T14:00:00Z")
+                .expect("base")
+                .with_timezone(&Utc),
+            end_utc: None,
+            source_timezone: Some("America/New_York".to_string()),
+        };
+        let values = parse_exdate_property(
+            "EXDATE;TZID=\"America/New_York\":20260702T090000",
+            &base,
+        )
+        .expect("quoted TZID");
+        assert_eq!(values.len(), 1);
+
+        assert_eq!(
+            parse_rdate_property("RDATE;VALUE=BOGUS:20260702T090000Z", &base),
+            Err(IcalRecurrenceError::UnsupportedValueType(
+                "BOGUS".to_string()
+            ))
+        );
     }
 
     #[test]
