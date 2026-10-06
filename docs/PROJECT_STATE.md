@@ -61,6 +61,8 @@ The structured BYHOUR editor is verified on `main` at `af24ca5196712cef0a9290e03
 
 The structured BYMINUTE editor is verified on `main` at `ca59649d3fa60d72c047b5fdfaf308e1c007ac1e`: format, check, strict Clippy, and all **372** library tests pass in GitHub Actions. Each civil minute is an explicit row with add/remove controls; compact forms such as `0,30` remain available in a collapsed raw fallback, and contextual preservation/clearing plus raw-vs-structured authority follow the same non-parallel editing contract.
 
+The structured BYSECOND editor is verified on `main` at `406ff4efa656c689f8c4b307fad4bdae99fdc57a`: format, check, strict Clippy, and all **377** library tests pass in GitHub Actions. Each ordinary civil second is an explicit row with add/remove controls; compact forms such as `0,15,30,45` remain available in a collapsed raw fallback, contextual preservation/clearing plus raw-vs-structured authority follow the same non-parallel editing contract, and selector value `60` remains rejected by the existing leap-second-safe domain validation.
+
 DAILY reachability switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. YEARLY reachability likewise scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
 ## Implemented architecture

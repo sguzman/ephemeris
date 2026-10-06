@@ -142,7 +142,7 @@ Conceptually, the visible occurrence set is built from RRULE candidates plus RDA
 Still required for fuller interoperable recurrence semantics:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented seven-frequency BY-part matrix, with `BYSECOND=60` intentionally deferred until leap-second timestamps can be represented faithfully;
-- richer recurrence-editor ergonomics beyond structured exceptions, canonical presets, contextual selector visibility, structured ordinal BYDAY, structured BYMONTHDAY, structured BYWEEKNO, structured BYYEARDAY, structured BYHOUR, and structured BYMINUTE, especially higher-level controls for remaining numeric selectors and uncommon combinations;
+- richer recurrence-editor ergonomics beyond structured exceptions, canonical presets, contextual selector visibility, structured ordinal BYDAY, structured BYMONTHDAY, structured BYWEEKNO, structured BYYEARDAY, structured BYHOUR, structured BYMINUTE, and structured BYSECOND, especially higher-level controls for remaining numeric selectors and uncommon combinations;
 - external recurrence/exception source-adapter interoperability;
 - source-adapter mapping for external recurrence-exception representations.
 
@@ -161,6 +161,8 @@ BYYEARDAY follows the same model for signed civil year-day selectors. Each row r
 BYHOUR is structured as one civil-hour value per row (`0..23`) with the same raw fallback/authority rules. It remains visible only for floating/exact date-time series where the frequency matrix permits the selector; the domain validator remains authoritative for duplicate/range/context constraints, and presets/contextual clearing synchronize both forms.
 
 BYMINUTE follows the same non-parallel editing contract with one civil-minute value per row (`0..59`). Structured edits serialize to compact syntax such as `0,30`; a collapsed raw fallback remains available and is authoritative only while it diverges from persisted and structured forms. Contextual preservation/clearing and presets synchronize text and rows together, while the existing recurrence validator remains authoritative for duplicate/range/frequency constraints.
+
+BYSECOND is structured as one ordinary civil-second value per row (`0..59`) with the same raw fallback/authority, preset, and contextual-preservation rules. Compact forms such as `0,15,30,45` remain available for power users. The editor intentionally does not normalize or expose leap-second selector `60`; the existing domain validator continues to reject it until the canonical time model can represent leap-second timestamps faithfully.
 
 The system distinguishes the persisted recurrence definition from materialized view occurrences.
 
