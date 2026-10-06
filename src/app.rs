@@ -357,6 +357,42 @@ fn validate_recurrence_minute_edit_rows(rows: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn recurrence_second_edit_rows(values: &[u8]) -> Vec<String> {
+    values.iter().map(ToString::to_string).collect()
+}
+
+fn format_recurrence_second_edit_rows(rows: &[String]) -> String {
+    rows.iter()
+        .map(|value| value.trim())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_recurrence_second_edit_rows(raw: &str) -> Result<Vec<String>, String> {
+    parse_u8_selector_values(raw, "BYSECOND")
+        .map(|values| values.iter().map(ToString::to_string).collect())
+}
+
+fn validate_recurrence_second_edit_rows(rows: &[String]) -> Result<(), String> {
+    for (index, value) in rows.iter().enumerate() {
+        let raw = value.trim();
+        if raw.is_empty() {
+            return Err(format!(
+                "BYSECOND row #{} needs a second or must be removed.",
+                index + 1
+            ));
+        }
+        raw.parse::<u8>().map_err(|_| {
+            format!(
+                "BYSECOND row #{} has invalid second '{}'.",
+                index + 1,
+                value
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn recurrence_monthday_edit_rows(values: &[i8]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
 }
@@ -577,6 +613,7 @@ struct RecurrenceEditDraft {
     minute_text: String,
     minute_rows: Vec<String>,
     second_text: String,
+    second_rows: Vec<String>,
     set_pos_text: String,
     rdate_text: String,
     rdate_rows: Vec<String>,
@@ -610,6 +647,8 @@ impl RecurrenceEditDraft {
         let hour_rows = recurrence_hour_edit_rows(&rule.by_hour);
         let minute_text = format_selector_values(&rule.by_minute);
         let minute_rows = recurrence_minute_edit_rows(&rule.by_minute);
+        let second_text = format_selector_values(&rule.by_second);
+        let second_rows = recurrence_second_edit_rows(&rule.by_second);
         let ordinal_byday_text = format_ordinal_byday_values(&rule.by_month_weekday);
         let ordinal_byday_rows = recurrence_ordinal_byday_edit_rows(&rule.by_month_weekday);
         Self {
@@ -634,7 +673,8 @@ impl RecurrenceEditDraft {
             hour_rows,
             minute_text,
             minute_rows,
-            second_text: format_selector_values(&rule.by_second),
+            second_text,
+            second_rows,
             set_pos_text: format_selector_values(&rule.by_set_pos),
             rdate_text,
             rdate_rows,
@@ -665,6 +705,7 @@ impl RecurrenceEditDraft {
         self.minute_text.clear();
         self.minute_rows.clear();
         self.second_text.clear();
+        self.second_rows.clear();
         self.set_pos_text.clear();
 
         match preset {
@@ -796,7 +837,17 @@ impl RecurrenceEditDraft {
             rule.by_minute = parse_u8_selector_values(&structured_minute_text, "BYMINUTE")?;
         }
 
-        rule.by_second = parse_u8_selector_values(&self.second_text, "BYSECOND")?;
+        let canonical_second_text = format_selector_values(&self.rule.by_second);
+        let structured_second_text = format_recurrence_second_edit_rows(&self.second_rows);
+        let second_raw_override =
+            self.second_text != canonical_second_text && self.second_text != structured_second_text;
+        if second_raw_override {
+            rule.by_second = parse_u8_selector_values(&self.second_text, "BYSECOND")?;
+        } else {
+            validate_recurrence_second_edit_rows(&self.second_rows)?;
+            rule.by_second = parse_u8_selector_values(&structured_second_text, "BYSECOND")?;
+        }
+
         rule.by_set_pos = parse_i16_selector_values(&self.set_pos_text, "BYSETPOS")?;
 
         let canonical_rdate_text = format_exception_start_values(&self.rule.rdates);
@@ -4430,6 +4481,87 @@ fn render_structured_minute(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, 
         });
 }
 
+fn render_structured_second(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, available: bool) {
+    if !available {
+        if draft.second_text.trim().is_empty() && draft.second_rows.is_empty() {
+            return;
+        }
+
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("BYSECOND (preserved)").strong());
+                ui.add_enabled(
+                    false,
+                    egui::TextEdit::singleline(&mut draft.second_text)
+                        .desired_width(150.0)
+                        .hint_text("0,15,30,45"),
+                );
+                if ui.small_button("Clear").clicked() {
+                    draft.second_text.clear();
+                    draft.second_rows.clear();
+                }
+            });
+            ui.small(RecurrenceEditorSelector::Second.unavailable_reason());
+            ui.small("The structured rows are preserved until cleared or the context is restored.");
+        });
+        return;
+    }
+
+    ui.label("BYSECOND");
+    ui.small("One civil second per row, using 0 through 59.");
+
+    let mut structured_changed = false;
+    let mut remove_index = None;
+    for (index, value) in draft.second_rows.iter_mut().enumerate() {
+        ui.push_id(("bysecond", index), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("#{}", index + 1));
+                structured_changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(value)
+                            .desired_width(84.0)
+                            .hint_text("0..59"),
+                    )
+                    .changed();
+                if ui.small_button("Remove").clicked() {
+                    remove_index = Some(index);
+                }
+            });
+        });
+    }
+
+    if let Some(index) = remove_index {
+        draft.second_rows.remove(index);
+        structured_changed = true;
+    }
+
+    if ui.small_button("+ Add BYSECOND").clicked() {
+        draft.second_rows.push("0".to_string());
+        structured_changed = true;
+    }
+
+    if structured_changed {
+        draft.second_text = format_recurrence_second_edit_rows(&draft.second_rows);
+    }
+
+    egui::CollapsingHeader::new("Raw BYSECOND syntax")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.small("Power-user form: comma- or space-separated seconds such as 0,15,30,45.");
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.second_text)
+                    .desired_width(260.0)
+                    .hint_text("0,15,30,45"),
+            );
+            if ui.small_button("Load raw syntax into rows").clicked()
+                && let Ok(rows) = parse_recurrence_second_edit_rows(&draft.second_text)
+            {
+                draft.second_text = format_recurrence_second_edit_rows(&rows);
+                draft.second_rows = rows;
+            }
+        });
+}
+
 fn render_structured_ordinal_byday(
     ui: &mut egui::Ui,
     draft: &mut RecurrenceEditDraft,
@@ -4838,14 +4970,7 @@ fn render_recurrence_editor(
     render_structured_ordinal_byday(ui, draft, ordinal_byday_available);
     render_structured_hour(ui, draft, hour_available);
     render_structured_minute(ui, draft, minute_available);
-    contextual_recurrence_selector_text_row(
-        ui,
-        RecurrenceEditorSelector::Second,
-        "BYSECOND",
-        &mut draft.second_text,
-        "0,15,30,45",
-        second_available,
-    );
+    render_structured_second(ui, draft, second_available);
     contextual_recurrence_selector_text_row(
         ui,
         RecurrenceEditorSelector::SetPos,
@@ -9265,5 +9390,95 @@ mod tests {
 
         assert!(draft.minute_text.is_empty());
         assert!(draft.minute_rows.is_empty());
+    }
+
+    #[test]
+    fn recurrence_second_edit_rows_roundtrip_compact_syntax() {
+        let rows = recurrence_second_edit_rows(&[0, 15, 45, 59]);
+
+        assert_eq!(rows, vec!["0", "15", "45", "59"]);
+        assert_eq!(format_recurrence_second_edit_rows(&rows), "0,15,45,59");
+        assert_eq!(
+            parse_recurrence_second_edit_rows("0 15,45 59").expect("parse"),
+            vec!["0", "15", "45", "59"]
+        );
+    }
+
+    #[test]
+    fn recurrence_edit_draft_applies_structured_second_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Structured BYSECOND",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Minutely));
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.second_rows = vec!["0".to_string(), "15".to_string(), "45".to_string()];
+        draft.second_text = format_recurrence_second_edit_rows(&draft.second_rows);
+
+        let parsed = draft.parsed_rule().expect("structured rule");
+        assert_eq!(parsed.by_second, vec![0, 15, 45]);
+    }
+
+    #[test]
+    fn recurrence_edit_draft_raw_second_override_remains_supported() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Raw BYSECOND",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Minutely);
+        rule.by_second = vec![0];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.second_text = "15,45".to_string();
+
+        let parsed = draft.parsed_rule().expect("raw override");
+        assert_eq!(parsed.by_second, vec![15, 45]);
+        assert_eq!(draft.second_rows, vec!["0"]);
+    }
+
+    #[test]
+    fn recurrence_second_edit_rows_reject_blank_second() {
+        let rows = vec![String::new()];
+
+        assert_eq!(
+            validate_recurrence_second_edit_rows(&rows),
+            Err("BYSECOND row #1 needs a second or must be removed.".to_string())
+        );
+    }
+
+    #[test]
+    fn recurrence_preset_clears_structured_second_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Preset clears structured BYSECOND",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Minutely);
+        rule.by_second = vec![0, 30];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        assert_eq!(draft.second_rows, vec!["0", "30"]);
+
+        draft.apply_preset(RecurrencePreset::Daily);
+
+        assert!(draft.second_text.is_empty());
+        assert!(draft.second_rows.is_empty());
     }
 }
