@@ -12381,4 +12381,73 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn minutely_exdate_and_moved_override_preserve_original_slot_identity() {
+        let start = NaiveDateTime::parse_from_str("2026-10-05T09:00:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let excluded = TimeSpec::Floating {
+            start: NaiveDateTime::parse_from_str("2026-10-05T09:01:15", "%Y-%m-%dT%H:%M:%S")
+                .expect("excluded"),
+            end: None,
+            source_timezone: None,
+        };
+        let original = TimeSpec::Floating {
+            start: NaiveDateTime::parse_from_str("2026-10-05T09:02:15", "%Y-%m-%dT%H:%M:%S")
+                .expect("original"),
+            end: None,
+            source_timezone: None,
+        };
+        let replacement = TimeSpec::Floating {
+            start: NaiveDateTime::parse_from_str("2026-10-05T09:05:00", "%Y-%m-%dT%H:%M:%S")
+                .expect("replacement"),
+            end: None,
+            source_timezone: None,
+        };
+
+        let mut event = TemporalEvent::new(
+            "Minutely exceptions",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Minutely);
+        rule.count = Some(4);
+        rule.by_second = vec![15];
+        rule.exdates = vec![excluded.clone()];
+        rule.overrides = vec![RecurrenceOverride {
+            original: original.clone(),
+            replacement: Some(replacement.clone()),
+            cancelled: false,
+        }];
+        event.recurrence = Some(rule);
+
+        event.validate_recurrence().expect("valid exceptions");
+        let occurrences = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).expect("window start"),
+                NaiveDate::from_ymd_opt(2026, 10, 6).expect("window end"),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        assert!(
+            occurrences
+                .iter()
+                .all(|occurrence| occurrence.original_time != excluded)
+        );
+        let moved = occurrences
+            .iter()
+            .find(|occurrence| occurrence.original_time == original)
+            .expect("moved occurrence");
+        assert_eq!(moved.time, replacement);
+        assert!(moved.override_applied);
+        assert_eq!(
+            moved.id,
+            occurrence_identity(event.id, &original).expect("stable identity")
+        );
+    }
+
 }
