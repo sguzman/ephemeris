@@ -24,7 +24,7 @@ Ephemeris is an active native application, not a design-only repository.
 
 The current application has a canonical temporal store, recurrence engine and editor, programmable calendar views, Taria/Resourcearium ingestion, release-aware source history, and bidirectional RFC 5545 interoperability for the supported iCalendar subset.
 
-Local `.ics` / `.ical` files can be imported through the CLI or by dropping them onto the running application. Imported calendars become first-class sources in the canonical store and refresh by stable source/UID identity.
+Local `.ics` / `.ical` files can be imported through the CLI or by dropping them onto the running application. Imported calendars become first-class sources in the canonical store and refresh by stable source/UID identity. Their current canonical state can be exported back to `.ics` from the source inspector or the `ephemeris-export` CLI.
 
 The current verified implementation checkpoint is tracked in [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md). Detailed historical milestone notes live in [docs/IMPLEMENTATION_HISTORY.md](docs/IMPLEMENTATION_HISTORY.md), not in this README.
 
@@ -110,6 +110,15 @@ cargo run --bin ephemeris-import -- path/to/calendar.ics
 ```
 
 Or drop an `.ics` / `.ical` file onto the running application.
+
+List and export imported ICS sources:
+
+```bash
+cargo run --bin ephemeris-export -- --list
+cargo run --bin ephemeris-export -- <source-id> path/to/export.ics
+```
+
+The GUI source inspector also exposes an editable export path and **Export ICS** action.
 
 Refresh is identity-aware. Unchanged records stay unchanged, changed records update in place, and records absent from a later snapshot are retained unless the source semantics explicitly justify removal or cancellation.
 
