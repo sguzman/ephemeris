@@ -8836,5 +8836,4 @@ mod tests {
         assert!(draft.year_day_text.is_empty());
         assert!(draft.year_day_rows.is_empty());
     }
-
 }
