@@ -413,7 +413,7 @@ Implemented recurrence foundation:
 Next Phase 8 work:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
-- richer recurrence/exception authoring and editing, now the primary Phase 8 product boundary; core series fields have a first editor surface, with advanced selector and exception authoring still ahead
+- richer recurrence/exception authoring and editing, now the primary Phase 8 product boundary; core series fields plus BYWEEKNO/BYYEARDAY/BYMONTHDAY/ordinal-BYDAY/BYHOUR/BYMINUTE/BYSECOND/BYSETPOS now have editor surfaces, with RDATE/EXDATE/override authoring still ahead
 - recurrence-exception source-adapter interoperability for external calendar payloads
 - relations
 - collections/sequences
