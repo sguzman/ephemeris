@@ -417,19 +417,23 @@ mod tests {
         assert!(exported.contains("PRODID:-//Ephemeris//EN"));
         assert!(exported.contains("X-WR-CALNAME:Fixture Calendar"));
         assert!(exported.contains("SUMMARY:First edited"));
-        assert!(!report
-            .output_path
-            .with_file_name(".exported.ics.ephemeris.tmp")
-            .exists());
+        assert!(
+            !report
+                .output_path
+                .with_file_name(".exported.ics.ephemeris.tmp")
+                .exists()
+        );
 
         let reparsed = parse_vcalendar(&exported)
             .expect("parse export")
             .canonical_events()
             .expect("canonical export");
         assert_eq!(reparsed.len(), 2);
-        assert!(reparsed
-            .iter()
-            .any(|event| event.normalized_title == "First edited"));
+        assert!(
+            reparsed
+                .iter()
+                .any(|event| event.normalized_title == "First edited")
+        );
     }
 
     #[test]
