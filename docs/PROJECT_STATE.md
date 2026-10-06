@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the hardened Phase 8 recurrence + RFC 5545 adapter checkpoint, all **407** library tests pass. Verified implementation code checkpoint: `41e8aa62a090df82751506cf2ab30436563d936a`, with format, check, strict Clippy, and tests all green.
+At the hardened Phase 8 recurrence + RFC 5545 adapter checkpoint, all **411** library tests pass. Verified implementation code checkpoint: `fbe6e067c09346fa05f68e873177d41160a06bf9`, with format, check, strict Clippy, and tests all green.
 
 `main` is verified through BYSECOND at `c5ce73bb86cf3c2281be69adcf15b93364f3f65a`: format, check, strict Clippy, and all **265** library tests pass in GitHub Actions. The preceding BYMINUTE checkpoint is independently verified at `1d2ce529facad7636be6f136740976351910e253` with **253** tests.
 
@@ -188,7 +188,7 @@ Implemented:
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, richer high-level recurrence editing ergonomics, and completion of source-adapter interoperability beyond the verified RRULE + RDATE/EXDATE codecs (RECURRENCE-ID overrides and full VEVENT transport).
+Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, richer high-level recurrence editing ergonomics, and completion of source-adapter interoperability beyond the verified RRULE + RDATE/EXDATE + RECURRENCE-ID codecs (full VEVENT transport remains ahead).
 
 Implemented event metadata includes:
 
@@ -216,7 +216,7 @@ Implemented event metadata includes:
 
 ### RFC 5545 recurrence adapter
 
-The new `ical` module provides a strict canonical RRULE boundary for future ICS/WebCal/CalDAV ingestion and export. It accepts bare RECUR values or `RRULE:` property values, maps every currently supported canonical recurrence selector, rejects duplicate or unknown rule parts, enforces COUNT/UNTIL exclusivity, and delegates selector range/context validation to the existing recurrence domain model. Because Ephemeris currently stores recurrence UNTIL as a civil date, RFC DATE-TIME UNTIL values are rejected explicitly rather than truncated. RDATE and EXDATE now share a strict canonical property adapter that reconstructs the master series' temporal kind, duration, and source-timezone shape while supporting RFC DATE, floating DATE-TIME, UTC DATE-TIME, and matching-TZID exact values. RDATE `VALUE=PERIOD` remains deliberately unsupported until occurrence-specific periods have canonical semantics. RECURRENCE-ID remains the next exception-identity adapter surface.
+The new `ical` module provides a strict canonical RRULE boundary for future ICS/WebCal/CalDAV ingestion and export. It accepts bare RECUR values or `RRULE:` property values, maps every currently supported canonical recurrence selector, rejects duplicate or unknown rule parts, enforces COUNT/UNTIL exclusivity, and delegates selector range/context validation to the existing recurrence domain model. Because Ephemeris currently stores recurrence UNTIL as a civil date, RFC DATE-TIME UNTIL values are rejected explicitly rather than truncated. RDATE and EXDATE now share a strict canonical property adapter that reconstructs the master series' temporal kind, duration, and source-timezone shape while supporting RFC DATE, floating DATE-TIME, UTC DATE-TIME, and matching-TZID exact values. RDATE `VALUE=PERIOD` remains deliberately unsupported until occurrence-specific periods have canonical semantics. RECURRENCE-ID now has a strict original-slot codec for DATE, floating DATE-TIME, UTC DATE-TIME, and matching-TZID source-local DATE-TIME values. It preserves the canonical recurrence slot's temporal shape, rejects multiple values and incompatible DTSTART forms, and rejects `RANGE=THISANDFUTURE` until range overrides have canonical domain semantics instead of flattening them into a single-instance override. Full VEVENT transport is the next external-calendar boundary.
 
 ### Taria ingestion
 
