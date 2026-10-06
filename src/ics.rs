@@ -629,19 +629,20 @@ mod tests {
         assert!(attempts[0].error.is_some());
         assert_eq!(attempts[1].refresh_kind, "ics_file");
         assert_eq!(attempts[1].success, Some(true));
-        assert!(attempts[1]
-            .summary
-            .as_deref()
-            .is_some_and(|summary| summary.contains("2 events")));
+        assert!(
+            attempts[1]
+                .summary
+                .as_deref()
+                .is_some_and(|summary| summary.contains("2 events"))
+        );
     }
 
     #[test]
     fn recorded_webcal_attempt_uses_hashed_target_and_safe_failure_text() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let normalized = normalize_remote_ics_url(
-            "webcal://example.com/private/feed.ics?token=secret",
-        )
-        .expect("normalize");
+        let normalized =
+            normalize_remote_ics_url("webcal://example.com/private/feed.ics?token=secret")
+                .expect("normalize");
         let target = remote_ics_external_ref(&normalized);
 
         run_recorded_import(&store, "webcal", &target, || {
@@ -654,7 +655,10 @@ mod tests {
         assert_eq!(attempts[0].refresh_kind, "webcal");
         assert!(attempts[0].target.starts_with("webcal:url-sha256:"));
         assert!(!attempts[0].target.contains("secret"));
-        assert_eq!(attempts[0].error.as_deref(), Some("synthetic remote failure"));
+        assert_eq!(
+            attempts[0].error.as_deref(),
+            Some("synthetic remote failure")
+        );
     }
 
     #[test]
