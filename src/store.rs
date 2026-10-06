@@ -6074,5 +6074,4 @@ mod tests {
         );
         assert_eq!(store.event_count().expect("event count"), 0);
     }
-
 }
