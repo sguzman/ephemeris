@@ -10,9 +10,7 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .map(PathBuf::from)
         .ok_or_else(|| {
-            anyhow!(
-                "usage: ephemeris-import <calendar.ics|taria-reconciled-event-set.json>"
-            )
+            anyhow!("usage: ephemeris-import <calendar.ics|taria-reconciled-event-set.json>")
         })?;
 
     let store = TemporalStore::open_default().context("failed to open Ephemeris database")?;
