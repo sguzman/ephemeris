@@ -64,9 +64,9 @@ pub fn parse_rrule(raw: &str) -> Result<RecurrenceRule, IcalRecurrenceError> {
         return Err(IcalRecurrenceError::EmptyRule);
     }
     let value = raw
-        .strip_prefix("RRULE:")
-        .or_else(|| raw.strip_prefix("rrule:"))
-        .unwrap_or(raw);
+        .get(..6)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("RRULE:"))
+        .map_or(raw, |_| &raw[6..]);
 
     let mut seen = HashSet::new();
     let mut frequency = None;
@@ -246,7 +246,7 @@ fn parse_until_date(raw: &str) -> Result<NaiveDate, IcalRecurrenceError> {
 fn parse_byday_token(
     raw: &str,
 ) -> Result<(Option<i8>, RecurrenceWeekday), IcalRecurrenceError> {
-    if raw.len() < 2 {
+    if raw.len() < 2 || !raw.is_ascii() {
         return Err(IcalRecurrenceError::InvalidPart {
             name: "BYDAY".to_string(),
             value: raw.to_string(),
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn parses_bare_and_prefixed_rrules_case_insensitively() {
         let bare = parse_rrule("FREQ=weekly;BYDAY=MO,WE,FR;COUNT=5").expect("bare");
-        let prefixed = parse_rrule("rrule:FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=5").expect("prefixed");
+        let prefixed = parse_rrule("RrUlE:FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=5").expect("prefixed");
 
         assert_eq!(bare, prefixed);
         assert_eq!(bare.frequency, RecurrenceFrequency::Weekly);
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn parses_all_supported_rrule_parts() {
         let rule = parse_rrule(
-            "RRULE:FREQ=YEARLY;INTERVAL=2;COUNT=4;WKST=SU;BYMONTH=1,7;BYWEEKNO=1,-1;BYYEARDAY=1,-1;BYMONTHDAY=1,-1;BYDAY=MO,-1FR;BYHOUR=9,17;BYMINUTE=0,30;BYSECOND=0,45;BYSETPOS=1,-1",
+            "RRULE:FREQ=YEARLY;INTERVAL=2;COUNT=4;WKST=SU;BYMONTH=1,7;BYWEEKNO=1,-1;BYYEARDAY=1,-1;BYMONTHDAY=1,-1;BYDAY=MO;BYHOUR=9,17;BYMINUTE=0,30;BYSECOND=0,45;BYSETPOS=1,-1",
         )
         .expect("rule");
 
@@ -395,17 +395,25 @@ mod tests {
         assert_eq!(rule.by_year_day, vec![1, -1]);
         assert_eq!(rule.by_month_day, vec![1, -1]);
         assert_eq!(rule.by_weekday, vec![RecurrenceWeekday::Monday]);
-        assert_eq!(
-            rule.by_month_weekday,
-            vec![RecurrenceOrdinalWeekday::new(
-                -1,
-                RecurrenceWeekday::Friday
-            )]
-        );
+        assert!(rule.by_month_weekday.is_empty());
         assert_eq!(rule.by_hour, vec![9, 17]);
         assert_eq!(rule.by_minute, vec![0, 30]);
         assert_eq!(rule.by_second, vec![0, 45]);
         assert_eq!(rule.by_set_pos, vec![1, -1]);
+    }
+
+    #[test]
+    fn parses_ordinal_byday_in_supported_monthly_context() {
+        let rule = parse_rrule("FREQ=MONTHLY;BYDAY=1MO,-1FR").expect("rule");
+
+        assert!(rule.by_weekday.is_empty());
+        assert_eq!(
+            rule.by_month_weekday,
+            vec![
+                RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
+                RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
+            ]
+        );
     }
 
     #[test]
@@ -463,6 +471,10 @@ mod tests {
         ));
         assert!(matches!(
             parse_rrule("FREQ=MONTHLY;BYDAY=1XX"),
+            Err(IcalRecurrenceError::InvalidPart { name, .. }) if name == "BYDAY"
+        ));
+        assert!(matches!(
+            parse_rrule("FREQ=MONTHLY;BYDAY=éMO"),
             Err(IcalRecurrenceError::InvalidPart { name, .. }) if name == "BYDAY"
         ));
     }
