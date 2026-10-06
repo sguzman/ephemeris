@@ -6074,4 +6074,66 @@ mod tests {
         );
         assert_eq!(store.event_count().expect("event count"), 0);
     }
+
+    #[test]
+    fn secondly_recurrence_roundtrips_through_event_storage() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule, RecurrenceWeekday};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let start = NaiveDateTime::parse_from_str("2026-10-05T09:14:58", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "Secondly persisted recurrence",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Secondly);
+        rule.interval = 5;
+        rule.count = Some(6);
+        rule.by_month = vec![10];
+        rule.by_weekday = vec![RecurrenceWeekday::Monday];
+        rule.by_month_day = vec![5];
+        rule.by_hour = vec![9];
+        rule.by_minute = vec![15, 45];
+        rule.by_second = vec![5, 35];
+        rule.by_set_pos = vec![-1];
+        event.recurrence = Some(rule);
+
+        store
+            .upsert_event(&event)
+            .expect("persist secondly recurrence");
+        let loaded = store.event_by_id(event.id).expect("query").expect("event");
+
+        assert_eq!(loaded.recurrence, event.recurrence);
+    }
+
+    #[test]
+    fn store_rejects_secondly_recurrence_on_date_only_base() {
+        use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Invalid date-only secondly",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Secondly));
+
+        let error = store
+            .upsert_event(&event)
+            .expect_err("DATE-valued recurrence must reject SECONDLY");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event recurrence definition")
+        );
+        assert_eq!(store.event_count().expect("event count"), 0);
+    }
+
 }
