@@ -73,6 +73,38 @@ struct OccurrenceContext {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecurrencePreset {
+    Daily,
+    Weekdays,
+    Weekly,
+    Monthly,
+    LastWeekdayOfMonth,
+    Yearly,
+}
+
+impl RecurrencePreset {
+    const ALL: [Self; 6] = [
+        Self::Daily,
+        Self::Weekdays,
+        Self::Weekly,
+        Self::Monthly,
+        Self::LastWeekdayOfMonth,
+        Self::Yearly,
+    ];
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Daily => "Daily",
+            Self::Weekdays => "Weekdays",
+            Self::Weekly => "Weekly",
+            Self::Monthly => "Monthly",
+            Self::LastWeekdayOfMonth => "Last weekday/month",
+            Self::Yearly => "Yearly",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecurrenceOverrideEditAction {
     Move,
     Cancel,
@@ -254,6 +286,57 @@ impl RecurrenceEditDraft {
             override_rows,
             base_time: event.time.clone(),
             rule,
+        }
+    }
+
+    fn apply_preset(&mut self, preset: RecurrencePreset) {
+        self.interval_text = "1".to_string();
+        self.rule.week_start = RecurrenceWeekday::Monday;
+        self.rule.by_weekday.clear();
+        self.rule.by_month.clear();
+        self.week_no_text.clear();
+        self.year_day_text.clear();
+        self.month_day_text.clear();
+        self.ordinal_byday_text.clear();
+        self.hour_text.clear();
+        self.minute_text.clear();
+        self.second_text.clear();
+        self.set_pos_text.clear();
+
+        match preset {
+            RecurrencePreset::Daily => {
+                self.rule.frequency = RecurrenceFrequency::Daily;
+            }
+            RecurrencePreset::Weekdays => {
+                self.rule.frequency = RecurrenceFrequency::Daily;
+                self.rule.by_weekday = vec![
+                    RecurrenceWeekday::Monday,
+                    RecurrenceWeekday::Tuesday,
+                    RecurrenceWeekday::Wednesday,
+                    RecurrenceWeekday::Thursday,
+                    RecurrenceWeekday::Friday,
+                ];
+            }
+            RecurrencePreset::Weekly => {
+                self.rule.frequency = RecurrenceFrequency::Weekly;
+            }
+            RecurrencePreset::Monthly => {
+                self.rule.frequency = RecurrenceFrequency::Monthly;
+            }
+            RecurrencePreset::LastWeekdayOfMonth => {
+                self.rule.frequency = RecurrenceFrequency::Monthly;
+                self.rule.by_weekday = vec![
+                    RecurrenceWeekday::Monday,
+                    RecurrenceWeekday::Tuesday,
+                    RecurrenceWeekday::Wednesday,
+                    RecurrenceWeekday::Thursday,
+                    RecurrenceWeekday::Friday,
+                ];
+                self.set_pos_text = "-1".to_string();
+            }
+            RecurrencePreset::Yearly => {
+                self.rule.frequency = RecurrenceFrequency::Yearly;
+            }
         }
     }
 
@@ -3612,6 +3695,18 @@ fn render_recurrence_editor(
         "Add recurrence"
     });
     ui.small("Edits the canonical series definition, not the selected materialized occurrence.");
+
+    ui.label("Quick presets");
+    ui.horizontal_wrapped(|ui| {
+        for preset in RecurrencePreset::ALL {
+            if ui.small_button(preset.label()).clicked() {
+                draft.apply_preset(preset);
+            }
+        }
+    });
+    ui.small(
+        "Presets reset cadence selectors and interval to 1; COUNT, UNTIL, and exceptions are preserved.",
+    );
 
     egui::ComboBox::from_label("Frequency")
         .selected_text(draft.rule.frequency.as_str())
