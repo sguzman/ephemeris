@@ -50,6 +50,9 @@ pub enum IcalRecurrenceError {
     },
     UnsupportedRecurrenceSet(String),
     UnsupportedDetachedOverride(String),
+    UnsupportedComponent(String),
+    MissingMaster(String),
+    DuplicateMaster(String),
     InvalidTimezone(String),
     TemporalKindMismatch {
         property: &'static str,
@@ -150,6 +153,15 @@ impl fmt::Display for IcalRecurrenceError {
             }
             Self::UnsupportedDetachedOverride(value) => {
                 write!(formatter, "unsupported detached VEVENT override: {value}")
+            }
+            Self::UnsupportedComponent(value) => {
+                write!(formatter, "unsupported iCalendar component {value}")
+            }
+            Self::MissingMaster(uid) => {
+                write!(formatter, "VEVENT UID {uid} has detached instances but no master")
+            }
+            Self::DuplicateMaster(uid) => {
+                write!(formatter, "VEVENT UID {uid} has more than one master component")
             }
             Self::InvalidTimezone(value) => {
                 write!(formatter, "unsupported or invalid iCalendar TZID {value}")
@@ -420,6 +432,174 @@ pub fn format_vevent_content_lines(
     }
     physical.push("END:VEVENT".to_string());
     Ok(format!("{}\r\n", physical.join("\r\n")))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IcalVcalendar {
+    pub properties: Vec<IcalContentLine>,
+    pub events: Vec<IcalVevent>,
+}
+
+/// Parse one RFC 5545 VCALENDAR containing top-level properties and VEVENTs.
+///
+/// Nested component families are intentionally rejected until they have an
+/// explicit preservation/semantic policy; they are never silently skipped.
+pub fn parse_vcalendar(raw: &str) -> Result<IcalVcalendar, IcalRecurrenceError> {
+    let lines = unfold_ical_content_lines(raw)?;
+    if lines.len() < 2
+        || !lines[0].eq_ignore_ascii_case("BEGIN:VCALENDAR")
+        || !lines[lines.len() - 1].eq_ignore_ascii_case("END:VCALENDAR")
+    {
+        return Err(IcalRecurrenceError::InvalidComponent(
+            "expected BEGIN:VCALENDAR ... END:VCALENDAR envelope".to_string(),
+        ));
+    }
+
+    let mut properties = Vec::new();
+    let mut events = Vec::new();
+    let mut index = 1_usize;
+    while index < lines.len() - 1 {
+        let line = &lines[index];
+        if line.eq_ignore_ascii_case("BEGIN:VEVENT") {
+            let start = index;
+            index += 1;
+            while index < lines.len() - 1 && !lines[index].eq_ignore_ascii_case("END:VEVENT") {
+                if let Some(component) = lines[index].strip_prefix("BEGIN:") {
+                    return Err(IcalRecurrenceError::UnsupportedComponent(
+                        component.to_ascii_uppercase(),
+                    ));
+                }
+                index += 1;
+            }
+            if index >= lines.len() - 1 {
+                return Err(IcalRecurrenceError::InvalidComponent(
+                    "unterminated VEVENT".to_string(),
+                ));
+            }
+            let raw_event = format!("{}\r\n", lines[start..=index].join("\r\n"));
+            events.push(parse_vevent(&raw_event)?);
+            index += 1;
+            continue;
+        }
+
+        if let Some(component) = line.strip_prefix("BEGIN:") {
+            return Err(IcalRecurrenceError::UnsupportedComponent(
+                component.to_ascii_uppercase(),
+            ));
+        }
+        if line.starts_with("END:") {
+            return Err(IcalRecurrenceError::InvalidComponent(format!(
+                "unexpected top-level component terminator {line}"
+            )));
+        }
+
+        properties.push(parse_ical_content_line(line)?);
+        index += 1;
+    }
+
+    validate_vcalendar_properties(&properties)?;
+    Ok(IcalVcalendar { properties, events })
+}
+
+pub fn format_vcalendar(calendar: &IcalVcalendar) -> Result<String, IcalRecurrenceError> {
+    validate_vcalendar_properties(&calendar.properties)?;
+
+    let mut encoded = String::from("BEGIN:VCALENDAR\r\n");
+    for property in &calendar.properties {
+        if matches!(property.name.as_str(), "BEGIN" | "END") {
+            return Err(IcalRecurrenceError::InvalidComponent(
+                "component marker supplied as VCALENDAR property".to_string(),
+            ));
+        }
+        encoded.push_str(&fold_ical_content_line(&format_ical_content_line(property)?)?);
+        encoded.push_str("\r\n");
+    }
+    for event in &calendar.events {
+        encoded.push_str(&format_vevent(event)?);
+    }
+    encoded.push_str("END:VCALENDAR\r\n");
+    Ok(encoded)
+}
+
+impl IcalVcalendar {
+    /// Group VEVENTs by UID, bind detached recurrence instances to their one
+    /// master component, and project the supported payload into canonical
+    /// TemporalEvents.
+    pub fn canonical_events(&self) -> Result<Vec<TemporalEvent>, IcalRecurrenceError> {
+        let mut canonical = Vec::new();
+        let mut consumed = vec![false; self.events.len()];
+
+        for index in 0..self.events.len() {
+            if consumed[index] {
+                continue;
+            }
+            let uid = self.events[index].uid.value.clone();
+            let mut master = None;
+            let mut detached = Vec::new();
+
+            for (candidate_index, candidate) in self.events.iter().enumerate().skip(index) {
+                if consumed[candidate_index] || candidate.uid.value != uid {
+                    continue;
+                }
+                consumed[candidate_index] = true;
+                if candidate.recurrence_id.is_some() {
+                    detached.push(candidate.clone());
+                } else if master.replace(candidate.clone()).is_some() {
+                    return Err(IcalRecurrenceError::DuplicateMaster(uid));
+                }
+            }
+
+            let master = master.ok_or_else(|| IcalRecurrenceError::MissingMaster(uid.clone()))?;
+            let event = if detached.is_empty() {
+                master.canonical_event()?
+            } else {
+                bind_vevent_series(master, detached)?.canonical_event()?
+            };
+            canonical.push(event);
+        }
+
+        Ok(canonical)
+    }
+}
+
+fn validate_vcalendar_properties(
+    properties: &[IcalContentLine],
+) -> Result<(), IcalRecurrenceError> {
+    let versions = properties
+        .iter()
+        .filter(|property| property.name == "VERSION")
+        .collect::<Vec<_>>();
+    if versions.is_empty() {
+        return Err(IcalRecurrenceError::MissingProperty("VERSION"));
+    }
+    if versions.len() > 1 {
+        return Err(IcalRecurrenceError::DuplicateProperty("VERSION".to_string()));
+    }
+    if !versions[0].parameters.is_empty() || versions[0].value != "2.0" {
+        return Err(IcalRecurrenceError::InvalidPropertyValue {
+            property: "VERSION",
+            value: versions[0].value.clone(),
+        });
+    }
+
+    let prodids = properties
+        .iter()
+        .filter(|property| property.name == "PRODID")
+        .collect::<Vec<_>>();
+    if prodids.is_empty() {
+        return Err(IcalRecurrenceError::MissingProperty("PRODID"));
+    }
+    if prodids.len() > 1 {
+        return Err(IcalRecurrenceError::DuplicateProperty("PRODID".to_string()));
+    }
+    if !prodids[0].parameters.is_empty() || prodids[0].value.is_empty() {
+        return Err(IcalRecurrenceError::InvalidPropertyValue {
+            property: "PRODID",
+            value: prodids[0].value.clone(),
+        });
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2664,6 +2844,195 @@ and continues here\r\nSUMMARY:Example\r\n";
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn vcalendar_groups_standalone_and_detached_series_into_canonical_events() {
+        let raw = concat!(
+            "BEGIN:VCALENDAR\r\n",
+            "PRODID:-//Ephemeris Test//EN\r\n",
+            "VERSION:2.0\r\n",
+            "X-WR-CALNAME:Fixture\r\n",
+            "BEGIN:VEVENT\r\n",
+            "UID:standalone@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART;VALUE=DATE:20261010\r\n",
+            "SUMMARY:Standalone\r\n",
+            "END:VEVENT\r\n",
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART:20261102T090000Z\r\n",
+            "DTEND:20261102T100000Z\r\n",
+            "RRULE:FREQ=DAILY;COUNT=2\r\n",
+            "SUMMARY:Series\r\n",
+            "END:VEVENT\r\n",
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "RECURRENCE-ID:20261103T090000Z\r\n",
+            "DTSTART:20261103T110000Z\r\n",
+            "DTEND:20261103T120000Z\r\n",
+            "SUMMARY:Series\r\n",
+            "END:VEVENT\r\n",
+            "END:VCALENDAR\r\n"
+        );
+
+        let calendar = parse_vcalendar(raw).expect("VCALENDAR");
+        assert_eq!(calendar.events.len(), 3);
+        assert_eq!(calendar.properties.len(), 3);
+
+        let events = calendar.canonical_events().expect("canonical events");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].normalized_title, "Standalone");
+        assert!(events[0].recurrence.is_none());
+        assert_eq!(events[1].normalized_title, "Series");
+        assert_eq!(
+            events[1]
+                .recurrence
+                .as_ref()
+                .expect("series recurrence")
+                .overrides
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn vcalendar_roundtrips_supported_top_level_properties_and_events() {
+        let raw = concat!(
+            "BEGIN:VCALENDAR\r\n",
+            "PRODID:-//Ephemeris Test//EN\r\n",
+            "VERSION:2.0\r\n",
+            "CALSCALE:GREGORIAN\r\n",
+            "BEGIN:VEVENT\r\n",
+            "UID:a@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART:20261007T090000Z\r\n",
+            "SUMMARY:Example\r\n",
+            "END:VEVENT\r\n",
+            "END:VCALENDAR\r\n"
+        );
+        let calendar = parse_vcalendar(raw).expect("parse");
+        let reparsed = parse_vcalendar(&format_vcalendar(&calendar).expect("format")).expect("reparse");
+        assert_eq!(reparsed, calendar);
+    }
+
+    #[test]
+    fn vcalendar_requires_version_2_and_prodid() {
+        assert_eq!(
+            parse_vcalendar(concat!(
+                "BEGIN:VCALENDAR\r\n",
+                "PRODID:-//Ephemeris Test//EN\r\n",
+                "END:VCALENDAR\r\n"
+            )),
+            Err(IcalRecurrenceError::MissingProperty("VERSION"))
+        );
+        assert_eq!(
+            parse_vcalendar(concat!(
+                "BEGIN:VCALENDAR\r\n",
+                "VERSION:2.0\r\n",
+                "END:VCALENDAR\r\n"
+            )),
+            Err(IcalRecurrenceError::MissingProperty("PRODID"))
+        );
+        assert!(matches!(
+            parse_vcalendar(concat!(
+                "BEGIN:VCALENDAR\r\n",
+                "PRODID:-//Ephemeris Test//EN\r\n",
+                "VERSION:1.0\r\n",
+                "END:VCALENDAR\r\n"
+            )),
+            Err(IcalRecurrenceError::InvalidPropertyValue {
+                property: "VERSION",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn vcalendar_rejects_unsupported_nested_component_families_explicitly() {
+        assert_eq!(
+            parse_vcalendar(concat!(
+                "BEGIN:VCALENDAR\r\n",
+                "PRODID:-//Ephemeris Test//EN\r\n",
+                "VERSION:2.0\r\n",
+                "BEGIN:VTIMEZONE\r\n",
+                "TZID:Custom/Zone\r\n",
+                "END:VTIMEZONE\r\n",
+                "END:VCALENDAR\r\n"
+            )),
+            Err(IcalRecurrenceError::UnsupportedComponent(
+                "VTIMEZONE".to_string()
+            ))
+        );
+
+        assert_eq!(
+            parse_vcalendar(concat!(
+                "BEGIN:VCALENDAR\r\n",
+                "PRODID:-//Ephemeris Test//EN\r\n",
+                "VERSION:2.0\r\n",
+                "BEGIN:VEVENT\r\n",
+                "UID:a@example.com\r\n",
+                "DTSTAMP:20261006T120000Z\r\n",
+                "DTSTART:20261007T090000Z\r\n",
+                "BEGIN:VALARM\r\n",
+                "ACTION:DISPLAY\r\n",
+                "END:VALARM\r\n",
+                "END:VEVENT\r\n",
+                "END:VCALENDAR\r\n"
+            )),
+            Err(IcalRecurrenceError::UnsupportedComponent(
+                "VALARM".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn vcalendar_rejects_orphan_detached_and_duplicate_master_uid_groups() {
+        let orphan = parse_vcalendar(concat!(
+            "BEGIN:VCALENDAR\r\n",
+            "PRODID:-//Ephemeris Test//EN\r\n",
+            "VERSION:2.0\r\n",
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "RECURRENCE-ID:20261103T090000Z\r\n",
+            "DTSTART:20261103T110000Z\r\n",
+            "END:VEVENT\r\n",
+            "END:VCALENDAR\r\n"
+        ))
+        .expect("orphan calendar");
+        assert_eq!(
+            orphan.canonical_events(),
+            Err(IcalRecurrenceError::MissingMaster(
+                "series@example.com".to_string()
+            ))
+        );
+
+        let duplicate = parse_vcalendar(concat!(
+            "BEGIN:VCALENDAR\r\n",
+            "PRODID:-//Ephemeris Test//EN\r\n",
+            "VERSION:2.0\r\n",
+            "BEGIN:VEVENT\r\n",
+            "UID:duplicate@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART:20261007T090000Z\r\n",
+            "END:VEVENT\r\n",
+            "BEGIN:VEVENT\r\n",
+            "UID:duplicate@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "DTSTART:20261008T090000Z\r\n",
+            "END:VEVENT\r\n",
+            "END:VCALENDAR\r\n"
+        ))
+        .expect("duplicate calendar");
+        assert_eq!(
+            duplicate.canonical_events(),
+            Err(IcalRecurrenceError::DuplicateMaster(
+                "duplicate@example.com".to_string()
+            ))
+        );
     }
 
     #[test]
