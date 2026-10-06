@@ -1991,6 +1991,27 @@ fn minutely_rule_has_reachable_candidate(
     let cadence_modulus = greatest_common_divisor(GREGORIAN_CYCLE_MINUTES, step);
     let cadence_residue = start_offset % cadence_modulus;
 
+    let hours = if rule.by_hour.is_empty() {
+        (0_u8..24).collect::<Vec<_>>()
+    } else {
+        rule.by_hour.clone()
+    };
+    let minutes = if rule.by_minute.is_empty() {
+        (0_u8..60).collect::<Vec<_>>()
+    } else {
+        rule.by_minute.clone()
+    };
+    let mut allowed_time_residues = HashSet::new();
+    for hour in &hours {
+        for minute in &minutes {
+            let minute_of_day = u64::from(*hour)
+                .checked_mul(60)
+                .and_then(|value| value.checked_add(u64::from(*minute)))
+                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            allowed_time_residues.insert(minute_of_day % cadence_modulus);
+        }
+    }
+
     for day_index in 0..GREGORIAN_CYCLE_DAYS {
         let candidate_date = cycle_start_date
             .checked_add_days(Days::new(day_index))
@@ -2030,40 +2051,11 @@ fn minutely_rule_has_reachable_candidate(
         let day_start = day_index
             .checked_mul(MINUTES_PER_DAY)
             .ok_or(RecurrenceError::ArithmeticOverflow)?;
-        if rule.by_hour.is_empty() && rule.by_minute.is_empty() {
-            let day_residue = day_start % cadence_modulus;
-            let first_matching_minute =
-                (cadence_residue + cadence_modulus - day_residue) % cadence_modulus;
-            if first_matching_minute < MINUTES_PER_DAY {
-                return Ok(true);
-            }
-            continue;
-        }
-
-        let hours = if rule.by_hour.is_empty() {
-            (0_u8..24).collect::<Vec<_>>()
-        } else {
-            rule.by_hour.clone()
-        };
-        let minutes = if rule.by_minute.is_empty() {
-            (0_u8..60).collect::<Vec<_>>()
-        } else {
-            rule.by_minute.clone()
-        };
-
-        for hour in &hours {
-            for minute in &minutes {
-                let minute_of_day = u64::from(*hour)
-                    .checked_mul(60)
-                    .and_then(|value| value.checked_add(u64::from(*minute)))
-                    .ok_or(RecurrenceError::ArithmeticOverflow)?;
-                let absolute_minute = day_start
-                    .checked_add(minute_of_day)
-                    .ok_or(RecurrenceError::ArithmeticOverflow)?;
-                if absolute_minute % cadence_modulus == cadence_residue {
-                    return Ok(true);
-                }
-            }
+        let day_residue = day_start % cadence_modulus;
+        let required_time_residue =
+            (cadence_residue + cadence_modulus - day_residue) % cadence_modulus;
+        if allowed_time_residues.contains(&required_time_residue) {
+            return Ok(true);
         }
     }
 
@@ -12365,6 +12357,29 @@ mod tests {
                 )
                 .expect("expand")
                 .is_empty()
+        );
+    }
+
+
+    #[test]
+    fn minutely_calendar_reachability_handles_dense_time_limiters() {
+        let start = NaiveDateTime::parse_from_str("2026-10-05T08:30:20", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let base = TimeSpec::Floating {
+            start,
+            end: None,
+            source_timezone: None,
+        };
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Minutely);
+        rule.interval =
+            u32::try_from(GREGORIAN_CYCLE_MINUTES).expect("Gregorian cycle minutes fit u32");
+        rule.by_month = vec![11];
+        rule.by_hour = (0_u8..24).collect();
+        rule.by_minute = (0_u8..60).collect();
+
+        assert!(
+            !minutely_rule_has_reachable_candidate(&base, &rule).expect("reachability"),
+            "dense time selectors must not hide an unreachable calendar cadence"
         );
     }
 
