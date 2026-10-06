@@ -3096,9 +3096,8 @@ and continues here\r\nSUMMARY:Example\r\n";
             .expect("updated")
             .with_timezone(&Utc);
 
-        let encoded =
-            format_temporal_events_vcalendar(&[event.clone()], "-//Ephemeris Test//EN")
-                .expect("export");
+        let encoded = format_temporal_events_vcalendar(&[event.clone()], "-//Ephemeris Test//EN")
+            .expect("export");
         assert!(encoded.contains(&format!("UID:urn:uuid:{}", event.id)));
         assert!(encoded.contains("DTSTAMP:20261006T123456Z"));
         assert!(encoded.contains("SUMMARY:Project review"));
@@ -3165,15 +3164,17 @@ and continues here\r\nSUMMARY:Example\r\n";
         });
         event.validate_recurrence().expect("canonical recurrence");
 
-        let calendar =
-            export_temporal_events_vcalendar(&[event.clone()], "-//Ephemeris Test//EN")
-                .expect("calendar");
+        let calendar = export_temporal_events_vcalendar(&[event.clone()], "-//Ephemeris Test//EN")
+            .expect("calendar");
         assert_eq!(calendar.events.len(), 3);
         assert!(calendar.events[0].recurrence_id.is_none());
         assert!(calendar.events[1].recurrence_id.is_some());
         assert_eq!(calendar.events[1].time, replacement);
         assert_eq!(
-            calendar.events[2].status.as_ref().map(|status| status.value),
+            calendar.events[2]
+                .status
+                .as_ref()
+                .map(|status| status.value),
             Some(IcalVeventStatus::Cancelled)
         );
 
@@ -3182,7 +3183,10 @@ and continues here\r\nSUMMARY:Example\r\n";
             .canonical_events()
             .expect("canonical events");
         let recurrence = roundtrip[0].recurrence.as_ref().expect("recurrence");
-        assert_eq!(recurrence.overrides, event.recurrence.as_ref().unwrap().overrides);
+        assert_eq!(
+            recurrence.overrides,
+            event.recurrence.as_ref().unwrap().overrides
+        );
     }
 
     #[test]
@@ -3212,16 +3216,15 @@ and continues here\r\nSUMMARY:Example\r\n";
         assert_eq!(exported.len(), 1);
         assert_eq!(exported[0].uid.value, "preserve@example.com");
         assert_eq!(
-            exported[0]
-                .summary
-                .as_ref()
-                .expect("summary")
-                .parameters,
+            exported[0].summary.as_ref().expect("summary").parameters,
             vec![("LANGUAGE".to_string(), "es".to_string())]
         );
         assert_eq!(exported[0].extra_properties.len(), 1);
         assert_eq!(exported[0].extra_properties[0].name, "LOCATION");
-        assert_eq!(exported[0].summary.as_ref().unwrap().value, "Revisión final");
+        assert_eq!(
+            exported[0].summary.as_ref().unwrap().value,
+            "Revisión final"
+        );
     }
 
     #[test]
