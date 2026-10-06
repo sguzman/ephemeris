@@ -31,6 +31,8 @@ HOURLY frequency is verified on `main` at `fffc94ae4d65ddef52581294d0a8c0a935ffd
 
 MINUTELY frequency is verified on `main` at `abd6438a1c14e8fbbf18ded110caf373cbda99de`: format, check, strict Clippy, and all **293** library tests pass in GitHub Actions. MINUTELY requires floating/exact date-time DTSTART, advances by source-local wall-clock minutes, treats BYMONTH/BYYEARDAY/BYMONTHDAY/plain-BYDAY/BYHOUR/BYMINUTE as limiters, expands BYSECOND, then applies BYSETPOS/COUNT. Time-of-day-only reachability uses the finite 1,440-minute daily cycle; when calendar limiters participate, allowed hour/minute combinations are reduced once to cadence residues and the finite 400-year Gregorian pass scans only 146,097 civil dates rather than every minute. The verified slice includes DST-gap skipping, same-hour timestamp-aware override validation, explicit EXDATE+moved-override identity coverage, persistence/date-only rejection coverage, and remains schema-v14 compatible.
 
+A child staging slice at code/persistence checkpoint `73c8b0969b3ad70d03aff61aefccb9698dfd6319` adds SECONDLY frequency and targets **307** library tests. SECONDLY requires floating/exact date-time DTSTART, advances by source-local wall-clock seconds, treats BYMONTH/BYYEARDAY/BYMONTHDAY/plain-BYDAY/BYHOUR/BYMINUTE/BYSECOND as limiters, then applies BYSETPOS/COUNT. Time-only reachability uses the finite 86,400-second daily cycle; calendar-limited reachability reduces allowed wall-clock times to modular residues and scans the 146,097-day Gregorian cycle instead of the 12.6-billion-second full cycle. The slice covers DST-gap skipping, timestamp-aware same-minute override validation, EXDATE+moved-override identity, persistence/date-only rejection, and remains schema-v14 compatible. It is pending fresh CI verification before promotion.
+
 DAILY reachability switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. YEARLY reachability likewise scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
 ## Implemented architecture
@@ -87,11 +89,12 @@ Schema v14 adds an optional recurrence definition to the canonical event record.
 
 Implemented:
 
-- minutely, hourly, daily, weekly, monthly, and yearly frequency;
+- secondly, minutely, hourly, daily, weekly, monthly, and yearly frequency;
 - positive interval;
 - optional occurrence count;
 - optional inclusive civil-date `until` bound;
-- minutely/hourly plain-BYDAY limiting over active cadence timestamps and daily BYDAY filtering over active interval dates, with skipped candidates not consuming COUNT;
+- secondly/minutely/hourly plain-BYDAY limiting over active cadence timestamps and daily BYDAY filtering over active interval dates, with skipped candidates not consuming COUNT;
+- secondly selector reachability using an 86,400-second time-of-day fast path and modular residue matching over the 400-year Gregorian date cycle when calendar limiters participate;
 - minutely selector reachability using a 1,440-minute time-of-day fast path and modular congruence over the 400-year Gregorian minute cycle when calendar limiters participate;
 - hourly selector reachability using a 24-hour fast path for BYHOUR-only rules and the finite 400-year / 3,506,328-hour Gregorian cycle when calendar limiters are present;
 - daily BYMONTH limiting over active interval dates, intersecting with daily BYDAY when both are present and using a 400-year Gregorian-cycle reachability guard for permanently empty selector/interval combinations;
@@ -103,7 +106,7 @@ Implemented:
 - explicit WKST recurrence-week anchoring for weekly BYDAY, independent from the user's display-week preference;
 - chronological weekday generation within each WKST-anchored active recurrence week, with first-week candidates before DTSTART omitted;
 - plain monthly BYDAY selection, expanding every matching weekday inside each active month while leaving WKST semantically inactive for monthly rules;
-- signed BYMONTHDAY selection for civil days `-31..=-1` and `1..=31`: MINUTELY, HOURLY, and DAILY limit active cadence dates, MONTHLY resolves dates inside the active month, YEARLY expands/filters inside recurrence years, and WEEKLY remains invalid; zero/duplicate/range validation applies consistently;
+- signed BYMONTHDAY selection for civil days `-31..=-1` and `1..=31`: SECONDLY, MINUTELY, HOURLY, and DAILY limit active cadence dates, MONTHLY resolves dates inside the active month, YEARLY expands/filters inside recurrence years, and WEEKLY remains invalid; zero/duplicate/range validation applies consistently;
 - positive BYMONTHDAY values count from month start, negative values count backward from month end (`-1` = last day), and selector aliases resolving to the same civil date are deduplicated;
 - chronological resolved-date generation within each active month, with first-month candidates before DTSTART omitted and impossible civil dates skipped;
 - monthly ordinal BYDAY selection for first-through-fifth or last-through-fifth-from-last weekdays (`±1..±5`), with zero/out-of-range/duplicate validation;
@@ -111,7 +114,7 @@ Implemented:
 - ordinal weekday candidates resolved chronologically inside each active month, with missing fifth weekdays skipped and first-month candidates before DTSTART omitted;
 - plain and ordinal monthly BYDAY selectors form one resolved BYDAY civil-date union; when BYMONTHDAY is present it filters that union before BYSETPOS/COUNT/EXDATE/override processing;
 - the canonical last-weekday rule (`MO,TU,WE,TH,FR` + `BYSETPOS=-1`) is therefore representable directly;
-- positive BYMONTH selection for months 1-12 in all supported frequencies: MINUTELY/HOURLY/DAILY/WEEKLY/MONTHLY limit generated cadence candidates, while YEARLY expands the active month set; duplicate and range validation remains explicit;
+- positive BYMONTH selection for months 1-12 in all supported frequencies: SECONDLY/MINUTELY/HOURLY/DAILY/WEEKLY/MONTHLY limit generated cadence candidates, while YEARLY expands the active month set; duplicate and range validation remains explicit;
 - yearly plain BYDAY expansion for every selected weekday across the active recurrence year, or only inside selected BYMONTH months when BYMONTH is present;
 - signed yearly BYMONTHDAY expansion across every month when BYMONTH is absent, or across selected months when BYMONTH is present, with positive or month-end-relative day selectors;
 - yearly BYMONTH + ordinal BYDAY composition, where ordinal weekdays are resolved inside each selected month; without BYMONTH, the same persisted ordinal selector resolves against the whole recurrence year;
@@ -122,14 +125,14 @@ Implemented:
 - yearly BYWEEKNO accepts plain BYDAY weekdays inside selected week-number sets; without BYDAY, DTSTART's weekday is preserved inside each selected week;
 - custom WKST is valid for weekly BYDAY and yearly BYWEEKNO contexts, while ordinal BYDAY remains invalid with BYWEEKNO;
 - week 53 is skipped in week-number years that contain only 52 weeks, and BYMONTH/BYYEARDAY plus valid BYMONTHDAY context filter week-number candidates before BYSETPOS/COUNT/exceptions;
-- signed BYYEARDAY selection for `-366..=-1` and `1..=366`: MINUTELY/HOURLY limit active cadence dates while YEARLY resolves/expands selected year-days; zero/out-of-range/duplicate/unsupported-frequency validation applies;
+- signed BYYEARDAY selection for `-366..=-1` and `1..=366`: SECONDLY/MINUTELY/HOURLY limit active cadence dates while YEARLY resolves/expands selected year-days; zero/out-of-range/duplicate/unsupported-frequency validation applies;
 - positive BYYEARDAY values count from January 1 and negative values count backward from year-end (`-1` = December 31); day 366 is skipped in non-leap years rather than coerced;
 - when BYYEARDAY is combined with BYMONTH, plain/ordinal BYDAY, and existing month-scoped selectors, those selectors filter the resolved year-day set before COUNT/EXDATE/override processing; plain and ordinal BYDAY forms remain one unioned BYDAY family;
-- MINUTELY and HOURLY frequencies over floating/exact date-time bases, with source-local wall-clock cadence and frequency-aware limiting/expanding BY-part semantics;
-- BYHOUR expansion for `0..=23` on DAILY/WEEKLY/MONTHLY/YEARLY floating/exact date-time bases, preserving DTSTART minute/second/duration and source-local DST semantics; DATE/all-day bases are rejected;
-- BYMINUTE expansion for `0..=59` on HOURLY/DAILY/WEEKLY/MONTHLY/YEARLY floating/exact date-time bases, while MINUTELY uses BYMINUTE as a limiter; DTSTART second/duration and DATE/all-day rejection semantics are preserved;
-- BYSECOND expansion for ordinary civil seconds `0..=59` on floating/exact date-time bases, preserving fractional-second/duration, composing cartesianly with BYHOUR/BYMINUTE, and sharing the same DATE/all-day rejection; RFC 5545 leap-second selector `60` is explicitly unsupported rather than coerced;
-- generic signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied to each recurrence interval's fully resolved BY-selector candidate set after frequency-aware BYHOUR/BYMINUTE/BYSECOND handling and before COUNT is consumed; MINUTELY/HOURLY/DAILY/WEEKLY/MONTHLY/YEARLY reachability checks account for time-expanded candidate-set cardinality so permanently impossible positions terminate;
+- SECONDLY, MINUTELY, and HOURLY frequencies over floating/exact date-time bases, with source-local wall-clock cadence and frequency-aware limiting/expanding BY-part semantics;
+- BYHOUR expansion for `0..=23` on DAILY/WEEKLY/MONTHLY/YEARLY floating/exact date-time bases; SECONDLY/MINUTELY/HOURLY use BYHOUR as a limiter, preserving DTSTART minute/second/duration and source-local DST semantics; DATE/all-day bases are rejected;
+- BYMINUTE expansion for `0..=59` on HOURLY/DAILY/WEEKLY/MONTHLY/YEARLY floating/exact date-time bases, while SECONDLY/MINUTELY use BYMINUTE as a limiter; DTSTART second/duration and DATE/all-day rejection semantics are preserved;
+- BYSECOND expansion for ordinary civil seconds `0..=59` on MINUTELY/HOURLY/DAILY/WEEKLY/MONTHLY/YEARLY floating/exact date-time bases, while SECONDLY uses BYSECOND as a limiter, preserving fractional-second/duration, composing cartesianly with BYHOUR/BYMINUTE, and sharing the same DATE/all-day rejection; RFC 5545 leap-second selector `60` is explicitly unsupported rather than coerced;
+- generic signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied to each recurrence interval's fully resolved BY-selector candidate set after frequency-aware BYHOUR/BYMINUTE/BYSECOND handling and before COUNT is consumed; SECONDLY/MINUTELY/HOURLY/DAILY/WEEKLY/MONTHLY/YEARLY reachability checks account for frequency-aware candidate-set cardinality so permanently impossible positions terminate;
 - BYSETPOS requires at least one supported BY selector, rejects zero/out-of-range/duplicate positions, ignores positions outside the current candidate-set size, and deduplicates alias positions that resolve to the same slot;
 - BYSETPOS is shared by visible expansion and override-target validation, preserving original-slot identity and exception semantics;
 - first-year candidates before DTSTART are omitted, impossible civil dates/missing fifth weekdays are skipped, and BYMONTH alone continues to preserve DTSTART's civil day where valid;
@@ -144,11 +147,11 @@ Implemented:
 - preservation of all-day/range duration;
 - exact/source-timezone recurrence by source wall clock across DST;
 - invalid calendar dates in monthly/yearly series are skipped rather than coerced;
-- recurrence definitions, MINUTELY/HOURLY calendar/time limiters, daily-BYDAY/BYMONTH/BYMONTHDAY, monthly-BYMONTH/BYMONTHDAY, weekly/monthly/yearly-plain-BYDAY/WKST/BYWEEKNO/BYYEARDAY/yearly-BYMONTHDAY/monthly-ordinal-BYDAY/yearly-BYMONTH/BYHOUR/BYMINUTE/BYSECOND/BYSETPOS selector constraints, DATE-vs-date-time frequency/time-selector compatibility, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
+- recurrence definitions, SECONDLY/MINUTELY/HOURLY calendar/time limiters, daily-BYDAY/BYMONTH/BYMONTHDAY, monthly-BYMONTH/BYMONTHDAY, weekly/monthly/yearly-plain-BYDAY/WKST/BYWEEKNO/BYYEARDAY/yearly-BYMONTHDAY/monthly-ordinal-BYDAY/yearly-BYMONTH/BYHOUR/BYMINUTE/BYSECOND/BYSETPOS selector constraints, DATE-vs-date-time frequency/time-selector compatibility, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond minutely/hourly/daily/weekly/monthly/yearly recurrence and the currently implemented selector combinations, all-frequency BYMONTH, minutely/hourly/daily/monthly/yearly BYMONTHDAY, month/year-scoped ordinal BYDAY, BYWEEKNO/minutely+hourly+yearly BYYEARDAY/BYHOUR/BYMINUTE/BYSECOND/BYSETPOS, and the implemented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: broader RRULE dimensions/selector families beyond secondly/minutely/hourly/daily/weekly/monthly/yearly recurrence and the currently implemented selector combinations, all-frequency BYMONTH, minutely/hourly/daily/monthly/yearly BYMONTHDAY, month/year-scoped ordinal BYDAY, BYWEEKNO/minutely+hourly+yearly BYYEARDAY/BYHOUR/BYMINUTE/BYSECOND/BYSETPOS, and the implemented selector combinations, richer exception authoring/editing, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
