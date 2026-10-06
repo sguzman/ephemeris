@@ -730,14 +730,12 @@ mod tests {
                             .contains("if-none-match: \"fixture-v1\"")
                     );
                     assert!(
-                        request.to_ascii_lowercase().contains(
-                            "if-modified-since: tue, 06 oct 2026 20:00:00 gmt"
-                        )
+                        request
+                            .to_ascii_lowercase()
+                            .contains("if-modified-since: tue, 06 oct 2026 20:00:00 gmt")
                     );
                     stream
-                        .write_all(
-                            b"HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n",
-                        )
+                        .write_all(b"HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n")
                         .expect("write not-modified response");
                 }
             }
@@ -772,10 +770,12 @@ mod tests {
         server.join().expect("test server");
         let attempts = store.source_refresh_attempts(10).expect("refresh history");
         assert_eq!(attempts.len(), 2);
-        assert!(attempts[0]
-            .summary
-            .as_deref()
-            .is_some_and(|summary| summary.contains("HTTP 304")));
+        assert!(
+            attempts[0]
+                .summary
+                .as_deref()
+                .is_some_and(|summary| summary.contains("HTTP 304"))
+        );
         assert_eq!(attempts[0].success, Some(true));
     }
 
