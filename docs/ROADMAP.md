@@ -411,8 +411,9 @@ Implemented recurrence foundation:
 
 Next Phase 8 work:
 
-- broader RRULE dimensions and selector families beyond secondly/minutely/hourly/daily/weekly/monthly/yearly recurrence and their currently implemented selector combinations, all-frequency BYMONTH, minutely/hourly/daily/monthly/yearly BYMONTHDAY, month/year-scoped ordinal BYDAY, BYWEEKNO/minutely+hourly+yearly BYYEARDAY/BYHOUR/BYMINUTE/BYSECOND/BYSETPOS, and the implemented selector combinations plus recurrence-exception interoperability
-- richer recurrence/exception authoring and editing
+- remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
+- richer recurrence/exception authoring and editing, now the primary Phase 8 product boundary
+- recurrence-exception source-adapter interoperability for external calendar payloads
 - relations
 - collections/sequences
 - uncertainty
