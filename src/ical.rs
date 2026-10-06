@@ -6,8 +6,8 @@ use chrono::{
 use chrono_tz::Tz;
 
 use crate::domain::{
-    RecurrenceError, RecurrenceFrequency, RecurrenceOrdinalWeekday, RecurrenceRule,
-    RecurrenceWeekday, TimeSpec,
+    RecurrenceError, RecurrenceFrequency, RecurrenceOrdinalWeekday, RecurrenceOverride,
+    RecurrenceRule, RecurrenceWeekday, TemporalEvent, TimeSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +41,14 @@ pub enum IcalRecurrenceError {
     MissingProperty(&'static str),
     DuplicateProperty(String),
     UnsupportedProperty(String),
+    MasterHasRecurrenceId,
+    DetachedMissingRecurrenceId,
+    UidMismatch {
+        expected: String,
+        actual: String,
+    },
+    UnsupportedRecurrenceSet(String),
+    UnsupportedDetachedOverride(String),
     InvalidTimezone(String),
     TemporalKindMismatch {
         property: &'static str,
@@ -126,6 +134,22 @@ impl fmt::Display for IcalRecurrenceError {
             Self::MissingProperty(name) => write!(formatter, "VEVENT requires {name}"),
             Self::DuplicateProperty(name) => write!(formatter, "duplicate VEVENT property {name}"),
             Self::UnsupportedProperty(name) => write!(formatter, "unsupported VEVENT property {name}"),
+            Self::MasterHasRecurrenceId => {
+                formatter.write_str("master VEVENT must not contain RECURRENCE-ID")
+            }
+            Self::DetachedMissingRecurrenceId => {
+                formatter.write_str("detached VEVENT requires RECURRENCE-ID")
+            }
+            Self::UidMismatch { expected, actual } => write!(
+                formatter,
+                "detached VEVENT UID {actual} does not match master UID {expected}"
+            ),
+            Self::UnsupportedRecurrenceSet(value) => {
+                write!(formatter, "unsupported VEVENT recurrence set: {value}")
+            }
+            Self::UnsupportedDetachedOverride(value) => {
+                write!(formatter, "unsupported detached VEVENT override: {value}")
+            }
             Self::InvalidTimezone(value) => {
                 write!(formatter, "unsupported or invalid iCalendar TZID {value}")
             }
@@ -620,6 +644,151 @@ pub fn format_vevent(event: &IcalVevent) -> Result<String, IcalRecurrenceError> 
     }
 
     format_vevent_content_lines(&lines)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IcalBoundDetachedVevent {
+    pub original: TimeSpec,
+    pub event: IcalVevent,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IcalVeventSeries {
+    pub master: IcalVevent,
+    pub detached: Vec<IcalBoundDetachedVevent>,
+}
+
+/// Bind detached VEVENTs to the original recurrence slots of one master.
+///
+/// This does not flatten occurrence-specific semantics. It retains every typed
+/// VEVENT and adds only the canonical original-slot identity needed for later
+/// conversion.
+pub fn bind_vevent_series(
+    master: IcalVevent,
+    detached: Vec<IcalVevent>,
+) -> Result<IcalVeventSeries, IcalRecurrenceError> {
+    if master.recurrence_id.is_some() {
+        return Err(IcalRecurrenceError::MasterHasRecurrenceId);
+    }
+    if master.rrule.is_none() {
+        return Err(IcalRecurrenceError::UnsupportedRecurrenceSet(
+            "canonical series assembly currently requires RRULE; RDATE-only recurrence is not representable"
+                .to_string(),
+        ));
+    }
+
+    let mut bound = Vec::with_capacity(detached.len());
+    for event in detached {
+        if event.uid.value != master.uid.value {
+            return Err(IcalRecurrenceError::UidMismatch {
+                expected: master.uid.value.clone(),
+                actual: event.uid.value.clone(),
+            });
+        }
+        let recurrence_id = event
+            .recurrence_id
+            .as_ref()
+            .ok_or(IcalRecurrenceError::DetachedMissingRecurrenceId)?;
+        let raw = format_ical_content_line(recurrence_id)?;
+        let original = parse_recurrence_id_property(&raw, &master.time)?;
+        bound.push(IcalBoundDetachedVevent { original, event });
+    }
+
+    Ok(IcalVeventSeries {
+        master,
+        detached: bound,
+    })
+}
+
+impl IcalVeventSeries {
+    /// Convert the representable recurrence subset into the canonical domain
+    /// rule. Unsupported occurrence-specific property changes are rejected
+    /// instead of being discarded.
+    pub fn canonical_recurrence_rule(&self) -> Result<RecurrenceRule, IcalRecurrenceError> {
+        let mut rule = self
+            .master
+            .rrule
+            .as_ref()
+            .ok_or_else(|| {
+                IcalRecurrenceError::UnsupportedRecurrenceSet(
+                    "canonical series assembly requires RRULE".to_string(),
+                )
+            })?
+            .value
+            .clone();
+        rule.rdates = self.master.rdates.clone();
+        rule.exdates = self.master.exdates.clone();
+        rule.overrides.clear();
+
+        for detached in &self.detached {
+            ensure_detached_temporal_override_is_representable(&self.master, &detached.event)?;
+
+            let cancelled = detached
+                .event
+                .status
+                .as_ref()
+                .is_some_and(|status| status.value == IcalVeventStatus::Cancelled);
+            let replacement = if detached.event.time == detached.original {
+                None
+            } else {
+                Some(detached.event.time.clone())
+            };
+            rule.overrides.push(RecurrenceOverride {
+                original: detached.original.clone(),
+                replacement,
+                cancelled,
+            });
+        }
+
+        let mut event = TemporalEvent::new("iCalendar recurrence validation", self.master.time.clone());
+        event.recurrence = Some(rule.clone());
+        event.validate_recurrence()?;
+        Ok(rule)
+    }
+}
+
+fn ensure_detached_temporal_override_is_representable(
+    master: &IcalVevent,
+    detached: &IcalVevent,
+) -> Result<(), IcalRecurrenceError> {
+    if detached.rrule.is_some() || !detached.rdates.is_empty() || !detached.exdates.is_empty() {
+        return Err(IcalRecurrenceError::UnsupportedDetachedOverride(
+            "detached recurrence-set properties are not canonical occurrence overrides".to_string(),
+        ));
+    }
+
+    if detached.summary.as_ref().map(|value| &value.value)
+        != master.summary.as_ref().map(|value| &value.value)
+        && detached.summary.is_some()
+    {
+        return Err(IcalRecurrenceError::UnsupportedDetachedOverride(
+            "occurrence-specific SUMMARY".to_string(),
+        ));
+    }
+    if detached.description.as_ref().map(|value| &value.value)
+        != master.description.as_ref().map(|value| &value.value)
+        && detached.description.is_some()
+    {
+        return Err(IcalRecurrenceError::UnsupportedDetachedOverride(
+            "occurrence-specific DESCRIPTION".to_string(),
+        ));
+    }
+    if !detached.extra_properties.is_empty() {
+        return Err(IcalRecurrenceError::UnsupportedDetachedOverride(
+            "occurrence-specific unmodeled properties".to_string(),
+        ));
+    }
+
+    if let Some(status) = detached.status.as_ref() {
+        let master_status = master.status.as_ref().map(|value| value.value);
+        if status.value != IcalVeventStatus::Cancelled && master_status != Some(status.value) {
+            return Err(IcalRecurrenceError::UnsupportedDetachedOverride(
+                "occurrence-specific non-cancelled STATUS".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn set_unique_content_line(
@@ -2405,6 +2574,203 @@ and continues here\r\nSUMMARY:Example\r\n";
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn vevent_series_assembles_moved_cancelled_and_cancelled_moved_overrides() {
+        let master = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART;TZID=America/New_York:20261102T090000\r\n",
+            "DTEND;TZID=America/New_York:20261102T100000\r\n",
+            "RRULE:FREQ=WEEKLY;COUNT=4\r\n",
+            "SUMMARY:Weekly sync\r\n",
+            "STATUS:CONFIRMED\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("master");
+
+        let moved = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "RECURRENCE-ID;TZID=America/New_York:20261109T090000\r\n",
+            "DTSTART;TZID=America/New_York:20261109T110000\r\n",
+            "DTEND;TZID=America/New_York:20261109T120000\r\n",
+            "SUMMARY:Weekly sync\r\n",
+            "STATUS:CONFIRMED\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("moved");
+
+        let cancelled = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261008T120000Z\r\n",
+            "RECURRENCE-ID;TZID=America/New_York:20261116T090000\r\n",
+            "DTSTART;TZID=America/New_York:20261116T090000\r\n",
+            "DTEND;TZID=America/New_York:20261116T100000\r\n",
+            "STATUS:CANCELLED\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("cancelled");
+
+        let cancelled_moved = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261009T120000Z\r\n",
+            "RECURRENCE-ID;TZID=America/New_York:20261123T090000\r\n",
+            "DTSTART;TZID=America/New_York:20261123T130000\r\n",
+            "DTEND;TZID=America/New_York:20261123T140000\r\n",
+            "STATUS:CANCELLED\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("cancelled moved");
+
+        let series =
+            bind_vevent_series(master, vec![moved, cancelled, cancelled_moved]).expect("series");
+        let rule = series.canonical_recurrence_rule().expect("canonical rule");
+        assert_eq!(rule.overrides.len(), 3);
+
+        assert!(!rule.overrides[0].cancelled);
+        assert!(rule.overrides[0].replacement.is_some());
+        assert!(rule.overrides[1].cancelled);
+        assert!(rule.overrides[1].replacement.is_none());
+        assert!(rule.overrides[2].cancelled);
+        assert!(rule.overrides[2].replacement.is_some());
+    }
+
+    #[test]
+    fn vevent_series_rejects_uid_mismatch_missing_identity_and_master_identity() {
+        let master = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART:20261102T090000Z\r\n",
+            "RRULE:FREQ=DAILY;COUNT=2\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("master");
+
+        let wrong_uid = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:other@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "RECURRENCE-ID:20261103T090000Z\r\n",
+            "DTSTART:20261103T100000Z\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("wrong UID");
+        assert!(matches!(
+            bind_vevent_series(master.clone(), vec![wrong_uid]),
+            Err(IcalRecurrenceError::UidMismatch { .. })
+        ));
+
+        let missing_identity = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "DTSTART:20261103T100000Z\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("missing identity");
+        assert_eq!(
+            bind_vevent_series(master.clone(), vec![missing_identity]),
+            Err(IcalRecurrenceError::DetachedMissingRecurrenceId)
+        );
+
+        let detached_as_master = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "RECURRENCE-ID:20261103T090000Z\r\n",
+            "DTSTART:20261103T100000Z\r\n",
+            "RRULE:FREQ=DAILY;COUNT=2\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("detached-as-master");
+        assert_eq!(
+            bind_vevent_series(detached_as_master, Vec::new()),
+            Err(IcalRecurrenceError::MasterHasRecurrenceId)
+        );
+    }
+
+    #[test]
+    fn vevent_series_rejects_phantom_targets_and_unmodeled_detached_semantics() {
+        let master = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART:20261102T090000Z\r\n",
+            "RRULE:FREQ=DAILY;COUNT=2\r\n",
+            "SUMMARY:Master title\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("master");
+
+        let phantom = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "RECURRENCE-ID:20261110T090000Z\r\n",
+            "DTSTART:20261110T100000Z\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("phantom");
+        let series = bind_vevent_series(master.clone(), vec![phantom]).expect("bind phantom");
+        assert!(matches!(
+            series.canonical_recurrence_rule(),
+            Err(IcalRecurrenceError::Domain(RecurrenceError::UnknownOverrideTarget(_)))
+        ));
+
+        let changed_summary = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "RECURRENCE-ID:20261103T090000Z\r\n",
+            "DTSTART:20261103T100000Z\r\n",
+            "SUMMARY:Occurrence-specific title\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("changed summary");
+        let series =
+            bind_vevent_series(master, vec![changed_summary]).expect("bind changed summary");
+        assert_eq!(
+            series.canonical_recurrence_rule(),
+            Err(IcalRecurrenceError::UnsupportedDetachedOverride(
+                "occurrence-specific SUMMARY".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn vevent_series_rejects_range_this_and_future_during_identity_binding() {
+        let master = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART:20261102T090000Z\r\n",
+            "RRULE:FREQ=DAILY;COUNT=3\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("master");
+        let ranged = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "RECURRENCE-ID;RANGE=THISANDFUTURE:20261103T090000Z\r\n",
+            "DTSTART:20261103T100000Z\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("ranged");
+
+        assert_eq!(
+            bind_vevent_series(master, vec![ranged]),
+            Err(IcalRecurrenceError::UnsupportedRecurrenceRange(
+                "THISANDFUTURE".to_string()
+            ))
+        );
     }
 
     #[test]
