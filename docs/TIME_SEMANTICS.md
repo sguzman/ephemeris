@@ -142,11 +142,13 @@ Conceptually, the visible occurrence set is built from RRULE candidates plus RDA
 Still required for fuller interoperable recurrence semantics:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented seven-frequency BY-part matrix, with `BYSECOND=60` intentionally deferred until leap-second timestamps can be represented faithfully;
-- richer recurrence-editor ergonomics beyond structured exceptions and canonical presets, especially contextual selector affordances;
+- richer recurrence-editor ergonomics beyond structured exceptions, canonical presets, and contextual selector visibility, especially higher-level controls for uncommon selector combinations;
 - external recurrence/exception source-adapter interoperability;
 - source-adapter mapping for external recurrence-exception representations.
 
 Recurrence presets are editor-only canonical transformations, not a second recurrence representation. Daily, Weekdays, Weekly, Monthly, Last weekday/month, and Yearly presets set frequency, interval, WKST, and cadence selectors to known canonical combinations while deliberately preserving COUNT, UNTIL, RDATE, EXDATE, and occurrence overrides; users can continue editing the resulting ordinary rule through the same selector fields and validators.
+
+The recurrence editor's selector surface is contextual but non-destructive. Advanced selector rows are shown only when the current frequency and canonical event time kind can use them. Empty inapplicable fields are hidden; if a frequency change makes an existing populated selector inapplicable, its raw value remains preserved and is surfaced as unavailable with an explicit Clear action rather than being silently erased. Custom WKST is surfaced only for WEEKLY+BYDAY or YEARLY+BYWEEKNO contexts, matching the domain validator. Date-only/all-day series omit SECONDLY, MINUTELY, and HOURLY frequency choices and time-of-day selectors because those require a floating or exact date-time base. The existing canonical domain validator remains authoritative for saving.
 
 The system distinguishes the persisted recurrence definition from materialized view occurrences.
 
