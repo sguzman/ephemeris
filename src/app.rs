@@ -138,9 +138,7 @@ impl RecurrenceOverrideEditRow {
     }
 }
 
-fn recurrence_override_edit_rows(
-    values: &[RecurrenceOverride],
-) -> Vec<RecurrenceOverrideEditRow> {
+fn recurrence_override_edit_rows(values: &[RecurrenceOverride]) -> Vec<RecurrenceOverrideEditRow> {
     values
         .iter()
         .map(RecurrenceOverrideEditRow::from_override)
@@ -263,8 +261,7 @@ impl RecurrenceEditDraft {
                 parse_exception_start_values(&self.exdate_text, &self.base_time, "EXDATE")?;
         }
         let canonical_override_text = format_recurrence_override_values(&self.rule.overrides);
-        let structured_override_text =
-            format_recurrence_override_edit_rows(&self.override_rows);
+        let structured_override_text = format_recurrence_override_edit_rows(&self.override_rows);
         let edited_override_text = if self.override_text != canonical_override_text
             && self.override_text != structured_override_text
         {
@@ -3378,10 +3375,7 @@ fn recurrence_selector_text_row(ui: &mut egui::Ui, label: &str, value: &mut Stri
     });
 }
 
-fn render_structured_recurrence_overrides(
-    ui: &mut egui::Ui,
-    draft: &mut RecurrenceEditDraft,
-) {
+fn render_structured_recurrence_overrides(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft) {
     ui.label("Occurrence overrides");
     ui.small("Edit each exception explicitly; raw RFC-like syntax remains available below.");
 
@@ -6917,9 +6911,7 @@ mod tests {
         rule.overrides = vec![RecurrenceOverride {
             original: TimeSpec::DateOnly {
                 start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("original"),
-                end_exclusive: Some(
-                    NaiveDate::from_ymd_opt(2026, 10, 8).expect("original end"),
-                ),
+                end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 8).expect("original end")),
             },
             replacement: Some(TimeSpec::DateOnly {
                 start: NaiveDate::from_ymd_opt(2026, 10, 20).expect("replacement"),
