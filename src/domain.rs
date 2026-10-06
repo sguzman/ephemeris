@@ -3230,9 +3230,20 @@ fn recurrence_generates_original_time(
             .ok_or(RecurrenceError::ArithmeticOverflow)?;
 
         if candidates.is_empty() {
-            if period_lower_bound.is_some_and(|date| {
-                date >= target_date || rule.until.is_some_and(|until| date > until)
-            }) {
+            let exhausted = if rule.frequency == RecurrenceFrequency::Hourly {
+                let target_local = recurrence_rule_local_datetime(target)?;
+                recurrence_period_lower_bound_local_datetime(base, rule, period)?.is_some_and(
+                    |value| {
+                        value >= target_local
+                            || rule.until.is_some_and(|until| value.date() > until)
+                    },
+                )
+            } else {
+                period_lower_bound.is_some_and(|date| {
+                    date >= target_date || rule.until.is_some_and(|until| date > until)
+                })
+            };
+            if exhausted {
                 return Ok(false);
             }
             continue;
@@ -3435,6 +3446,22 @@ fn shift_recurrence_time(
     }
 }
 
+fn recurrence_period_lower_bound_local_datetime(
+    base: &TimeSpec,
+    rule: &RecurrenceRule,
+    period: u32,
+) -> Result<Option<NaiveDateTime>, RecurrenceError> {
+    if rule.frequency != RecurrenceFrequency::Hourly {
+        return Ok(None);
+    }
+    let steps = rule
+        .interval
+        .checked_mul(period)
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    Ok(recurrence_rule_local_datetime(base)?
+        .checked_add_signed(Duration::hours(i64::from(steps))))
+}
+
 fn recurrence_period_lower_bound_date(
     base: &TimeSpec,
     rule: &RecurrenceRule,
@@ -3447,11 +3474,10 @@ fn recurrence_period_lower_bound_date(
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
 
     match rule.frequency {
-        RecurrenceFrequency::Hourly => {
-            let base_local = recurrence_rule_local_datetime(base)?;
-            let shifted = base_local.checked_add_signed(Duration::hours(i64::from(steps)));
-            Ok(shifted.map(|value| value.date()))
-        }
+        RecurrenceFrequency::Hourly => Ok(
+            recurrence_period_lower_bound_local_datetime(base, rule, period)?
+                .map(|value| value.date()),
+        ),
         RecurrenceFrequency::Daily => Ok(base_date.checked_add_days(Days::new(u64::from(steps)))),
         RecurrenceFrequency::Weekly => {
             let base_weekday = u64::from(base_date.weekday().num_days_from_monday());
