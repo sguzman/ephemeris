@@ -4068,7 +4068,9 @@ fn render_structured_yearday(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft,
     egui::CollapsingHeader::new("Raw BYYEARDAY syntax")
         .default_open(false)
         .show(ui, |ui| {
-            ui.small("Power-user form: comma- or space-separated signed year days such as 1,100,-1.");
+            ui.small(
+                "Power-user form: comma- or space-separated signed year days such as 1,100,-1.",
+            );
             ui.add(
                 egui::TextEdit::singleline(&mut draft.year_day_text)
                     .desired_width(260.0)
