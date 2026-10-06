@@ -17,7 +17,7 @@ use crate::domain::{
     EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday,
     RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
 };
-use crate::ics::import_ics_file;
+use crate::ics::{export_ics_source_by_id, import_ics_file};
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
@@ -44,6 +44,20 @@ fn is_ics_path(path: &std::path::Path) -> bool {
         .is_some_and(|value| {
             value.eq_ignore_ascii_case("ics") || value.eq_ignore_ascii_case("ical")
         })
+}
+
+fn default_ics_export_path(source: &TemporalSource) -> String {
+    if let Some(locator) = source.locator.as_deref() {
+        let path = std::path::Path::new(locator);
+        if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
+            let file_name = format!("{stem}-ephemeris.ics");
+            return path
+                .parent()
+                .map_or_else(|| file_name.clone(), |parent| parent.join(file_name).display().to_string());
+        }
+    }
+
+    format!("ephemeris-{}.ics", source.id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1344,6 +1358,8 @@ pub struct EphemerisApp {
     sources: Vec<TemporalSource>,
     source_event_counts: HashMap<Uuid, u64>,
     selected_source_id: Option<Uuid>,
+    ics_export_source_id: Option<Uuid>,
+    ics_export_path: String,
     taria_current_source_ids: BTreeSet<Uuid>,
     taria_memberships: HashMap<Uuid, EventMembership>,
     taria_release_status: Option<TariaReleaseStatusRecord>,
@@ -1391,6 +1407,8 @@ impl EphemerisApp {
             sources: Vec::new(),
             source_event_counts: HashMap::new(),
             selected_source_id: None,
+            ics_export_source_id: None,
+            ics_export_path: String::new(),
             taria_current_source_ids: BTreeSet::new(),
             taria_memberships: HashMap::new(),
             taria_release_status: None,
@@ -1442,6 +1460,30 @@ impl EphemerisApp {
                     "Failed to import iCalendar {}: {error:#}",
                     path.display()
                 ));
+            }
+        }
+    }
+
+    fn export_ics_source_to_path(&mut self, source_id: Uuid) {
+        let output = self.ics_export_path.trim();
+        if output.is_empty() {
+            self.last_message = None;
+            self.last_error = Some("Choose an output path before exporting iCalendar.".to_string());
+            return;
+        }
+
+        match export_ics_source_by_id(&self.store, source_id, output) {
+            Ok(report) => {
+                self.last_message = Some(format!(
+                    "Exported {} events to {}",
+                    report.total_events,
+                    report.output_path.display()
+                ));
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to export iCalendar: {error:#}"));
             }
         }
     }
@@ -3561,6 +3603,32 @@ impl EphemerisApp {
                         inspector_row(ui, "Current release", release_id);
                     }
                 }
+                if source.kind == crate::domain::SourceKind::Ics {
+                    if self.ics_export_source_id != Some(source.id) {
+                        self.ics_export_source_id = Some(source.id);
+                        self.ics_export_path = default_ics_export_path(source);
+                    }
+
+                    ui.separator();
+                    ui.strong("iCalendar export");
+                    ui.small("Exports the current canonical source state to a new .ics file.");
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.ics_export_path)
+                            .hint_text("/path/to/export.ics")
+                            .desired_width(250.0),
+                    );
+                    let submit = response.lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    let export_enabled = !self.ics_export_path.trim().is_empty();
+                    if ui
+                        .add_enabled(export_enabled, egui::Button::new("Export ICS"))
+                        .clicked()
+                        || (submit && export_enabled)
+                    {
+                        self.export_ics_source_to_path(source.id);
+                    }
+                }
+
                 inspector_row(ui, "Created", &source.created_at.to_rfc3339());
                 inspector_row(ui, "Last refreshed", &source.updated_at.to_rfc3339());
                 if let Some(upstream_generated) = source
@@ -7627,6 +7695,27 @@ fn status_color(status: EventStatus) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_ics_export_path_uses_safe_sibling_name() {
+        let mut source = TemporalSource::new(
+            "Calendar",
+            crate::domain::SourceKind::Ics,
+            crate::domain::SourceAuthority::Unknown,
+        );
+        source.locator = Some("/tmp/calendar.ics".to_string());
+
+        assert_eq!(
+            default_ics_export_path(&source),
+            "/tmp/calendar-ephemeris.ics"
+        );
+
+        source.locator = None;
+        assert_eq!(
+            default_ics_export_path(&source),
+            format!("ephemeris-{}.ics", source.id)
+        );
+    }
 
     #[test]
     fn dropped_import_routing_recognizes_ics_case_insensitively() {
