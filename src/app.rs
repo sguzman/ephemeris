@@ -5731,4 +5731,115 @@ mod tests {
             TariaRefreshHealth::Stale
         );
     }
+
+    #[test]
+    fn recurrence_edit_draft_parses_core_fields() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let event = TemporalEvent::new(
+            "Editable",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.rule.frequency = RecurrenceFrequency::Weekly;
+        draft.rule.by_weekday = vec![RecurrenceWeekday::Monday, RecurrenceWeekday::Friday];
+        draft.interval_text = "2".to_string();
+        draft.count_text = "6".to_string();
+        draft.until_text = "2026-12-31".to_string();
+
+        let rule = draft.parsed_rule().expect("parsed rule");
+
+        assert_eq!(rule.frequency, RecurrenceFrequency::Weekly);
+        assert_eq!(rule.interval, 2);
+        assert_eq!(rule.count, Some(6));
+        assert_eq!(
+            rule.until,
+            Some(NaiveDate::from_ymd_opt(2026, 12, 31).expect("until"))
+        );
+        assert_eq!(
+            rule.by_weekday,
+            vec![RecurrenceWeekday::Monday, RecurrenceWeekday::Friday]
+        );
+    }
+
+    #[test]
+    fn recurrence_edit_draft_preserves_advanced_selectors() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let mut event = TemporalEvent::new(
+            "Advanced",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.by_hour = vec![9, 17];
+        rule.by_minute = vec![15, 45];
+        rule.by_second = vec![30];
+        rule.by_set_pos = vec![-1];
+        rule.rdates = vec![TimeSpec::Floating {
+            start: day.and_hms_opt(12, 0, 0).expect("rdate"),
+            end: None,
+            source_timezone: None,
+        }];
+        event.recurrence = Some(rule.clone());
+
+        let draft = RecurrenceEditDraft::from_event(&event);
+        let parsed = draft.parsed_rule().expect("parsed rule");
+
+        assert!(draft.has_advanced_selectors());
+        assert_eq!(parsed.by_hour, rule.by_hour);
+        assert_eq!(parsed.by_minute, rule.by_minute);
+        assert_eq!(parsed.by_second, rule.by_second);
+        assert_eq!(parsed.by_set_pos, rule.by_set_pos);
+        assert_eq!(parsed.rdates, rule.rdates);
+    }
+
+    #[test]
+    fn recurrence_edit_draft_rejects_invalid_core_text() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let event = TemporalEvent::new(
+            "Invalid draft",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+
+        draft.interval_text = "nope".to_string();
+        assert!(draft.parsed_rule().is_err());
+
+        draft.interval_text = "1".to_string();
+        draft.count_text = "0".to_string();
+        assert!(draft.parsed_rule().is_err());
+
+        draft.count_text.clear();
+        draft.until_text = "10/05/2026".to_string();
+        assert!(draft.parsed_rule().is_err());
+    }
+
+    #[test]
+    fn recurrence_edit_draft_starts_new_events_as_daily_unbounded() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let event = TemporalEvent::new(
+            "New recurrence",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+
+        let draft = RecurrenceEditDraft::from_event(&event);
+
+        assert!(!draft.had_recurrence);
+        assert_eq!(draft.rule.frequency, RecurrenceFrequency::Daily);
+        assert_eq!(draft.interval_text, "1");
+        assert!(draft.count_text.is_empty());
+        assert!(draft.until_text.is_empty());
+    }
+
 }
