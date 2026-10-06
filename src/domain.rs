@@ -12381,7 +12381,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn minutely_exdate_and_moved_override_preserve_original_slot_identity() {
         let start = NaiveDateTime::parse_from_str("2026-10-05T09:00:00", "%Y-%m-%dT%H:%M:%S")
@@ -12449,5 +12448,4 @@ mod tests {
             occurrence_identity(event.id, &original).expect("stable identity")
         );
     }
-
 }
