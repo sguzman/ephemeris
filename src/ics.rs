@@ -49,10 +49,7 @@ pub fn import_ics_file(
     import_ics_text(store, &raw, &external_ref, Some(&locator))
 }
 
-pub fn import_remote_ics(
-    store: &TemporalStore,
-    url: &str,
-) -> anyhow::Result<IcsImportReport> {
+pub fn import_remote_ics(store: &TemporalStore, url: &str) -> anyhow::Result<IcsImportReport> {
     let normalized_url = normalize_remote_ics_url(url)?;
     let raw = fetch_remote_ics_text(&normalized_url)?;
     import_remote_ics_text(store, &raw, &normalized_url)
