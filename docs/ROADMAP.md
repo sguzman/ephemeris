@@ -392,7 +392,7 @@ Implemented recurrence foundation:
 - BYHOUR expansion for `0..=23` on floating/exact date-time recurrence bases, preserving DTSTART minute/second and source-local DST semantics, applied before BYMINUTE/BYSECOND/BYSETPOS
 - BYMINUTE expansion for `0..=59` on floating/exact date-time recurrence bases, preserving DTSTART second and duration, composing cartesianly with BYHOUR and applying before BYSECOND/BYSETPOS
 - BYSECOND expansion for ordinary civil seconds `0..=59` on floating/exact date-time recurrence bases, composing cartesianly with BYHOUR/BYMINUTE before BYSETPOS; RFC 5545 leap-second value `60` is explicitly rejected until the time model can represent it faithfully
-- HOURLY frequency over floating/exact date-time bases, advancing in source-local wall-clock hours; BYMONTH/BYYEARDAY/BYMONTHDAY/plain-BYDAY/BYHOUR limit the active hour, BYMINUTE/BYSECOND expand it, and BYSETPOS applies afterward
+- HOURLY frequency over floating/exact date-time bases, advancing in source-local wall-clock hours; BYMONTH/BYYEARDAY/BYMONTHDAY/plain-BYDAY/BYHOUR limit the active hour, BYMINUTE/BYSECOND expand it, and BYSETPOS applies afterward; reachability uses a 24-hour BYHOUR fast path or the finite 400-year / 3,506,328-hour Gregorian cycle when calendar limiters participate
 - signed BYSETPOS selection for `-366..=-1` and `1..=366`, applied generically after the supported BY-selector candidate set is resolved within each recurrence interval
 - active-window occurrence expansion rather than eager infinite materialization
 - deterministic occurrence identity and canonical-event lineage
