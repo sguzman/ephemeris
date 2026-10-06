@@ -141,8 +141,9 @@ Conceptually, the visible occurrence set is built from RRULE candidates plus RDA
 
 Still required for fuller interoperable recurrence semantics:
 
-- broader RRULE dimensions beyond the current secondly/minutely/hourly/daily/weekly/monthly/yearly frequency/interval/count/until selector combinations, including secondly+minutely+hourly+daily+weekly plain BYDAY/all-frequency BYMONTH/secondly+minutely+hourly+daily+monthly+yearly BYMONTHDAY/WKST/monthly plain+ordinal BYDAY/yearly plain+ordinal BYDAY/BYWEEKNO/secondly+minutely+hourly+yearly BYYEARDAY/BYHOUR/BYMINUTE/BYSECOND/BYSETPOS, including additional RFC selector families and combinations;
+- remaining RFC edge semantics and uncommon selector combinations beyond the implemented seven-frequency BY-part matrix, with `BYSECOND=60` intentionally deferred until leap-second timestamps can be represented faithfully;
 - richer recurrence/exception authoring and editing;
+- external recurrence/exception source-adapter interoperability;
 - source-adapter mapping for external recurrence-exception representations.
 
 The system distinguishes the persisted recurrence definition from materialized view occurrences.
