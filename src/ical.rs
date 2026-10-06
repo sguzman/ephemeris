@@ -3183,7 +3183,11 @@ and continues here\r\nSUMMARY:Example\r\n";
         let recurrence = roundtrip[0].recurrence.as_ref().expect("recurrence");
         assert_eq!(
             recurrence.overrides,
-            event.recurrence.as_ref().unwrap().overrides
+            event
+                .recurrence
+                .as_ref()
+                .expect("source recurrence")
+                .overrides
         );
     }
 
@@ -3220,7 +3224,7 @@ and continues here\r\nSUMMARY:Example\r\n";
         assert_eq!(exported[0].extra_properties.len(), 1);
         assert_eq!(exported[0].extra_properties[0].name, "LOCATION");
         assert_eq!(
-            exported[0].summary.as_ref().unwrap().value,
+            exported[0].summary.as_ref().expect("summary").value,
             "Revisión final"
         );
     }
