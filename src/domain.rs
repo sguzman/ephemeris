@@ -12325,7 +12325,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn minutely_reachability_detects_unreachable_calendar_limiter_cycle() {
         let start = NaiveDateTime::parse_from_str("2026-10-05T08:30:20", "%Y-%m-%dT%H:%M:%S")
@@ -12360,7 +12359,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn minutely_calendar_reachability_handles_dense_time_limiters() {
         let start = NaiveDateTime::parse_from_str("2026-10-05T08:30:20", "%Y-%m-%dT%H:%M:%S")
@@ -12382,5 +12380,4 @@ mod tests {
             "dense time selectors must not hide an unreachable calendar cadence"
         );
     }
-
 }
