@@ -8622,5 +8622,4 @@ mod tests {
         assert!(draft.week_no_text.is_empty());
         assert!(draft.week_no_rows.is_empty());
     }
-
 }
