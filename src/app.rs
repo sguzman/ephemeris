@@ -4133,18 +4133,48 @@ fn render_recurrence_editor(
         "Advanced selectors adapt to the current frequency and event time kind. Inapplicable empty fields are hidden; existing values are preserved and can be explicitly cleared.",
     );
     let frequency = draft.rule.frequency;
-    let base_time = &draft.base_time;
+    let week_no_available = recurrence_editor_selector_available(
+        RecurrenceEditorSelector::WeekNo,
+        frequency,
+        &draft.base_time,
+    );
+    let year_day_available = recurrence_editor_selector_available(
+        RecurrenceEditorSelector::YearDay,
+        frequency,
+        &draft.base_time,
+    );
+    let month_day_available = recurrence_editor_selector_available(
+        RecurrenceEditorSelector::MonthDay,
+        frequency,
+        &draft.base_time,
+    );
+    let ordinal_byday_available = recurrence_editor_selector_available(
+        RecurrenceEditorSelector::OrdinalByDay,
+        frequency,
+        &draft.base_time,
+    );
+    let hour_available = recurrence_editor_selector_available(
+        RecurrenceEditorSelector::Hour,
+        frequency,
+        &draft.base_time,
+    );
+    let minute_available = recurrence_editor_selector_available(
+        RecurrenceEditorSelector::Minute,
+        frequency,
+        &draft.base_time,
+    );
+    let second_available = recurrence_editor_selector_available(
+        RecurrenceEditorSelector::Second,
+        frequency,
+        &draft.base_time,
+    );
     contextual_recurrence_selector_text_row(
         ui,
         RecurrenceEditorSelector::WeekNo,
         "BYWEEKNO",
         &mut draft.week_no_text,
         "20,-1",
-        recurrence_editor_selector_available(
-            RecurrenceEditorSelector::WeekNo,
-            frequency,
-            base_time,
-        ),
+        week_no_available,
     );
     contextual_recurrence_selector_text_row(
         ui,
@@ -4152,11 +4182,7 @@ fn render_recurrence_editor(
         "BYYEARDAY",
         &mut draft.year_day_text,
         "1,100,-1",
-        recurrence_editor_selector_available(
-            RecurrenceEditorSelector::YearDay,
-            frequency,
-            base_time,
-        ),
+        year_day_available,
     );
     contextual_recurrence_selector_text_row(
         ui,
@@ -4164,20 +4190,12 @@ fn render_recurrence_editor(
         "BYMONTHDAY",
         &mut draft.month_day_text,
         "1,15,-1",
-        recurrence_editor_selector_available(
-            RecurrenceEditorSelector::MonthDay,
-            frequency,
-            base_time,
-        ),
+        month_day_available,
     );
     render_structured_ordinal_byday(
         ui,
         draft,
-        recurrence_editor_selector_available(
-            RecurrenceEditorSelector::OrdinalByDay,
-            frequency,
-            base_time,
-        ),
+        ordinal_byday_available,
     );
     contextual_recurrence_selector_text_row(
         ui,
@@ -4185,7 +4203,7 @@ fn render_recurrence_editor(
         "BYHOUR",
         &mut draft.hour_text,
         "9,17",
-        recurrence_editor_selector_available(RecurrenceEditorSelector::Hour, frequency, base_time),
+        hour_available,
     );
     contextual_recurrence_selector_text_row(
         ui,
@@ -4193,11 +4211,7 @@ fn render_recurrence_editor(
         "BYMINUTE",
         &mut draft.minute_text,
         "0,30",
-        recurrence_editor_selector_available(
-            RecurrenceEditorSelector::Minute,
-            frequency,
-            base_time,
-        ),
+        minute_available,
     );
     contextual_recurrence_selector_text_row(
         ui,
@@ -4205,11 +4219,7 @@ fn render_recurrence_editor(
         "BYSECOND",
         &mut draft.second_text,
         "0,15,30,45",
-        recurrence_editor_selector_available(
-            RecurrenceEditorSelector::Second,
-            frequency,
-            base_time,
-        ),
+        second_available,
     );
     contextual_recurrence_selector_text_row(
         ui,
