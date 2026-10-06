@@ -1,9 +1,11 @@
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use chrono::Utc;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::domain::{SourceAuthority, SourceKind, TemporalSource};
@@ -47,6 +49,60 @@ pub fn import_ics_file(
     import_ics_text(store, &raw, &external_ref, Some(&locator))
 }
 
+pub fn import_remote_ics(
+    store: &TemporalStore,
+    url: &str,
+) -> anyhow::Result<IcsImportReport> {
+    let normalized_url = normalize_remote_ics_url(url)?;
+    let raw = fetch_remote_ics_text(&normalized_url)?;
+    import_remote_ics_text(store, &raw, &normalized_url)
+}
+
+pub fn import_remote_ics_text(
+    store: &TemporalStore,
+    raw: &str,
+    url: &str,
+) -> anyhow::Result<IcsImportReport> {
+    let normalized_url = normalize_remote_ics_url(url)?;
+    let external_ref = remote_ics_external_ref(&normalized_url);
+    import_ics_text_with_source(
+        store,
+        raw,
+        &external_ref,
+        Some(&normalized_url),
+        SourceKind::Webcal,
+        Some("Remote iCalendar"),
+    )
+}
+
+pub fn normalize_remote_ics_url(raw: &str) -> anyhow::Result<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!("remote iCalendar URL is empty"));
+    }
+
+    let normalized = if let Some(rest) = trimmed.strip_prefix("webcal://") {
+        format!("https://{rest}")
+    } else if let Some(rest) = trimmed.strip_prefix("webcals://") {
+        format!("https://{rest}")
+    } else {
+        trimmed.to_string()
+    };
+
+    if !(normalized.starts_with("https://") || normalized.starts_with("http://")) {
+        return Err(anyhow::anyhow!(
+            "remote iCalendar URL must use http, https, webcal, or webcals"
+        ));
+    }
+    if normalized.chars().any(char::is_whitespace) {
+        return Err(anyhow::anyhow!(
+            "remote iCalendar URL contains unescaped whitespace"
+        ));
+    }
+
+    Ok(normalized)
+}
+
 pub fn ics_file_external_ref(path: impl AsRef<Path>) -> anyhow::Result<String> {
     let canonical = canonical_ics_file_path(path.as_ref())?;
     Ok(ics_external_ref_for_canonical_path(&canonical))
@@ -58,20 +114,38 @@ pub fn import_ics_text(
     external_ref: &str,
     locator: Option<&str>,
 ) -> anyhow::Result<IcsImportReport> {
+    let fallback_name = locator
+        .and_then(|value| Path::new(value).file_name())
+        .and_then(|value| value.to_str());
+    import_ics_text_with_source(
+        store,
+        raw,
+        external_ref,
+        locator,
+        SourceKind::Ics,
+        fallback_name,
+    )
+}
+
+fn import_ics_text_with_source(
+    store: &TemporalStore,
+    raw: &str,
+    external_ref: &str,
+    locator: Option<&str>,
+    source_kind: SourceKind,
+    fallback_name: Option<&str>,
+) -> anyhow::Result<IcsImportReport> {
     let calendar = parse_vcalendar(raw).context("failed to parse iCalendar VCALENDAR payload")?;
     let mut events = calendar
         .canonical_events()
         .context("failed to project iCalendar VEVENTs into canonical events")?;
 
-    let source_name = calendar_display_name(&calendar, locator);
+    let source_name = calendar_display_name(&calendar, fallback_name);
     let mut source = match store.source_by_external_ref(external_ref)? {
         Some(source) => source,
         None => {
-            let mut source = TemporalSource::new(
-                source_name.clone(),
-                SourceKind::Ics,
-                SourceAuthority::Unknown,
-            );
+            let mut source =
+                TemporalSource::new(source_name.clone(), source_kind, SourceAuthority::Unknown);
             source.external_ref = Some(external_ref.to_string());
             source
         }
@@ -79,7 +153,7 @@ pub fn import_ics_text(
 
     source.external_ref = Some(external_ref.to_string());
     source.name.clone_from(&source_name);
-    source.kind = SourceKind::Ics;
+    source.kind = source_kind;
     source.authority = SourceAuthority::Unknown;
     source.locator = locator.map(ToOwned::to_owned);
     source.enabled = true;
@@ -139,9 +213,9 @@ fn export_ics_source_record(
     source: &TemporalSource,
     output_path: impl AsRef<Path>,
 ) -> anyhow::Result<IcsExportReport> {
-    if source.kind != SourceKind::Ics {
+    if !matches!(source.kind, SourceKind::Ics | SourceKind::Webcal) {
         return Err(anyhow::anyhow!(
-            "source {} is {}, not an ICS source",
+            "source {} is {}, not an iCalendar source",
             source.id,
             source.kind.as_str()
         ));
@@ -166,6 +240,30 @@ fn export_ics_source_record(
         total_events: events.len(),
         output_path,
     })
+}
+
+fn fetch_remote_ics_text(url: &str) -> anyhow::Result<String> {
+    let mut response = ureq::get(url)
+        .header("Accept", "text/calendar, text/plain;q=0.9, */*;q=0.1")
+        .header(
+            "User-Agent",
+            concat!("Ephemeris/", env!("CARGO_PKG_VERSION")),
+        )
+        .call()
+        .with_context(|| "failed to fetch remote iCalendar source")?;
+    response
+        .body_mut()
+        .read_to_string()
+        .context("failed to read remote iCalendar response body")
+}
+
+fn remote_ics_external_ref(normalized_url: &str) -> String {
+    let digest = Sha256::digest(normalized_url.as_bytes());
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    format!("webcal:url-sha256:{encoded}")
 }
 
 fn canonical_ics_file_path(path: &Path) -> anyhow::Result<PathBuf> {
@@ -226,7 +324,7 @@ fn write_calendar_atomically(path: &Path, encoded: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn calendar_display_name(calendar: &IcalVcalendar, locator: Option<&str>) -> String {
+fn calendar_display_name(calendar: &IcalVcalendar, fallback_name: Option<&str>) -> String {
     if let Some(property) = calendar
         .properties
         .iter()
@@ -239,10 +337,7 @@ fn calendar_display_name(calendar: &IcalVcalendar, locator: Option<&str>) -> Str
         }
     }
 
-    if let Some(locator) = locator
-        && let Some(name) = Path::new(locator)
-            .file_name()
-            .and_then(|name| name.to_str())
+    if let Some(name) = fallback_name
         && !name.is_empty()
     {
         return name.to_string();
@@ -410,6 +505,61 @@ mod tests {
         let second = import_ics_file(&store, &path).expect("file reimport");
 
         assert!(first.source_external_ref.starts_with("ics:file:"));
+        assert_eq!(second.source_id, first.source_id);
+        assert_eq!(second.unchanged, 2);
+    }
+
+    #[test]
+    fn remote_url_normalization_accepts_http_https_and_webcal() {
+        assert_eq!(
+            normalize_remote_ics_url("https://example.com/calendar.ics").expect("https"),
+            "https://example.com/calendar.ics"
+        );
+        assert_eq!(
+            normalize_remote_ics_url("http://example.com/calendar.ics").expect("http"),
+            "http://example.com/calendar.ics"
+        );
+        assert_eq!(
+            normalize_remote_ics_url("webcal://example.com/calendar.ics").expect("webcal"),
+            "https://example.com/calendar.ics"
+        );
+        assert_eq!(
+            normalize_remote_ics_url("webcals://example.com/calendar.ics").expect("webcals"),
+            "https://example.com/calendar.ics"
+        );
+        assert!(normalize_remote_ics_url("file:///tmp/calendar.ics").is_err());
+        assert!(normalize_remote_ics_url("https://example.com/bad path.ics").is_err());
+    }
+
+    #[test]
+    fn remote_import_uses_hashed_source_identity_and_webcal_kind() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let first = import_remote_ics_text(
+            &store,
+            FIXTURE,
+            "webcal://example.com/private/calendar.ics?token=secret",
+        )
+        .expect("remote import");
+
+        assert!(first.source_external_ref.starts_with("webcal:url-sha256:"));
+        assert!(!first.source_external_ref.contains("secret"));
+
+        let source = store
+            .source_by_id(first.source_id)
+            .expect("source query")
+            .expect("source");
+        assert_eq!(source.kind, SourceKind::Webcal);
+        assert_eq!(
+            source.locator.as_deref(),
+            Some("https://example.com/private/calendar.ics?token=secret")
+        );
+
+        let second = import_remote_ics_text(
+            &store,
+            FIXTURE,
+            "https://example.com/private/calendar.ics?token=secret",
+        )
+        .expect("remote refresh");
         assert_eq!(second.source_id, first.source_id);
         assert_eq!(second.unchanged, 2);
     }
