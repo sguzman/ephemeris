@@ -51,10 +51,10 @@ fn default_ics_export_path(source: &TemporalSource) -> String {
         let path = std::path::Path::new(locator);
         if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
             let file_name = format!("{stem}-ephemeris.ics");
-            return path.parent().map_or_else(
-                || file_name.clone(),
-                |parent| parent.join(file_name).display().to_string(),
-            );
+            if let Some(parent) = path.parent() {
+                return parent.join(&file_name).display().to_string();
+            }
+            return file_name;
         }
     }
 
