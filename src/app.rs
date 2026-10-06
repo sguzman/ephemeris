@@ -213,6 +213,42 @@ impl RecurrenceOverrideEditAction {
     }
 }
 
+fn recurrence_monthday_edit_rows(values: &[i8]) -> Vec<String> {
+    values.iter().map(ToString::to_string).collect()
+}
+
+fn format_recurrence_monthday_edit_rows(rows: &[String]) -> String {
+    rows.iter()
+        .map(|value| value.trim())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_recurrence_monthday_edit_rows(raw: &str) -> Result<Vec<String>, String> {
+    parse_i8_selector_values(raw, "BYMONTHDAY")
+        .map(|values| values.iter().map(ToString::to_string).collect())
+}
+
+fn validate_recurrence_monthday_edit_rows(rows: &[String]) -> Result<(), String> {
+    for (index, value) in rows.iter().enumerate() {
+        let raw = value.trim();
+        if raw.is_empty() {
+            return Err(format!(
+                "BYMONTHDAY row #{} needs a signed day or must be removed.",
+                index + 1
+            ));
+        }
+        raw.parse::<i8>().map_err(|_| {
+            format!(
+                "BYMONTHDAY row #{} has invalid signed day '{}'.",
+                index + 1,
+                value
+            )
+        })?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RecurrenceOrdinalByDayEditRow {
     ordinal_text: String,
@@ -387,6 +423,7 @@ struct RecurrenceEditDraft {
     week_no_text: String,
     year_day_text: String,
     month_day_text: String,
+    month_day_rows: Vec<String>,
     ordinal_byday_text: String,
     ordinal_byday_rows: Vec<RecurrenceOrdinalByDayEditRow>,
     hour_text: String,
@@ -415,6 +452,8 @@ impl RecurrenceEditDraft {
         let exdate_rows = recurrence_exception_edit_rows(&rule.exdates);
         let override_text = format_recurrence_override_values(&rule.overrides);
         let override_rows = recurrence_override_edit_rows(&rule.overrides);
+        let month_day_text = format_selector_values(&rule.by_month_day);
+        let month_day_rows = recurrence_monthday_edit_rows(&rule.by_month_day);
         let ordinal_byday_text = format_ordinal_byday_values(&rule.by_month_weekday);
         let ordinal_byday_rows = recurrence_ordinal_byday_edit_rows(&rule.by_month_weekday);
         Self {
@@ -429,7 +468,8 @@ impl RecurrenceEditDraft {
                 .map_or_else(String::new, |until| until.to_string()),
             week_no_text: format_selector_values(&rule.by_week_no),
             year_day_text: format_selector_values(&rule.by_year_day),
-            month_day_text: format_selector_values(&rule.by_month_day),
+            month_day_text,
+            month_day_rows,
             ordinal_byday_text,
             ordinal_byday_rows,
             hour_text: format_selector_values(&rule.by_hour),
@@ -455,6 +495,7 @@ impl RecurrenceEditDraft {
         self.week_no_text.clear();
         self.year_day_text.clear();
         self.month_day_text.clear();
+        self.month_day_rows.clear();
         self.ordinal_byday_text.clear();
         self.ordinal_byday_rows.clear();
         self.hour_text.clear();
@@ -526,7 +567,19 @@ impl RecurrenceEditDraft {
         };
         rule.by_week_no = parse_i8_selector_values(&self.week_no_text, "BYWEEKNO")?;
         rule.by_year_day = parse_i16_selector_values(&self.year_day_text, "BYYEARDAY")?;
-        rule.by_month_day = parse_i8_selector_values(&self.month_day_text, "BYMONTHDAY")?;
+
+        let canonical_month_day_text = format_selector_values(&self.rule.by_month_day);
+        let structured_month_day_text =
+            format_recurrence_monthday_edit_rows(&self.month_day_rows);
+        let month_day_raw_override = self.month_day_text != canonical_month_day_text
+            && self.month_day_text != structured_month_day_text;
+        if month_day_raw_override {
+            rule.by_month_day = parse_i8_selector_values(&self.month_day_text, "BYMONTHDAY")?;
+        } else {
+            validate_recurrence_monthday_edit_rows(&self.month_day_rows)?;
+            rule.by_month_day =
+                parse_i8_selector_values(&structured_month_day_text, "BYMONTHDAY")?;
+        }
 
         let canonical_ordinal_byday_text = format_ordinal_byday_values(&self.rule.by_month_weekday);
         let structured_ordinal_byday_text =
@@ -3765,6 +3818,93 @@ fn render_contextual_week_start(ui: &mut egui::Ui, draft: &mut RecurrenceEditDra
     }
 }
 
+fn render_structured_monthday(
+    ui: &mut egui::Ui,
+    draft: &mut RecurrenceEditDraft,
+    available: bool,
+) {
+    if !available {
+        if draft.month_day_text.trim().is_empty() && draft.month_day_rows.is_empty() {
+            return;
+        }
+
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("BYMONTHDAY (preserved)").strong());
+                ui.add_enabled(
+                    false,
+                    egui::TextEdit::singleline(&mut draft.month_day_text)
+                        .desired_width(150.0)
+                        .hint_text("1,15,-1"),
+                );
+                if ui.small_button("Clear").clicked() {
+                    draft.month_day_text.clear();
+                    draft.month_day_rows.clear();
+                }
+            });
+            ui.small(RecurrenceEditorSelector::MonthDay.unavailable_reason());
+            ui.small("The structured rows are preserved until cleared or the context is restored.");
+        });
+        return;
+    }
+
+    ui.label("BYMONTHDAY");
+    ui.small(
+        "One signed civil day per row. Positive values count from month start; negative values count backward from month end.",
+    );
+
+    let mut structured_changed = false;
+    let mut remove_index = None;
+    for (index, value) in draft.month_day_rows.iter_mut().enumerate() {
+        ui.push_id(("bymonthday", index), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("#{}", index + 1));
+                structured_changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(value)
+                            .desired_width(80.0)
+                            .hint_text("1 or -1"),
+                    )
+                    .changed();
+                if ui.small_button("Remove").clicked() {
+                    remove_index = Some(index);
+                }
+            });
+        });
+    }
+
+    if let Some(index) = remove_index {
+        draft.month_day_rows.remove(index);
+        structured_changed = true;
+    }
+
+    if ui.small_button("+ Add BYMONTHDAY").clicked() {
+        draft.month_day_rows.push("1".to_string());
+        structured_changed = true;
+    }
+
+    if structured_changed {
+        draft.month_day_text = format_recurrence_monthday_edit_rows(&draft.month_day_rows);
+    }
+
+    egui::CollapsingHeader::new("Raw BYMONTHDAY syntax")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.small("Power-user form: comma- or space-separated signed days such as 1,15,-1.");
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.month_day_text)
+                    .desired_width(260.0)
+                    .hint_text("1,15,-1"),
+            );
+            if ui.small_button("Load raw syntax into rows").clicked()
+                && let Ok(rows) = parse_recurrence_monthday_edit_rows(&draft.month_day_text)
+            {
+                draft.month_day_text = format_recurrence_monthday_edit_rows(&rows);
+                draft.month_day_rows = rows;
+            }
+        });
+}
+
 fn render_structured_ordinal_byday(
     ui: &mut egui::Ui,
     draft: &mut RecurrenceEditDraft,
@@ -4183,14 +4323,7 @@ fn render_recurrence_editor(
         "1,100,-1",
         year_day_available,
     );
-    contextual_recurrence_selector_text_row(
-        ui,
-        RecurrenceEditorSelector::MonthDay,
-        "BYMONTHDAY",
-        &mut draft.month_day_text,
-        "1,15,-1",
-        month_day_available,
-    );
+    render_structured_monthday(ui, draft, month_day_available);
     render_structured_ordinal_byday(ui, draft, ordinal_byday_available);
     contextual_recurrence_selector_text_row(
         ui,
@@ -8194,4 +8327,92 @@ mod tests {
         assert!(draft.ordinal_byday_text.is_empty());
         assert!(draft.ordinal_byday_rows.is_empty());
     }
+
+    #[test]
+    fn recurrence_monthday_edit_rows_roundtrip_compact_syntax() {
+        let rows = recurrence_monthday_edit_rows(&[1, 15, -1]);
+
+        assert_eq!(rows, vec!["1", "15", "-1"]);
+        assert_eq!(format_recurrence_monthday_edit_rows(&rows), "1,15,-1");
+        assert_eq!(
+            parse_recurrence_monthday_edit_rows("1, 15 -1").expect("parse"),
+            vec!["1", "15", "-1"]
+        );
+    }
+
+    #[test]
+    fn recurrence_edit_draft_applies_structured_monthday_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Structured BYMONTHDAY",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Monthly));
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.month_day_rows = vec!["1".to_string(), "15".to_string(), "-1".to_string()];
+        draft.month_day_text = format_recurrence_monthday_edit_rows(&draft.month_day_rows);
+
+        let parsed = draft.parsed_rule().expect("structured rule");
+        assert_eq!(parsed.by_month_day, vec![1, 15, -1]);
+    }
+
+    #[test]
+    fn recurrence_edit_draft_raw_monthday_override_remains_supported() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Raw BYMONTHDAY",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Monthly);
+        rule.by_month_day = vec![1];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.month_day_text = "15,-1".to_string();
+
+        let parsed = draft.parsed_rule().expect("raw override");
+        assert_eq!(parsed.by_month_day, vec![15, -1]);
+        assert_eq!(draft.month_day_rows, vec!["1"]);
+    }
+
+    #[test]
+    fn recurrence_monthday_edit_rows_reject_blank_day() {
+        let rows = vec![String::new()];
+
+        assert_eq!(
+            validate_recurrence_monthday_edit_rows(&rows),
+            Err("BYMONTHDAY row #1 needs a signed day or must be removed.".to_string())
+        );
+    }
+
+    #[test]
+    fn recurrence_preset_clears_structured_monthday_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Preset clears structured BYMONTHDAY",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Monthly);
+        rule.by_month_day = vec![1, -1];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        assert_eq!(draft.month_day_rows, vec!["1", "-1"]);
+
+        draft.apply_preset(RecurrencePreset::Daily);
+
+        assert!(draft.month_day_text.is_empty());
+        assert!(draft.month_day_rows.is_empty());
+    }
+
 }
