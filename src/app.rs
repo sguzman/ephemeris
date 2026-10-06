@@ -213,6 +213,42 @@ impl RecurrenceOverrideEditAction {
     }
 }
 
+fn recurrence_weekno_edit_rows(values: &[i8]) -> Vec<String> {
+    values.iter().map(ToString::to_string).collect()
+}
+
+fn format_recurrence_weekno_edit_rows(rows: &[String]) -> String {
+    rows.iter()
+        .map(|value| value.trim())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_recurrence_weekno_edit_rows(raw: &str) -> Result<Vec<String>, String> {
+    parse_i8_selector_values(raw, "BYWEEKNO")
+        .map(|values| values.iter().map(ToString::to_string).collect())
+}
+
+fn validate_recurrence_weekno_edit_rows(rows: &[String]) -> Result<(), String> {
+    for (index, value) in rows.iter().enumerate() {
+        let raw = value.trim();
+        if raw.is_empty() {
+            return Err(format!(
+                "BYWEEKNO row #{} needs a signed week number or must be removed.",
+                index + 1
+            ));
+        }
+        raw.parse::<i8>().map_err(|_| {
+            format!(
+                "BYWEEKNO row #{} has invalid signed week number '{}'.",
+                index + 1,
+                value
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn recurrence_monthday_edit_rows(values: &[i8]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
 }
@@ -421,6 +457,7 @@ struct RecurrenceEditDraft {
     count_text: String,
     until_text: String,
     week_no_text: String,
+    week_no_rows: Vec<String>,
     year_day_text: String,
     month_day_text: String,
     month_day_rows: Vec<String>,
@@ -452,6 +489,8 @@ impl RecurrenceEditDraft {
         let exdate_rows = recurrence_exception_edit_rows(&rule.exdates);
         let override_text = format_recurrence_override_values(&rule.overrides);
         let override_rows = recurrence_override_edit_rows(&rule.overrides);
+        let week_no_text = format_selector_values(&rule.by_week_no);
+        let week_no_rows = recurrence_weekno_edit_rows(&rule.by_week_no);
         let month_day_text = format_selector_values(&rule.by_month_day);
         let month_day_rows = recurrence_monthday_edit_rows(&rule.by_month_day);
         let ordinal_byday_text = format_ordinal_byday_values(&rule.by_month_weekday);
@@ -466,7 +505,8 @@ impl RecurrenceEditDraft {
             until_text: rule
                 .until
                 .map_or_else(String::new, |until| until.to_string()),
-            week_no_text: format_selector_values(&rule.by_week_no),
+            week_no_text,
+            week_no_rows,
             year_day_text: format_selector_values(&rule.by_year_day),
             month_day_text,
             month_day_rows,
@@ -493,6 +533,7 @@ impl RecurrenceEditDraft {
         self.rule.by_weekday.clear();
         self.rule.by_month.clear();
         self.week_no_text.clear();
+        self.week_no_rows.clear();
         self.year_day_text.clear();
         self.month_day_text.clear();
         self.month_day_rows.clear();
@@ -565,7 +606,17 @@ impl RecurrenceEditDraft {
                     .map_err(|_| "Until must be YYYY-MM-DD or blank.".to_string())?,
             )
         };
-        rule.by_week_no = parse_i8_selector_values(&self.week_no_text, "BYWEEKNO")?;
+        let canonical_week_no_text = format_selector_values(&self.rule.by_week_no);
+        let structured_week_no_text = format_recurrence_weekno_edit_rows(&self.week_no_rows);
+        let week_no_raw_override = self.week_no_text != canonical_week_no_text
+            && self.week_no_text != structured_week_no_text;
+        if week_no_raw_override {
+            rule.by_week_no = parse_i8_selector_values(&self.week_no_text, "BYWEEKNO")?;
+        } else {
+            validate_recurrence_weekno_edit_rows(&self.week_no_rows)?;
+            rule.by_week_no = parse_i8_selector_values(&structured_week_no_text, "BYWEEKNO")?;
+        }
+
         rule.by_year_day = parse_i16_selector_values(&self.year_day_text, "BYYEARDAY")?;
 
         let canonical_month_day_text = format_selector_values(&self.rule.by_month_day);
@@ -3816,6 +3867,89 @@ fn render_contextual_week_start(ui: &mut egui::Ui, draft: &mut RecurrenceEditDra
     }
 }
 
+fn render_structured_weekno(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, available: bool) {
+    if !available {
+        if draft.week_no_text.trim().is_empty() && draft.week_no_rows.is_empty() {
+            return;
+        }
+
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("BYWEEKNO (preserved)").strong());
+                ui.add_enabled(
+                    false,
+                    egui::TextEdit::singleline(&mut draft.week_no_text)
+                        .desired_width(150.0)
+                        .hint_text("20,-1"),
+                );
+                if ui.small_button("Clear").clicked() {
+                    draft.week_no_text.clear();
+                    draft.week_no_rows.clear();
+                }
+            });
+            ui.small(RecurrenceEditorSelector::WeekNo.unavailable_reason());
+            ui.small("The structured rows are preserved until cleared or the context is restored.");
+        });
+        return;
+    }
+
+    ui.label("BYWEEKNO");
+    ui.small(
+        "One signed week number per row. Positive values count from week 1; negative values count backward from the final numbered week.",
+    );
+
+    let mut structured_changed = false;
+    let mut remove_index = None;
+    for (index, value) in draft.week_no_rows.iter_mut().enumerate() {
+        ui.push_id(("byweekno", index), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("#{}", index + 1));
+                structured_changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(value)
+                            .desired_width(84.0)
+                            .hint_text("20 or -1"),
+                    )
+                    .changed();
+                if ui.small_button("Remove").clicked() {
+                    remove_index = Some(index);
+                }
+            });
+        });
+    }
+
+    if let Some(index) = remove_index {
+        draft.week_no_rows.remove(index);
+        structured_changed = true;
+    }
+
+    if ui.small_button("+ Add BYWEEKNO").clicked() {
+        draft.week_no_rows.push("1".to_string());
+        structured_changed = true;
+    }
+
+    if structured_changed {
+        draft.week_no_text = format_recurrence_weekno_edit_rows(&draft.week_no_rows);
+    }
+
+    egui::CollapsingHeader::new("Raw BYWEEKNO syntax")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.small("Power-user form: comma- or space-separated signed weeks such as 20,-1.");
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.week_no_text)
+                    .desired_width(260.0)
+                    .hint_text("20,-1"),
+            );
+            if ui.small_button("Load raw syntax into rows").clicked()
+                && let Ok(rows) = parse_recurrence_weekno_edit_rows(&draft.week_no_text)
+            {
+                draft.week_no_text = format_recurrence_weekno_edit_rows(&rows);
+                draft.week_no_rows = rows;
+            }
+        });
+}
+
 fn render_structured_monthday(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, available: bool) {
     if !available {
         if draft.month_day_text.trim().is_empty() && draft.month_day_rows.is_empty() {
@@ -4301,14 +4435,7 @@ fn render_recurrence_editor(
         frequency,
         &draft.base_time,
     );
-    contextual_recurrence_selector_text_row(
-        ui,
-        RecurrenceEditorSelector::WeekNo,
-        "BYWEEKNO",
-        &mut draft.week_no_text,
-        "20,-1",
-        week_no_available,
-    );
+    render_structured_weekno(ui, draft, week_no_available);
     contextual_recurrence_selector_text_row(
         ui,
         RecurrenceEditorSelector::YearDay,
@@ -8408,4 +8535,92 @@ mod tests {
         assert!(draft.month_day_text.is_empty());
         assert!(draft.month_day_rows.is_empty());
     }
+
+    #[test]
+    fn recurrence_weekno_edit_rows_roundtrip_compact_syntax() {
+        let rows = recurrence_weekno_edit_rows(&[20, -1]);
+
+        assert_eq!(rows, vec!["20", "-1"]);
+        assert_eq!(format_recurrence_weekno_edit_rows(&rows), "20,-1");
+        assert_eq!(
+            parse_recurrence_weekno_edit_rows("20 -1").expect("parse"),
+            vec!["20", "-1"]
+        );
+    }
+
+    #[test]
+    fn recurrence_edit_draft_applies_structured_weekno_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Structured BYWEEKNO",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Yearly));
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.week_no_rows = vec!["20".to_string(), "-1".to_string()];
+        draft.week_no_text = format_recurrence_weekno_edit_rows(&draft.week_no_rows);
+
+        let parsed = draft.parsed_rule().expect("structured rule");
+        assert_eq!(parsed.by_week_no, vec![20, -1]);
+    }
+
+    #[test]
+    fn recurrence_edit_draft_raw_weekno_override_remains_supported() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Raw BYWEEKNO",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.by_week_no = vec![20];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.week_no_text = "1,-1".to_string();
+
+        let parsed = draft.parsed_rule().expect("raw override");
+        assert_eq!(parsed.by_week_no, vec![1, -1]);
+        assert_eq!(draft.week_no_rows, vec!["20"]);
+    }
+
+    #[test]
+    fn recurrence_weekno_edit_rows_reject_blank_week() {
+        let rows = vec![String::new()];
+
+        assert_eq!(
+            validate_recurrence_weekno_edit_rows(&rows),
+            Err("BYWEEKNO row #1 needs a signed week number or must be removed.".to_string())
+        );
+    }
+
+    #[test]
+    fn recurrence_preset_clears_structured_weekno_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Preset clears structured BYWEEKNO",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.by_week_no = vec![20, -1];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        assert_eq!(draft.week_no_rows, vec!["20", "-1"]);
+
+        draft.apply_preset(RecurrencePreset::Daily);
+
+        assert!(draft.week_no_text.is_empty());
+        assert!(draft.week_no_rows.is_empty());
+    }
+
 }
