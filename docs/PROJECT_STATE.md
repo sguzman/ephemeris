@@ -49,6 +49,8 @@ The canonical recurrence preset slice is verified on `main` at `b97225fcc464041f
 
 The contextual recurrence-editor selector slice is verified on `main` at `56210f55371eb7ec077207ea81e3cee749e961e5`: format, check, strict Clippy, and all **342** library tests pass in GitHub Actions. Selector rows follow the domain frequency matrix and canonical event time kind; inapplicable empty fields are hidden, populated incompatible fields remain explicitly preserved with a Clear action, custom WKST appears only in real weekly/yearly week contexts, and sub-daily frequencies are omitted for date/all-day series.
 
+A child staging slice at `1c20e5de7e04a57854405c43396da4fd427f233e` adds structured ordinal-BYDAY editing and targets **347** library tests. Month/year ordinal weekday selectors are edited as explicit ordinal + weekday rows with add/remove controls; compact tokens such as `1MO,-1FR` remain available in a collapsed raw editor, raw edits stay authoritative until loaded into rows, and presets/incompatible-context clearing keep both representations synchronized. The slice is pending fresh CI verification before promotion.
+
 DAILY reachability switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. YEARLY reachability likewise scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
 ## Implemented architecture
@@ -168,7 +170,7 @@ Implemented:
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, richer high-level recurrence editing ergonomics beyond presets/structured exceptions/contextual selector visibility, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, richer high-level recurrence editing ergonomics beyond presets/structured exceptions/contextual selector visibility/structured ordinal BYDAY, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
