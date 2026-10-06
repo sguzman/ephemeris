@@ -13,10 +13,7 @@ pub enum IcalRecurrenceError {
     MissingFrequency,
     DuplicatePart(String),
     UnknownPart(String),
-    InvalidPart {
-        name: String,
-        value: String,
-    },
+    InvalidPart { name: String, value: String },
     CountUntilConflict,
     UnsupportedUntilDateTime(String),
     Domain(RecurrenceError),
@@ -39,7 +36,9 @@ impl fmt::Display for IcalRecurrenceError {
                 formatter,
                 "RRULE UNTIL date-time {value} cannot be represented by Ephemeris' civil-date recurrence bound"
             ),
-            Self::Domain(error) => write!(formatter, "invalid RRULE recurrence definition: {error}"),
+            Self::Domain(error) => {
+                write!(formatter, "invalid RRULE recurrence definition: {error}")
+            }
         }
     }
 }
@@ -86,12 +85,12 @@ pub fn parse_rrule(raw: &str) -> Result<RecurrenceRule, IcalRecurrenceError> {
     let mut by_set_pos = Vec::new();
 
     for part in value.split(';') {
-        let (name, raw_value) = part
-            .split_once('=')
-            .ok_or_else(|| IcalRecurrenceError::InvalidPart {
-                name: part.trim().to_ascii_uppercase(),
-                value: String::new(),
-            })?;
+        let (name, raw_value) =
+            part.split_once('=')
+                .ok_or_else(|| IcalRecurrenceError::InvalidPart {
+                    name: part.trim().to_ascii_uppercase(),
+                    value: String::new(),
+                })?;
         let name = name.trim().to_ascii_uppercase();
         let raw_value = raw_value.trim();
         if name.is_empty() || raw_value.is_empty() {
@@ -106,14 +105,12 @@ pub fn parse_rrule(raw: &str) -> Result<RecurrenceRule, IcalRecurrenceError> {
 
         match name.as_str() {
             "FREQ" => {
-                frequency = Some(
-                    RecurrenceFrequency::parse(raw_value).ok_or_else(|| {
-                        IcalRecurrenceError::InvalidPart {
-                            name,
-                            value: raw_value.to_string(),
-                        }
-                    })?,
-                );
+                frequency = Some(RecurrenceFrequency::parse(raw_value).ok_or_else(|| {
+                    IcalRecurrenceError::InvalidPart {
+                        name,
+                        value: raw_value.to_string(),
+                    }
+                })?);
             }
             "INTERVAL" => {
                 interval = parse_scalar::<u32>(&name, raw_value)?;
@@ -217,9 +214,11 @@ pub fn format_rrule(rule: &RecurrenceRule) -> Result<String, IcalRecurrenceError
             .iter()
             .map(|weekday| weekday_code(*weekday).to_string())
             .collect::<Vec<_>>();
-        values.extend(rule.by_month_weekday.iter().map(|selector| {
-            format!("{}{}", selector.ordinal, weekday_code(selector.weekday))
-        }));
+        values.extend(
+            rule.by_month_weekday
+                .iter()
+                .map(|selector| format!("{}{}", selector.ordinal, weekday_code(selector.weekday))),
+        );
         parts.push(format!("BYDAY={}", values.join(",")));
     }
 
@@ -243,9 +242,7 @@ fn parse_until_date(raw: &str) -> Result<NaiveDate, IcalRecurrenceError> {
     })
 }
 
-fn parse_byday_token(
-    raw: &str,
-) -> Result<(Option<i8>, RecurrenceWeekday), IcalRecurrenceError> {
+fn parse_byday_token(raw: &str) -> Result<(Option<i8>, RecurrenceWeekday), IcalRecurrenceError> {
     if raw.len() < 2 || !raw.is_ascii() {
         return Err(IcalRecurrenceError::InvalidPart {
             name: "BYDAY".to_string(),
@@ -274,10 +271,7 @@ fn parse_byday_token(
     Ok((Some(ordinal), weekday))
 }
 
-fn parse_weekday_code(
-    name: &str,
-    raw: &str,
-) -> Result<RecurrenceWeekday, IcalRecurrenceError> {
+fn parse_weekday_code(name: &str, raw: &str) -> Result<RecurrenceWeekday, IcalRecurrenceError> {
     match raw.trim().to_ascii_uppercase().as_str() {
         "MO" => Ok(RecurrenceWeekday::Monday),
         "TU" => Ok(RecurrenceWeekday::Tuesday),
@@ -305,10 +299,7 @@ const fn weekday_code(weekday: RecurrenceWeekday) -> &'static str {
     }
 }
 
-fn split_list<'a>(
-    name: &str,
-    raw: &'a str,
-) -> Result<Vec<&'a str>, IcalRecurrenceError> {
+fn split_list<'a>(name: &str, raw: &'a str) -> Result<Vec<&'a str>, IcalRecurrenceError> {
     let values = raw.split(',').map(str::trim).collect::<Vec<_>>();
     if values.is_empty() || values.iter().any(|value| value.is_empty()) {
         return Err(IcalRecurrenceError::InvalidPart {
@@ -483,11 +474,15 @@ mod tests {
     fn delegates_selector_ranges_and_context_to_domain_validation() {
         assert!(matches!(
             parse_rrule("FREQ=YEARLY;BYMONTH=13"),
-            Err(IcalRecurrenceError::Domain(RecurrenceError::InvalidByMonth(13)))
+            Err(IcalRecurrenceError::Domain(
+                RecurrenceError::InvalidByMonth(13)
+            ))
         ));
         assert!(matches!(
             parse_rrule("FREQ=DAILY;BYWEEKNO=1"),
-            Err(IcalRecurrenceError::Domain(RecurrenceError::ByWeekNoRequiresYearly))
+            Err(IcalRecurrenceError::Domain(
+                RecurrenceError::ByWeekNoRequiresYearly
+            ))
         ));
         assert!(matches!(
             parse_rrule("FREQ=DAILY;BYSECOND=60"),
