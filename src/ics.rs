@@ -691,6 +691,95 @@ mod tests {
     }
 
     #[test]
+    fn remote_refresh_uses_http_validators_and_skips_unchanged_payload() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("server address");
+        let server = std::thread::spawn(move || {
+            for request_index in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut request = Vec::new();
+                let mut chunk = [0_u8; 1024];
+                loop {
+                    let read = stream.read(&mut chunk).expect("read request");
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let request = String::from_utf8(request).expect("UTF-8 request");
+
+                if request_index == 0 {
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/calendar\r\nContent-Length: {}\r\nETag: \"fixture-v1\"\r\nLast-Modified: Tue, 06 Oct 2026 20:00:00 GMT\r\nConnection: close\r\n\r\n{}",
+                        FIXTURE.len(),
+                        FIXTURE
+                    );
+                    stream
+                        .write_all(response.as_bytes())
+                        .expect("write initial response");
+                } else {
+                    assert!(
+                        request
+                            .to_ascii_lowercase()
+                            .contains("if-none-match: \"fixture-v1\"")
+                    );
+                    assert!(
+                        request.to_ascii_lowercase().contains(
+                            "if-modified-since: tue, 06 oct 2026 20:00:00 gmt"
+                        )
+                    );
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n",
+                        )
+                        .expect("write not-modified response");
+                }
+            }
+        });
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let url = format!("http://{address}/calendar.ics");
+        let first = import_remote_ics(&store, &url).expect("initial remote import");
+        assert!(!first.not_modified);
+        assert_eq!(first.created, 2);
+
+        let source = store
+            .source_by_id(first.source_id)
+            .expect("source query")
+            .expect("source");
+        assert_eq!(
+            source.properties["ical"]["http"]["etag"],
+            json!("\"fixture-v1\"")
+        );
+        assert_eq!(
+            source.properties["ical"]["http"]["last_modified"],
+            json!("Tue, 06 Oct 2026 20:00:00 GMT")
+        );
+
+        let second = import_remote_ics(&store, &url).expect("conditional refresh");
+        assert!(second.not_modified);
+        assert_eq!(second.source_id, first.source_id);
+        assert_eq!(second.created, 0);
+        assert_eq!(second.updated, 0);
+        assert_eq!(second.unchanged, 2);
+
+        server.join().expect("test server");
+        let attempts = store.source_refresh_attempts(10).expect("refresh history");
+        assert_eq!(attempts.len(), 2);
+        assert!(attempts[0]
+            .summary
+            .as_deref()
+            .is_some_and(|summary| summary.contains("HTTP 304")));
+        assert_eq!(attempts[0].success, Some(true));
+    }
+
+    #[test]
     fn remote_http_validators_roundtrip_through_source_properties() {
         let mut source =
             TemporalSource::new("Remote", SourceKind::Webcal, SourceAuthority::Unknown);
