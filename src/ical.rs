@@ -1137,9 +1137,8 @@ mod tests {
             start: NaiveDate::from_ymd_opt(2026, 1, 10).expect("start"),
             end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 1, 12).expect("end")),
         };
-        let original =
-            parse_recurrence_id_property("RECURRENCE-ID;VALUE=DATE:20260310", &base)
-                .expect("RECURRENCE-ID");
+        let original = parse_recurrence_id_property("RECURRENCE-ID;VALUE=DATE:20260310", &base)
+            .expect("RECURRENCE-ID");
 
         assert_eq!(
             original,
@@ -1227,9 +1226,8 @@ mod tests {
             end_utc: None,
             source_timezone: None,
         };
-        let utc =
-            parse_recurrence_id_property("RECURRENCE-ID:20260112T140000Z", &utc_base)
-                .expect("UTC RECURRENCE-ID");
+        let utc = parse_recurrence_id_property("RECURRENCE-ID:20260112T140000Z", &utc_base)
+            .expect("UTC RECURRENCE-ID");
         assert_eq!(
             format_recurrence_id_property(&utc, &utc_base).expect("format UTC"),
             "RECURRENCE-ID:20260112T140000Z"
