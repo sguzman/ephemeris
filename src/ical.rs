@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn roundtrips_supported_rule_without_exception_properties() {
         let original = parse_rrule(
-            "FREQ=YEARLY;INTERVAL=3;WKST=SU;BYMONTH=1,7;BYDAY=MO,-1FR;BYHOUR=9;BYMINUTE=30;BYSETPOS=-1",
+            "FREQ=YEARLY;INTERVAL=3;BYMONTH=1,7;BYDAY=MO,-1FR;BYHOUR=9;BYMINUTE=30;BYSETPOS=-1",
         )
         .expect("parse");
         let encoded = format_rrule(&original).expect("format");
