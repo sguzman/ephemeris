@@ -545,7 +545,7 @@ fn parse_recurrence_date_value(
     }
 }
 
-const fn value_type_kind(value_type: &str) -> &'static str {
+fn value_type_kind(value_type: &str) -> &'static str {
     match value_type {
         "DATE" => "date",
         "DATE-TIME" => "date-time",
