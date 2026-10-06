@@ -740,7 +740,8 @@ impl IcalVeventSeries {
             });
         }
 
-        let mut event = TemporalEvent::new("iCalendar recurrence validation", self.master.time.clone());
+        let mut event =
+            TemporalEvent::new("iCalendar recurrence validation", self.master.time.clone());
         event.recurrence = Some(rule.clone());
         event.validate_recurrence()?;
         Ok(rule)
@@ -2721,7 +2722,9 @@ and continues here\r\nSUMMARY:Example\r\n";
         let series = bind_vevent_series(master.clone(), vec![phantom]).expect("bind phantom");
         assert!(matches!(
             series.canonical_recurrence_rule(),
-            Err(IcalRecurrenceError::Domain(RecurrenceError::UnknownOverrideTarget(_)))
+            Err(IcalRecurrenceError::Domain(
+                RecurrenceError::UnknownOverrideTarget(_)
+            ))
         ));
 
         let changed_summary = parse_vevent(concat!(
