@@ -169,7 +169,8 @@ impl RecurrenceEditDraft {
                 parse_exception_start_values(&self.exdate_text, &self.base_time, "EXDATE")?;
         }
         if self.override_text != format_recurrence_override_values(&self.rule.overrides) {
-            rule.overrides = parse_recurrence_override_values(&self.override_text, &self.base_time)?;
+            rule.overrides =
+                parse_recurrence_override_values(&self.override_text, &self.base_time)?;
         }
 
         rule.validate().map_err(|error| error.to_string())?;
@@ -181,7 +182,6 @@ impl RecurrenceEditDraft {
             .map_err(|error| error.to_string())?;
         Ok(rule)
     }
-
 }
 
 fn selector_tokens(raw: &str) -> impl Iterator<Item = &str> {
@@ -269,97 +269,94 @@ fn parse_exception_start_value(
     label: &str,
 ) -> Result<TimeSpec, String> {
     match base_time {
-            TimeSpec::DateOnly {
-                start: base_start,
-                end_exclusive,
-            } => {
-                let start = NaiveDate::parse_from_str(token, "%Y-%m-%d")
-                    .map_err(|_| format!("{label} value '{token}' must use YYYY-MM-DD."))?;
-                let end_exclusive = (*end_exclusive)
-                    .map(|end| end.signed_duration_since(*base_start))
-                    .map(|duration| {
-                        start.checked_add_signed(duration).ok_or_else(|| {
-                            format!("{label} value '{token}' overflows its duration.")
-                        })
-                    })
-                    .transpose()?;
-                Ok(TimeSpec::DateOnly {
-                    start,
-                    end_exclusive,
+        TimeSpec::DateOnly {
+            start: base_start,
+            end_exclusive,
+        } => {
+            let start = NaiveDate::parse_from_str(token, "%Y-%m-%d")
+                .map_err(|_| format!("{label} value '{token}' must use YYYY-MM-DD."))?;
+            let end_exclusive = (*end_exclusive)
+                .map(|end| end.signed_duration_since(*base_start))
+                .map(|duration| {
+                    start
+                        .checked_add_signed(duration)
+                        .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
                 })
-            }
-            TimeSpec::AllDay {
-                start: base_start,
+                .transpose()?;
+            Ok(TimeSpec::DateOnly {
+                start,
                 end_exclusive,
-            } => {
-                let start = NaiveDate::parse_from_str(token, "%Y-%m-%d")
-                    .map_err(|_| format!("{label} value '{token}' must use YYYY-MM-DD."))?;
-                let end_exclusive = (*end_exclusive)
-                    .map(|end| end.signed_duration_since(*base_start))
-                    .map(|duration| {
-                        start.checked_add_signed(duration).ok_or_else(|| {
-                            format!("{label} value '{token}' overflows its duration.")
-                        })
-                    })
-                    .transpose()?;
-                Ok(TimeSpec::AllDay {
-                    start,
-                    end_exclusive,
+            })
+        }
+        TimeSpec::AllDay {
+            start: base_start,
+            end_exclusive,
+        } => {
+            let start = NaiveDate::parse_from_str(token, "%Y-%m-%d")
+                .map_err(|_| format!("{label} value '{token}' must use YYYY-MM-DD."))?;
+            let end_exclusive = (*end_exclusive)
+                .map(|end| end.signed_duration_since(*base_start))
+                .map(|duration| {
+                    start
+                        .checked_add_signed(duration)
+                        .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
                 })
-            }
-            TimeSpec::Instant {
-                start_utc: base_start,
+                .transpose()?;
+            Ok(TimeSpec::AllDay {
+                start,
+                end_exclusive,
+            })
+        }
+        TimeSpec::Instant {
+            start_utc: base_start,
+            end_utc,
+            source_timezone,
+        } => {
+            let start_utc = DateTime::parse_from_rfc3339(token)
+                .map_err(|_| format!("{label} value '{token}' must be RFC3339."))?
+                .with_timezone(&Utc);
+            let end_utc = end_utc
+                .as_ref()
+                .map(|end| end.signed_duration_since(*base_start))
+                .map(|duration| {
+                    start_utc
+                        .checked_add_signed(duration)
+                        .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
+                })
+                .transpose()?;
+            Ok(TimeSpec::Instant {
+                start_utc,
                 end_utc,
-                source_timezone,
-            } => {
-                let start_utc = DateTime::parse_from_rfc3339(token)
-                    .map_err(|_| format!("{label} value '{token}' must be RFC3339."))?
-                    .with_timezone(&Utc);
-                let end_utc = end_utc
-                    .as_ref()
-                    .map(|end| end.signed_duration_since(*base_start))
-                    .map(|duration| {
-                        start_utc.checked_add_signed(duration).ok_or_else(|| {
-                            format!("{label} value '{token}' overflows its duration.")
-                        })
-                    })
-                    .transpose()?;
-                Ok(TimeSpec::Instant {
-                    start_utc,
-                    end_utc,
-                    source_timezone: source_timezone.clone(),
+                source_timezone: source_timezone.clone(),
+            })
+        }
+        TimeSpec::Floating {
+            start: base_start,
+            end,
+            source_timezone,
+        } => {
+            let start = parse_floating_exception_start(token, label)?;
+            let end = end
+                .as_ref()
+                .map(|end| end.signed_duration_since(*base_start))
+                .map(|duration| {
+                    start
+                        .checked_add_signed(duration)
+                        .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
                 })
-            }
-            TimeSpec::Floating {
-                start: base_start,
+                .transpose()?;
+            Ok(TimeSpec::Floating {
+                start,
                 end,
-                source_timezone,
-            } => {
-                let start = parse_floating_exception_start(token, label)?;
-                let end = end
-                    .as_ref()
-                    .map(|end| end.signed_duration_since(*base_start))
-                    .map(|duration| {
-                        start.checked_add_signed(duration).ok_or_else(|| {
-                            format!("{label} value '{token}' overflows its duration.")
-                        })
-                    })
-                    .transpose()?;
-                Ok(TimeSpec::Floating {
-                    start,
-                    end,
-                    source_timezone: source_timezone.clone(),
-                })
-            }
-        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => Err(
-            format!(
-                "{label} cannot be authored for {} recurrence.",
-                base_time.kind_name()
-            ),
-        ),
+                source_timezone: source_timezone.clone(),
+            })
+        }
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => Err(format!(
+            "{label} cannot be authored for {} recurrence.",
+            base_time.kind_name()
+        )),
     }
 }
-
 fn parse_exception_start_values(
     raw: &str,
     base_time: &TimeSpec,
@@ -371,7 +368,9 @@ fn parse_exception_start_values(
 }
 
 fn override_entries(raw: &str) -> impl Iterator<Item = &str> {
-    raw.split(['\n', ';']).map(str::trim).filter(|entry| !entry.is_empty())
+    raw.split(['\n', ';'])
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
 }
 
 fn parse_recurrence_override_values(
@@ -6469,10 +6468,7 @@ mod tests {
         assert_eq!(parsed.rdates.len(), 2);
         assert_eq!(parsed.exdates.len(), 1);
         assert_eq!(parsed.overrides, rule.overrides);
-        assert_eq!(
-            draft.override_text,
-            "2026-10-12=>2026-10-13"
-        );
+        assert_eq!(draft.override_text, "2026-10-12=>2026-10-13");
     }
 
     #[test]
@@ -6537,10 +6533,7 @@ mod tests {
         let parsed = parse_recurrence_override_values(raw, &base).expect("parse overrides");
 
         assert_eq!(parsed.len(), 4);
-        assert_eq!(
-            format_recurrence_override_values(&parsed),
-            raw
-        );
+        assert_eq!(format_recurrence_override_values(&parsed), raw);
         assert!(!parsed[0].cancelled);
         assert!(parsed[0].replacement.is_some());
         assert!(parsed[1].cancelled);
@@ -6558,19 +6551,14 @@ mod tests {
             end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 7).expect("base end")),
         };
 
-        let parsed = parse_recurrence_override_values(
-            "2026-10-12=>2026-10-20",
-            &base,
-        )
-        .expect("parse override");
+        let parsed = parse_recurrence_override_values("2026-10-12=>2026-10-20", &base)
+            .expect("parse override");
 
         assert_eq!(
             parsed[0].original,
             TimeSpec::DateOnly {
                 start: NaiveDate::from_ymd_opt(2026, 10, 12).expect("original"),
-                end_exclusive: Some(
-                    NaiveDate::from_ymd_opt(2026, 10, 14).expect("original end")
-                ),
+                end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 14).expect("original end")),
             }
         );
         assert_eq!(
@@ -6599,8 +6587,7 @@ mod tests {
         event.recurrence = Some(rule);
 
         let mut draft = RecurrenceEditDraft::from_event(&event);
-        draft.override_text =
-            "2026-10-07=>2026-10-20\n2026-10-08=>CANCEL".to_string();
+        draft.override_text = "2026-10-07=>2026-10-20\n2026-10-08=>CANCEL".to_string();
 
         let parsed = draft.parsed_rule().expect("valid overrides");
 
@@ -6647,8 +6634,7 @@ mod tests {
         event.recurrence = Some(rule);
 
         let mut draft = RecurrenceEditDraft::from_event(&event);
-        draft.override_text =
-            "2026-10-06=>CANCEL\n2026-10-06=>2026-10-10".to_string();
+        draft.override_text = "2026-10-06=>CANCEL\n2026-10-06=>2026-10-10".to_string();
 
         assert!(draft.parsed_rule().is_err());
     }
@@ -6664,5 +6650,4 @@ mod tests {
         assert!(parse_recurrence_override_values("=>CANCEL", &base).is_err());
         assert!(parse_recurrence_override_values("2026-10-06=>", &base).is_err());
     }
-
 }
