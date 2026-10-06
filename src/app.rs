@@ -288,9 +288,10 @@ fn parse_exception_start_values(
                     .with_timezone(&Utc);
                 let end_utc = end_utc
                     .as_ref()
-                    .map(|end| end.signed_duration_since(*base_start))
+                    .map(|end| end.signed_duration_since(base_start.clone()))
                     .map(|duration| {
                         start_utc
+                            .clone()
                             .checked_add_signed(duration)
                             .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
                     })
@@ -6263,7 +6264,7 @@ mod tests {
             .expect("start")
             .with_timezone(&Utc);
         let base = TimeSpec::Instant {
-            start_utc,
+            start_utc: start_utc.clone(),
             end_utc: Some(start_utc + ChronoDuration::minutes(90)),
             source_timezone: Some("America/New_York".to_string()),
         };
@@ -6284,13 +6285,13 @@ mod tests {
         };
 
         assert_eq!(
-            *start_utc,
+            start_utc.clone(),
             DateTime::parse_from_rfc3339("2026-04-01T13:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc)
         );
         assert_eq!(
-            *end_utc,
+            end_utc.clone(),
             Some(
                 DateTime::parse_from_rfc3339("2026-04-01T14:30:00Z")
                     .unwrap()
@@ -6333,7 +6334,7 @@ mod tests {
 
         let mut draft = RecurrenceEditDraft::from_event(&event);
         draft.rdate_text = "2026-10-20,2026-10-21".to_string();
-        draft.exdate_text = "2026-10-7".replace("-7", "-07");
+        draft.exdate_text = "2026-10-07".to_string();
 
         let parsed = draft.parsed_rule().expect("parsed rule");
 
