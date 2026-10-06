@@ -5,9 +5,9 @@ This directory is the design and project-memory surface for Ephemeris.
 ## Start here
 
 1. [PRODUCT.md](PRODUCT.md)
-2. [LINEAGE.md](LINEAGE.md)
-3. [PROJECT_STATE.md](PROJECT_STATE.md)
-4. [ROADMAP.md](ROADMAP.md)
+2. [PROJECT_STATE.md](PROJECT_STATE.md)
+3. [ROADMAP.md](ROADMAP.md)
+4. [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ## Domain and architecture
 
@@ -20,6 +20,7 @@ This directory is the design and project-memory surface for Ephemeris.
 - [TARIA_FILESYSTEM_WORKFLOW.md](TARIA_FILESYSTEM_WORKFLOW.md) - local Resourcearium path and one-click update workflow
 - [INGESTION_AND_SYNC.md](INGESTION_AND_SYNC.md) - adapters, refresh, reconciliation, sync, export
 - [RIVETR_INHERITANCE.md](RIVETR_INHERITANCE.md) - what to reuse from the immediate ancestor
+- [LINEAGE.md](LINEAGE.md) - Rivet → Rivetr → Ephemeris genealogy
 
 ## Product behavior
 
@@ -28,6 +29,7 @@ This directory is the design and project-memory surface for Ephemeris.
 - [QUALITY.md](QUALITY.md) - correctness, tests, migrations, observability
 - [FUTURE_CAPABILITIES.md](FUTURE_CAPABILITIES.md) - full long-horizon feature envelope
 - [GLOSSARY.md](GLOSSARY.md) - project terminology
+- [IMPLEMENTATION_HISTORY.md](IMPLEMENTATION_HISTORY.md) - archived detailed milestone/test checkpoint ledger
 
 ## Decisions
 
@@ -42,5 +44,7 @@ Current ADRs:
 ## Maintenance rule
 
 When a design or implementation decision changes project behavior, update the relevant canonical document and add an ADR when the change affects durable architecture.
+
+Keep the root README and PROJECT_STATE concise. Historical implementation checkpoints belong in IMPLEMENTATION_HISTORY rather than being appended indefinitely to landing/current-state documents.
 
 Do not rely on chat history as the only record of project decisions.
