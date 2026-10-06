@@ -569,16 +569,14 @@ impl RecurrenceEditDraft {
         rule.by_year_day = parse_i16_selector_values(&self.year_day_text, "BYYEARDAY")?;
 
         let canonical_month_day_text = format_selector_values(&self.rule.by_month_day);
-        let structured_month_day_text =
-            format_recurrence_monthday_edit_rows(&self.month_day_rows);
+        let structured_month_day_text = format_recurrence_monthday_edit_rows(&self.month_day_rows);
         let month_day_raw_override = self.month_day_text != canonical_month_day_text
             && self.month_day_text != structured_month_day_text;
         if month_day_raw_override {
             rule.by_month_day = parse_i8_selector_values(&self.month_day_text, "BYMONTHDAY")?;
         } else {
             validate_recurrence_monthday_edit_rows(&self.month_day_rows)?;
-            rule.by_month_day =
-                parse_i8_selector_values(&structured_month_day_text, "BYMONTHDAY")?;
+            rule.by_month_day = parse_i8_selector_values(&structured_month_day_text, "BYMONTHDAY")?;
         }
 
         let canonical_ordinal_byday_text = format_ordinal_byday_values(&self.rule.by_month_weekday);
@@ -3818,11 +3816,7 @@ fn render_contextual_week_start(ui: &mut egui::Ui, draft: &mut RecurrenceEditDra
     }
 }
 
-fn render_structured_monthday(
-    ui: &mut egui::Ui,
-    draft: &mut RecurrenceEditDraft,
-    available: bool,
-) {
+fn render_structured_monthday(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, available: bool) {
     if !available {
         if draft.month_day_text.trim().is_empty() && draft.month_day_rows.is_empty() {
             return;
@@ -8414,5 +8408,4 @@ mod tests {
         assert!(draft.month_day_text.is_empty());
         assert!(draft.month_day_rows.is_empty());
     }
-
 }
