@@ -38,6 +38,9 @@ pub enum IcalRecurrenceError {
     InvalidContentLine(String),
     InvalidTextEscape(String),
     InvalidComponent(String),
+    MissingProperty(&'static str),
+    DuplicateProperty(String),
+    UnsupportedProperty(String),
     InvalidTimezone(String),
     TemporalKindMismatch {
         property: &'static str,
@@ -120,6 +123,9 @@ impl fmt::Display for IcalRecurrenceError {
             Self::InvalidComponent(value) => {
                 write!(formatter, "invalid iCalendar component: {value}")
             }
+            Self::MissingProperty(name) => write!(formatter, "VEVENT requires {name}"),
+            Self::DuplicateProperty(name) => write!(formatter, "duplicate VEVENT property {name}"),
+            Self::UnsupportedProperty(name) => write!(formatter, "unsupported VEVENT property {name}"),
             Self::InvalidTimezone(value) => {
                 write!(formatter, "unsupported or invalid iCalendar TZID {value}")
             }
@@ -389,6 +395,334 @@ pub fn format_vevent_content_lines(
     }
     physical.push("END:VEVENT".to_string());
     Ok(format!("{}\r\n", physical.join("\r\n")))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IcalProperty<T> {
+    pub value: T,
+    pub parameters: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IcalVeventStatus {
+    Tentative,
+    Confirmed,
+    Cancelled,
+}
+
+impl IcalVeventStatus {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tentative => "TENTATIVE",
+            Self::Confirmed => "CONFIRMED",
+            Self::Cancelled => "CANCELLED",
+        }
+    }
+
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_uppercase().as_str() {
+            "TENTATIVE" => Some(Self::Tentative),
+            "CONFIRMED" => Some(Self::Confirmed),
+            "CANCELLED" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IcalVevent {
+    pub uid: IcalProperty<String>,
+    pub dtstamp: IcalProperty<DateTime<Utc>>,
+    pub time: TimeSpec,
+    pub summary: Option<IcalProperty<String>>,
+    pub description: Option<IcalProperty<String>>,
+    pub status: Option<IcalProperty<IcalVeventStatus>>,
+    pub sequence: Option<IcalProperty<u32>>,
+    pub rrule: Option<IcalProperty<RecurrenceRule>>,
+    pub rdates: Vec<TimeSpec>,
+    pub exdates: Vec<TimeSpec>,
+    /// Kept as a parsed content line until a master VEVENT supplies the
+    /// canonical DTSTART shape needed to decode original-slot identity.
+    pub recurrence_id: Option<IcalContentLine>,
+    pub extra_properties: Vec<IcalContentLine>,
+}
+
+/// Bind a single VEVENT component into typed RFC properties while preserving
+/// unknown non-temporal properties for later source-aware handling.
+pub fn parse_vevent(raw: &str) -> Result<IcalVevent, IcalRecurrenceError> {
+    let lines = parse_vevent_content_lines(raw)?;
+
+    let mut uid = None;
+    let mut dtstamp = None;
+    let mut dtstart = None;
+    let mut dtend = None;
+    let mut summary = None;
+    let mut description = None;
+    let mut status = None;
+    let mut sequence = None;
+    let mut rrule = None;
+    let mut rdate_lines = Vec::new();
+    let mut exdate_lines = Vec::new();
+    let mut recurrence_id = None;
+    let mut extra_properties = Vec::new();
+
+    for line in lines {
+        match line.name.as_str() {
+            "UID" => set_unique_content_line(&mut uid, line)?,
+            "DTSTAMP" => set_unique_content_line(&mut dtstamp, line)?,
+            "DTSTART" => set_unique_content_line(&mut dtstart, line)?,
+            "DTEND" => set_unique_content_line(&mut dtend, line)?,
+            "SUMMARY" => set_unique_content_line(&mut summary, line)?,
+            "DESCRIPTION" => set_unique_content_line(&mut description, line)?,
+            "STATUS" => set_unique_content_line(&mut status, line)?,
+            "SEQUENCE" => set_unique_content_line(&mut sequence, line)?,
+            "RRULE" => set_unique_content_line(&mut rrule, line)?,
+            "RDATE" => rdate_lines.push(line),
+            "EXDATE" => exdate_lines.push(line),
+            "RECURRENCE-ID" => set_unique_content_line(&mut recurrence_id, line)?,
+            "DURATION" => {
+                return Err(IcalRecurrenceError::UnsupportedProperty(
+                    "DURATION".to_string(),
+                ));
+            }
+            _ => extra_properties.push(line),
+        }
+    }
+
+    let uid_line = uid.ok_or(IcalRecurrenceError::MissingProperty("UID"))?;
+    let uid = parse_text_property(uid_line)?;
+    if uid.value.is_empty() {
+        return Err(IcalRecurrenceError::InvalidPropertyValue {
+            property: "UID",
+            value: String::new(),
+        });
+    }
+
+    let dtstamp_line = dtstamp.ok_or(IcalRecurrenceError::MissingProperty("DTSTAMP"))?;
+    let dtstamp = parse_dtstamp_property(dtstamp_line)?;
+
+    let dtstart_line = dtstart.ok_or(IcalRecurrenceError::MissingProperty("DTSTART"))?;
+    let dtstart_raw = format_ical_content_line(&dtstart_line)?;
+    let dtend_raw = dtend
+        .as_ref()
+        .map(format_ical_content_line)
+        .transpose()?;
+    let time = parse_vevent_time_properties(&dtstart_raw, dtend_raw.as_deref())?;
+
+    let summary = summary.map(parse_text_property).transpose()?;
+    let description = description.map(parse_text_property).transpose()?;
+    let status = status.map(parse_status_property).transpose()?;
+    let sequence = sequence.map(parse_sequence_property).transpose()?;
+    let rrule = rrule.map(parse_rrule_property).transpose()?;
+
+    let mut rdates = Vec::new();
+    for line in rdate_lines {
+        rdates.extend(parse_rdate_property(&format_ical_content_line(&line)?, &time)?);
+    }
+    let mut exdates = Vec::new();
+    for line in exdate_lines {
+        exdates.extend(parse_exdate_property(&format_ical_content_line(&line)?, &time)?);
+    }
+
+    Ok(IcalVevent {
+        uid,
+        dtstamp,
+        time,
+        summary,
+        description,
+        status,
+        sequence,
+        rrule,
+        rdates,
+        exdates,
+        recurrence_id,
+        extra_properties,
+    })
+}
+
+/// Serialize a typed VEVENT back through the generic envelope while preserving
+/// parameterized text/identity properties and unknown properties.
+pub fn format_vevent(event: &IcalVevent) -> Result<String, IcalRecurrenceError> {
+    let mut lines = Vec::new();
+    lines.push(format_text_property_line("UID", &event.uid));
+
+    reject_fractional_seconds("DTSTAMP", event.dtstamp.value.naive_utc())?;
+    lines.push(IcalContentLine {
+        name: "DTSTAMP".to_string(),
+        parameters: event.dtstamp.parameters.clone(),
+        value: format!("{}Z", event.dtstamp.value.format("%Y%m%dT%H%M%S")),
+    });
+
+    let (dtstart, dtend) = format_vevent_time_properties(&event.time)?;
+    lines.push(parse_ical_content_line(&dtstart)?);
+    if let Some(dtend) = dtend {
+        lines.push(parse_ical_content_line(&dtend)?);
+    }
+
+    if let Some(recurrence_id) = &event.recurrence_id {
+        if recurrence_id.name != "RECURRENCE-ID" {
+            return Err(IcalRecurrenceError::InvalidComponent(
+                "typed recurrence_id is not a RECURRENCE-ID property".to_string(),
+            ));
+        }
+        lines.push(recurrence_id.clone());
+    }
+
+    if let Some(rrule) = &event.rrule {
+        let formatted = format_rrule(&rrule.value)?;
+        let mut line = parse_ical_content_line(&formatted)?;
+        line.parameters = rrule.parameters.clone();
+        lines.push(line);
+    }
+    if !event.rdates.is_empty() {
+        lines.push(parse_ical_content_line(&format_rdate_property(
+            &event.rdates,
+            &event.time,
+        )?)?);
+    }
+    if !event.exdates.is_empty() {
+        lines.push(parse_ical_content_line(&format_exdate_property(
+            &event.exdates,
+            &event.time,
+        )?)?);
+    }
+
+    if let Some(summary) = &event.summary {
+        lines.push(format_text_property_line("SUMMARY", summary));
+    }
+    if let Some(description) = &event.description {
+        lines.push(format_text_property_line("DESCRIPTION", description));
+    }
+    if let Some(status) = &event.status {
+        lines.push(IcalContentLine {
+            name: "STATUS".to_string(),
+            parameters: status.parameters.clone(),
+            value: status.value.as_str().to_string(),
+        });
+    }
+    if let Some(sequence) = &event.sequence {
+        lines.push(IcalContentLine {
+            name: "SEQUENCE".to_string(),
+            parameters: sequence.parameters.clone(),
+            value: sequence.value.to_string(),
+        });
+    }
+
+    for extra in &event.extra_properties {
+        if is_reserved_typed_vevent_property(&extra.name) {
+            return Err(IcalRecurrenceError::DuplicateProperty(extra.name.clone()));
+        }
+        lines.push(extra.clone());
+    }
+
+    format_vevent_content_lines(&lines)
+}
+
+fn set_unique_content_line(
+    slot: &mut Option<IcalContentLine>,
+    line: IcalContentLine,
+) -> Result<(), IcalRecurrenceError> {
+    if slot.is_some() {
+        return Err(IcalRecurrenceError::DuplicateProperty(line.name));
+    }
+    *slot = Some(line);
+    Ok(())
+}
+
+fn parse_text_property(
+    line: IcalContentLine,
+) -> Result<IcalProperty<String>, IcalRecurrenceError> {
+    Ok(IcalProperty {
+        value: unescape_ical_text(&line.value)?,
+        parameters: line.parameters,
+    })
+}
+
+fn format_text_property_line(name: &str, property: &IcalProperty<String>) -> IcalContentLine {
+    IcalContentLine {
+        name: name.to_string(),
+        parameters: property.parameters.clone(),
+        value: escape_ical_text(&property.value),
+    }
+}
+
+fn parse_dtstamp_property(
+    line: IcalContentLine,
+) -> Result<IcalProperty<DateTime<Utc>>, IcalRecurrenceError> {
+    let Some(raw_utc) = line.value.strip_suffix('Z') else {
+        return Err(IcalRecurrenceError::InvalidPropertyValue {
+            property: "DTSTAMP",
+            value: line.value,
+        });
+    };
+    let naive = parse_basic_datetime("DTSTAMP", raw_utc)?;
+    Ok(IcalProperty {
+        value: DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc),
+        parameters: line.parameters,
+    })
+}
+
+fn parse_status_property(
+    line: IcalContentLine,
+) -> Result<IcalProperty<IcalVeventStatus>, IcalRecurrenceError> {
+    let value = IcalVeventStatus::parse(&line.value).ok_or_else(|| {
+        IcalRecurrenceError::InvalidPropertyValue {
+            property: "STATUS",
+            value: line.value.clone(),
+        }
+    })?;
+    Ok(IcalProperty {
+        value,
+        parameters: line.parameters,
+    })
+}
+
+fn parse_sequence_property(
+    line: IcalContentLine,
+) -> Result<IcalProperty<u32>, IcalRecurrenceError> {
+    let signed = line
+        .value
+        .parse::<i32>()
+        .map_err(|_| IcalRecurrenceError::InvalidPropertyValue {
+            property: "SEQUENCE",
+            value: line.value.clone(),
+        })?;
+    let value = u32::try_from(signed).map_err(|_| IcalRecurrenceError::InvalidPropertyValue {
+        property: "SEQUENCE",
+        value: line.value.clone(),
+    })?;
+    Ok(IcalProperty {
+        value,
+        parameters: line.parameters,
+    })
+}
+
+fn parse_rrule_property(
+    line: IcalContentLine,
+) -> Result<IcalProperty<RecurrenceRule>, IcalRecurrenceError> {
+    Ok(IcalProperty {
+        value: parse_rrule(&line.value)?,
+        parameters: line.parameters,
+    })
+}
+
+fn is_reserved_typed_vevent_property(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "UID"
+            | "DTSTAMP"
+            | "DTSTART"
+            | "DTEND"
+            | "DURATION"
+            | "SUMMARY"
+            | "DESCRIPTION"
+            | "STATUS"
+            | "SEQUENCE"
+            | "RRULE"
+            | "RDATE"
+            | "EXDATE"
+            | "RECURRENCE-ID"
+    )
 }
 
 fn find_unquoted(raw: &str, needle: char) -> Option<usize> {
@@ -1905,6 +2239,160 @@ and continues here\r\nSUMMARY:Example\r\n";
         assert!(matches!(
             unfold_ical_content_lines(" orphan continuation\r\n"),
             Err(IcalRecurrenceError::InvalidContentLine(_))
+        ));
+    }
+
+    #[test]
+    fn typed_vevent_roundtrips_recurrence_text_and_unknown_properties() {
+        let raw = concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series-123@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART;TZID=America/New_York:20261102T090000\r\n",
+            "DTEND;TZID=America/New_York:20261102T100000\r\n",
+            "RRULE:FREQ=WEEKLY;BYDAY=MO,WE\r\n",
+            "RDATE;TZID=America/New_York:20261106T090000\r\n",
+            "EXDATE;TZID=America/New_York:20261109T090000\r\n",
+            "SUMMARY;LANGUAGE=en:Team\\, sync\r\n",
+            "DESCRIPTION:Line 1\\nLine 2\r\n",
+            "STATUS:CONFIRMED\r\n",
+            "SEQUENCE:2\r\n",
+            "LOCATION:Room 3\r\n",
+            "END:VEVENT\r\n"
+        );
+        let event = parse_vevent(raw).expect("typed VEVENT");
+        assert_eq!(event.uid.value, "series-123@example.com");
+        assert_eq!(
+            event.summary.as_ref().map(|property| property.value.as_str()),
+            Some("Team, sync")
+        );
+        assert_eq!(
+            event.description.as_ref().map(|property| property.value.as_str()),
+            Some("Line 1\nLine 2")
+        );
+        assert_eq!(
+            event.status.as_ref().map(|property| property.value),
+            Some(IcalVeventStatus::Confirmed)
+        );
+        assert_eq!(event.sequence.as_ref().map(|property| property.value), Some(2));
+        assert_eq!(event.rdates.len(), 1);
+        assert_eq!(event.exdates.len(), 1);
+        assert_eq!(event.extra_properties.len(), 1);
+        assert_eq!(event.extra_properties[0].name, "LOCATION");
+
+        let reparsed = parse_vevent(&format_vevent(&event).expect("format")).expect("reparse");
+        assert_eq!(reparsed, event);
+    }
+
+    #[test]
+    fn typed_vevent_preserves_recurrence_id_for_master_context_binding() {
+        let raw = concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series-123@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "RECURRENCE-ID;TZID=America/New_York:20261109T090000\r\n",
+            "DTSTART;TZID=America/New_York:20261109T110000\r\n",
+            "DTEND;TZID=America/New_York:20261109T120000\r\n",
+            "STATUS:CONFIRMED\r\n",
+            "END:VEVENT\r\n"
+        );
+        let event = parse_vevent(raw).expect("detached VEVENT");
+        let recurrence_id = event.recurrence_id.as_ref().expect("RECURRENCE-ID");
+        assert_eq!(recurrence_id.name, "RECURRENCE-ID");
+        assert_eq!(recurrence_id.value, "20261109T090000");
+        assert_eq!(
+            format_ical_content_line(recurrence_id).expect("format RECURRENCE-ID"),
+            "RECURRENCE-ID;TZID=America/New_York:20261109T090000"
+        );
+        assert_eq!(
+            parse_vevent(&format_vevent(&event).expect("format")).expect("reparse"),
+            event
+        );
+    }
+
+    #[test]
+    fn typed_vevent_requires_uid_dtstamp_and_dtstart() {
+        for (raw, property) in [
+            (
+                "BEGIN:VEVENT\r\nDTSTAMP:20261006T120000Z\r\nDTSTART:20261007T090000Z\r\nEND:VEVENT\r\n",
+                "UID",
+            ),
+            (
+                "BEGIN:VEVENT\r\nUID:a@example.com\r\nDTSTART:20261007T090000Z\r\nEND:VEVENT\r\n",
+                "DTSTAMP",
+            ),
+            (
+                "BEGIN:VEVENT\r\nUID:a@example.com\r\nDTSTAMP:20261006T120000Z\r\nEND:VEVENT\r\n",
+                "DTSTART",
+            ),
+        ] {
+            assert_eq!(
+                parse_vevent(raw),
+                Err(IcalRecurrenceError::MissingProperty(property))
+            );
+        }
+    }
+
+    #[test]
+    fn typed_vevent_rejects_duplicate_singletons_and_duration() {
+        assert!(matches!(
+            parse_vevent(concat!(
+                "BEGIN:VEVENT\r\n",
+                "UID:a@example.com\r\n",
+                "UID:b@example.com\r\n",
+                "DTSTAMP:20261006T120000Z\r\n",
+                "DTSTART:20261007T090000Z\r\n",
+                "END:VEVENT\r\n"
+            )),
+            Err(IcalRecurrenceError::DuplicateProperty(name)) if name == "UID"
+        ));
+
+        assert_eq!(
+            parse_vevent(concat!(
+                "BEGIN:VEVENT\r\n",
+                "UID:a@example.com\r\n",
+                "DTSTAMP:20261006T120000Z\r\n",
+                "DTSTART:20261007T090000Z\r\n",
+                "DURATION:PT1H\r\n",
+                "END:VEVENT\r\n"
+            )),
+            Err(IcalRecurrenceError::UnsupportedProperty(
+                "DURATION".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn typed_vevent_rejects_non_utc_dtstamp_and_invalid_status_sequence() {
+        let base = concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:a@example.com\r\n",
+            "DTSTART:20261007T090000Z\r\n"
+        );
+        assert!(matches!(
+            parse_vevent(&format!("{base}DTSTAMP:20261006T120000\r\nEND:VEVENT\r\n")),
+            Err(IcalRecurrenceError::InvalidPropertyValue {
+                property: "DTSTAMP",
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse_vevent(&format!(
+                "{base}DTSTAMP:20261006T120000Z\r\nSTATUS:COMPLETED\r\nEND:VEVENT\r\n"
+            )),
+            Err(IcalRecurrenceError::InvalidPropertyValue {
+                property: "STATUS",
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse_vevent(&format!(
+                "{base}DTSTAMP:20261006T120000Z\r\nSEQUENCE:-1\r\nEND:VEVENT\r\n"
+            )),
+            Err(IcalRecurrenceError::InvalidPropertyValue {
+                property: "SEQUENCE",
+                ..
+            })
         ));
     }
 
