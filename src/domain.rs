@@ -578,6 +578,8 @@ pub struct RecurrenceRule {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub by_minute: Vec<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_second: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub by_set_pos: Vec<i16>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rdates: Vec<TimeSpec>,
@@ -603,6 +605,7 @@ impl RecurrenceRule {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -737,6 +740,18 @@ impl RecurrenceRule {
                 return Err(RecurrenceError::DuplicateByMinute(*minute));
             }
         }
+        let mut seconds = HashSet::new();
+        for second in &self.by_second {
+            if *second == 60 {
+                return Err(RecurrenceError::BySecondLeapSecondUnsupported);
+            }
+            if *second > 60 {
+                return Err(RecurrenceError::InvalidBySecond(*second));
+            }
+            if !seconds.insert(*second) {
+                return Err(RecurrenceError::DuplicateBySecond(*second));
+            }
+        }
         if !self.by_set_pos.is_empty() {
             let has_selector = !self.by_weekday.is_empty()
                 || !self.by_month.is_empty()
@@ -745,7 +760,8 @@ impl RecurrenceRule {
                 || !self.by_month_day.is_empty()
                 || !self.by_month_weekday.is_empty()
                 || !self.by_hour.is_empty()
-                || !self.by_minute.is_empty();
+                || !self.by_minute.is_empty()
+                || !self.by_second.is_empty();
             if !has_selector {
                 return Err(RecurrenceError::BySetPosRequiresSelector);
             }
@@ -834,6 +850,10 @@ pub enum RecurrenceError {
     ByMinuteRequiresDateTime(&'static str),
     InvalidByMinute(u8),
     DuplicateByMinute(u8),
+    BySecondRequiresDateTime(&'static str),
+    BySecondLeapSecondUnsupported,
+    InvalidBySecond(u8),
+    DuplicateBySecond(u8),
     OrdinalByWeekdayRequiresMonthlyOrYearly,
     InvalidOrdinalByWeekday(i8),
     DuplicateOrdinalByWeekday(i8, &'static str),
@@ -929,6 +949,18 @@ impl fmt::Display for RecurrenceError {
             }
             Self::DuplicateByMinute(minute) => {
                 write!(formatter, "duplicate BYMINUTE value {minute}")
+            }
+            Self::BySecondRequiresDateTime(kind) => {
+                write!(formatter, "BYSECOND requires a date-time recurrence base, got {kind}")
+            }
+            Self::BySecondLeapSecondUnsupported => formatter.write_str(
+                "BYSECOND=60 leap seconds are valid in RFC 5545 but are not yet representable by Ephemeris time values",
+            ),
+            Self::InvalidBySecond(second) => {
+                write!(formatter, "BYSECOND value must be between 0 and 60, got {second}")
+            }
+            Self::DuplicateBySecond(second) => {
+                write!(formatter, "duplicate BYSECOND value {second}")
             }
             Self::OrdinalByWeekdayRequiresMonthlyOrYearly => {
                 formatter.write_str("ordinal BYDAY selection requires monthly or yearly recurrence")
@@ -1094,6 +1126,16 @@ impl TemporalEvent {
             )
         {
             return Err(RecurrenceError::ByMinuteRequiresDateTime(
+                self.time.kind_name(),
+            ));
+        }
+        if !rule.by_second.is_empty()
+            && matches!(
+                &self.time,
+                TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. }
+            )
+        {
+            return Err(RecurrenceError::BySecondRequiresDateTime(
                 self.time.kind_name(),
             ));
         }
@@ -1342,6 +1384,7 @@ fn recurrence_candidates_for_period(
     let candidates = recurrence_candidates_before_set_pos(base, rule, period)?;
     let candidates = expand_by_hours(base, candidates, &rule.by_hour, period)?;
     let candidates = expand_by_minutes(base, candidates, &rule.by_minute, period)?;
+    let candidates = expand_by_seconds(base, candidates, &rule.by_second, period)?;
     Ok(apply_set_positions(candidates, &rule.by_set_pos))
 }
 
@@ -1356,7 +1399,12 @@ fn recurrence_time_multiplier(rule: &RecurrenceRule) -> usize {
     } else {
         rule.by_minute.len()
     };
-    hours * minutes
+    let seconds = if rule.by_second.is_empty() {
+        1
+    } else {
+        rule.by_second.len()
+    };
+    hours * minutes * seconds
 }
 
 fn expand_by_hours(
@@ -1554,6 +1602,107 @@ fn with_recurrence_minute(
         }
         TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => Err(
             RecurrenceError::ByMinuteRequiresDateTime(candidate.kind_name()),
+        ),
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+            Err(RecurrenceError::UnsupportedTimeKind(candidate.kind_name()))
+        }
+    }
+}
+
+fn expand_by_seconds(
+    base: &TimeSpec,
+    candidates: Vec<TimeSpec>,
+    seconds: &[u8],
+    period: u32,
+) -> Result<Vec<TimeSpec>, RecurrenceError> {
+    if seconds.is_empty() || candidates.is_empty() {
+        return Ok(candidates);
+    }
+
+    let mut seconds = seconds.to_vec();
+    seconds.sort_unstable();
+    let mut expanded = Vec::with_capacity(candidates.len().saturating_mul(seconds.len()));
+
+    for candidate in candidates {
+        for second in &seconds {
+            let Some(second_candidate) = with_recurrence_second(&candidate, *second)? else {
+                continue;
+            };
+            if period == 0 && recurrence_start_cmp(&second_candidate, base)? == Ordering::Less {
+                continue;
+            }
+            expanded.push(second_candidate);
+        }
+    }
+
+    Ok(expanded)
+}
+
+fn with_recurrence_second(
+    candidate: &TimeSpec,
+    second: u8,
+) -> Result<Option<TimeSpec>, RecurrenceError> {
+    match candidate {
+        TimeSpec::Floating {
+            start,
+            end,
+            source_timezone,
+        } => {
+            let selected_time = start
+                .time()
+                .with_second(u32::from(second))
+                .ok_or(RecurrenceError::InvalidBySecond(second))?;
+            let selected_start = NaiveDateTime::new(start.date(), selected_time);
+            let selected_end = match end {
+                Some(end) => Some(
+                    selected_start
+                        .checked_add_signed(*end - *start)
+                        .ok_or(RecurrenceError::ArithmeticOverflow)?,
+                ),
+                None => None,
+            };
+            Ok(Some(TimeSpec::Floating {
+                start: selected_start,
+                end: selected_end,
+                source_timezone: source_timezone.clone(),
+            }))
+        }
+        TimeSpec::Instant {
+            start_utc,
+            end_utc,
+            source_timezone,
+        } => {
+            let timezone = match source_timezone.as_deref() {
+                Some(raw) => raw
+                    .parse::<Tz>()
+                    .map_err(|_| RecurrenceError::InvalidSourceTimezone(raw.to_string()))?,
+                None => chrono_tz::UTC,
+            };
+            let local_start = start_utc.with_timezone(&timezone).naive_local();
+            let selected_time = local_start
+                .time()
+                .with_second(u32::from(second))
+                .ok_or(RecurrenceError::InvalidBySecond(second))?;
+            let selected_local = NaiveDateTime::new(local_start.date(), selected_time);
+            let Some(selected_start) = resolve_local_datetime(timezone, selected_local) else {
+                return Ok(None);
+            };
+            let selected_end = match end_utc {
+                Some(end) => Some(
+                    selected_start
+                        .checked_add_signed(*end - *start_utc)
+                        .ok_or(RecurrenceError::ArithmeticOverflow)?,
+                ),
+                None => None,
+            };
+            Ok(Some(TimeSpec::Instant {
+                start_utc: selected_start,
+                end_utc: selected_end,
+                source_timezone: source_timezone.clone(),
+            }))
+        }
+        TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => Err(
+            RecurrenceError::BySecondRequiresDateTime(candidate.kind_name()),
         ),
         TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
             Err(RecurrenceError::UnsupportedTimeKind(candidate.kind_name()))
@@ -3320,6 +3469,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3382,6 +3532,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: vec![TimeSpec::DateOnly {
                 start: start + Duration::days(4),
@@ -3444,6 +3595,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3508,6 +3660,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3563,6 +3716,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3617,6 +3771,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -3661,6 +3816,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3708,6 +3864,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3757,6 +3914,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3805,6 +3963,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3886,6 +4045,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -3957,6 +4117,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded],
@@ -4014,6 +4175,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4074,6 +4236,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4125,6 +4288,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4189,6 +4353,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4265,6 +4430,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -4320,6 +4486,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4371,6 +4538,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4422,6 +4590,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4473,6 +4642,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4571,6 +4741,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4621,6 +4792,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4674,6 +4846,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4741,6 +4914,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -4796,6 +4970,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4851,6 +5026,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: vec![1, -1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4903,6 +5079,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: vec![1, -3, -1, 10],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -4981,6 +5158,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5043,6 +5221,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -5098,6 +5277,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5151,6 +5331,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5231,6 +5412,7 @@ mod tests {
             ],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5285,6 +5467,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5352,6 +5535,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -5410,6 +5594,7 @@ mod tests {
             ],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5484,6 +5669,7 @@ mod tests {
             ],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5538,6 +5724,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5593,6 +5780,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5655,6 +5843,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5710,6 +5899,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5777,6 +5967,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -5832,6 +6023,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5885,6 +6077,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -5969,6 +6162,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6036,6 +6230,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded],
@@ -6100,6 +6295,7 @@ mod tests {
             ],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6152,6 +6348,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(5, RecurrenceWeekday::Monday)],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6239,6 +6436,7 @@ mod tests {
             ],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6294,6 +6492,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6349,6 +6548,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Sunday)],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6416,6 +6616,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -6471,6 +6672,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6524,6 +6726,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6602,6 +6805,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -6657,6 +6861,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6710,6 +6915,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6793,6 +6999,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6860,6 +7067,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded],
@@ -6921,6 +7129,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -6971,6 +7180,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7018,6 +7228,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7181,6 +7392,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7233,6 +7445,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7287,6 +7500,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7344,6 +7558,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: vec![-1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7395,6 +7610,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Tuesday)],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7449,6 +7665,7 @@ mod tests {
             ],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7501,6 +7718,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(53, RecurrenceWeekday::Monday)],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7548,6 +7766,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday)],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7599,6 +7818,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday)],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7652,6 +7872,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(10, RecurrenceWeekday::Sunday)],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7727,6 +7948,7 @@ mod tests {
             ],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -7786,6 +8008,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7842,6 +8065,7 @@ mod tests {
             ],
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7895,6 +8119,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -7968,6 +8193,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -8033,6 +8259,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8092,6 +8319,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8158,6 +8386,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8237,6 +8466,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -8294,6 +8524,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8346,6 +8577,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8438,6 +8670,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -8496,6 +8729,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8548,6 +8782,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8687,6 +8922,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8739,6 +8975,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: vec![1],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8850,6 +9087,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -8923,6 +9161,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -9165,6 +9404,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9218,6 +9458,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9301,6 +9542,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9374,6 +9616,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -9475,6 +9718,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9531,6 +9775,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9610,6 +9855,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: vec![2],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9677,6 +9923,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -9741,6 +9988,7 @@ mod tests {
             by_month_weekday: vec![RecurrenceOrdinalWeekday::new(2, RecurrenceWeekday::Sunday)],
             by_hour: vec![2],
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9784,6 +10032,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9841,6 +10090,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![8, 20],
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9898,6 +10148,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
             by_minute: Vec::new(),
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -9992,6 +10243,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: Vec::new(),
             by_minute: vec![15, 45],
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -10048,6 +10300,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![9, 17],
             by_minute: vec![15, 45],
+            by_second: Vec::new(),
             by_set_pos: vec![3],
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -10101,6 +10354,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![9],
             by_minute: vec![15, 45],
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -10174,6 +10428,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![9],
             by_minute: vec![5, 35],
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -10231,6 +10486,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![8],
             by_minute: vec![10, 40],
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -10288,6 +10544,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![9],
             by_minute: vec![10, 40],
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: Vec::new(),
@@ -10363,6 +10620,7 @@ mod tests {
             by_month_weekday: Vec::new(),
             by_hour: vec![9],
             by_minute: vec![15, 45],
+            by_second: Vec::new(),
             by_set_pos: Vec::new(),
             rdates: Vec::new(),
             exdates: vec![excluded.clone()],
@@ -10398,6 +10656,405 @@ mod tests {
             moved.id,
             occurrence_identity(event.id, &original).expect("stable identity")
         );
+    }
+
+    #[test]
+    fn bysecond_validation_distinguishes_leap_second_invalid_and_duplicate_values() {
+        let mut leap_second = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        leap_second.by_second = vec![60];
+        assert!(matches!(
+            leap_second.validate(),
+            Err(RecurrenceError::BySecondLeapSecondUnsupported)
+        ));
+
+        let mut invalid = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        invalid.by_second = vec![61];
+        assert!(matches!(
+            invalid.validate(),
+            Err(RecurrenceError::InvalidBySecond(61))
+        ));
+
+        let mut duplicate = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        duplicate.by_second = vec![15, 15];
+        assert!(matches!(
+            duplicate.validate(),
+            Err(RecurrenceError::DuplicateBySecond(15))
+        ));
+    }
+
+    #[test]
+    fn bysecond_rejects_date_only_recurrence_base() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Date-only BYSECOND",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.by_second = vec![15];
+        event.recurrence = Some(rule);
+
+        assert!(matches!(
+            event.validate_recurrence(),
+            Err(RecurrenceError::BySecondRequiresDateTime("date_only"))
+        ));
+    }
+
+    #[test]
+    fn floating_daily_bysecond_preserves_fractional_second_and_filters_first_period() {
+        let start = NaiveDateTime::parse_from_str(
+            "2026-10-05T14:20:30.250",
+            "%Y-%m-%dT%H:%M:%S%.3f",
+        )
+        .expect("start");
+        let mut event = TemporalEvent::new(
+            "Selected seconds",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(3);
+        rule.by_second = vec![15, 45];
+        event.recurrence = Some(rule);
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => {
+                    start.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+                }
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            starts,
+            vec![
+                "2026-10-05 14:20:45.250",
+                "2026-10-06 14:20:15.250",
+                "2026-10-06 14:20:45.250",
+            ]
+        );
+    }
+
+    #[test]
+    fn byhour_byminute_bysecond_cartesian_expansion_precedes_bysetpos() {
+        let start = NaiveDateTime::parse_from_str("2026-10-05T08:10:10", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "Seventh time each day",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        rule.by_hour = vec![9, 17];
+        rule.by_minute = vec![15, 45];
+        rule.by_second = vec![5, 35];
+        rule.by_set_pos = vec![7];
+        event.recurrence = Some(rule);
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M:%S").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(starts, vec!["2026-10-05 17:45:05", "2026-10-06 17:45:05"]);
+    }
+
+    #[test]
+    fn exact_bysecond_preserves_duration_and_source_wall_clock_across_dst() {
+        let start_utc = DateTime::parse_from_rfc3339("2026-03-07T14:15:30Z")
+            .expect("start")
+            .with_timezone(&Utc);
+        let end_utc = DateTime::parse_from_rfc3339("2026-03-07T15:30:30Z")
+            .expect("end")
+            .with_timezone(&Utc);
+        let mut event = TemporalEvent::new(
+            "Timed seconds",
+            TimeSpec::Instant {
+                start_utc,
+                end_utc: Some(end_utc),
+                source_timezone: Some("America/New_York".to_string()),
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(4);
+        rule.by_hour = vec![9];
+        rule.by_minute = vec![15];
+        rule.by_second = vec![15, 45];
+        event.recurrence = Some(rule);
+
+        let zone = chrono_tz::America::New_York;
+        let occurrences = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 3, 7).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 3, 10).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        let local_starts = occurrences
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Instant { start_utc, .. } => start_utc
+                    .with_timezone(&zone)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string(),
+                other => panic!("expected instant, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            local_starts,
+            vec![
+                "2026-03-07 09:15:45",
+                "2026-03-08 09:15:15",
+                "2026-03-08 09:15:45",
+                "2026-03-09 09:15:15",
+            ]
+        );
+
+        for occurrence in occurrences {
+            match occurrence.time {
+                TimeSpec::Instant {
+                    start_utc,
+                    end_utc: Some(end_utc),
+                    ..
+                } => assert_eq!(end_utc - start_utc, chrono::Duration::minutes(75)),
+                other => panic!("expected bounded instant, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn floating_weekly_bysecond_expands_each_selected_weekday() {
+        let start = NaiveDateTime::parse_from_str("2026-10-05T09:00:20", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "Weekly seconds",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Weekly);
+        rule.count = Some(4);
+        rule.week_start = RecurrenceWeekday::Monday;
+        rule.by_weekday = vec![RecurrenceWeekday::Monday, RecurrenceWeekday::Wednesday];
+        rule.by_second = vec![10, 40];
+        event.recurrence = Some(rule);
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 15).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M:%S").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            starts,
+            vec![
+                "2026-10-05 09:00:40",
+                "2026-10-07 09:00:10",
+                "2026-10-07 09:00:40",
+                "2026-10-12 09:00:10",
+            ]
+        );
+    }
+
+    #[test]
+    fn floating_monthly_bysecond_expands_after_monthday_selection() {
+        let start = NaiveDateTime::parse_from_str("2026-01-01T08:20:20", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "Monthly seconds",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Monthly);
+        rule.count = Some(4);
+        rule.by_month_day = vec![1, 15];
+        rule.by_second = vec![10, 40];
+        event.recurrence = Some(rule);
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 2, 2).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M:%S").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            starts,
+            vec![
+                "2026-01-01 08:20:40",
+                "2026-01-15 08:20:10",
+                "2026-01-15 08:20:40",
+                "2026-02-01 08:20:10",
+            ]
+        );
+    }
+
+    #[test]
+    fn floating_yearly_bysecond_expands_after_yearly_date_selection() {
+        let start = NaiveDateTime::parse_from_str("2026-03-01T09:20:20", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "Yearly seconds",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.count = Some(4);
+        rule.by_month = vec![3];
+        rule.by_month_day = vec![1];
+        rule.by_second = vec![10, 40];
+        event.recurrence = Some(rule);
+
+        let starts = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2028, 4, 1).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand")
+            .iter()
+            .map(|occurrence| match &occurrence.time {
+                TimeSpec::Floating { start, .. } => start.format("%Y-%m-%d %H:%M:%S").to_string(),
+                other => panic!("expected floating, got {other:?}"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            starts,
+            vec![
+                "2026-03-01 09:20:40",
+                "2027-03-01 09:20:10",
+                "2027-03-01 09:20:40",
+                "2028-03-01 09:20:10",
+            ]
+        );
+    }
+
+    #[test]
+    fn bysecond_override_targeting_distinguishes_same_minute_seconds() {
+        let start = NaiveDateTime::parse_from_str("2026-10-05T09:15:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let original = TimeSpec::Floating {
+            start: NaiveDateTime::parse_from_str("2026-10-05T09:15:45", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
+            end: None,
+            source_timezone: None,
+        };
+        let replacement = TimeSpec::Floating {
+            start: NaiveDateTime::parse_from_str("2026-10-05T10:00:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
+            end: None,
+            source_timezone: None,
+        };
+        let excluded = TimeSpec::Floating {
+            start: NaiveDateTime::parse_from_str("2026-10-06T09:15:15", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
+            end: None,
+            source_timezone: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Second exceptions",
+            TimeSpec::Floating {
+                start,
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(4);
+        rule.by_second = vec![15, 45];
+        rule.exdates = vec![excluded.clone()];
+        rule.overrides = vec![RecurrenceOverride {
+            original: original.clone(),
+            replacement: Some(replacement.clone()),
+            cancelled: false,
+        }];
+        event.recurrence = Some(rule);
+
+        event
+            .validate_recurrence()
+            .expect("valid second-specific override");
+        let occurrences = event
+            .occurrences_in_window(
+                NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(),
+                chrono_tz::UTC,
+            )
+            .expect("expand");
+
+        assert!(
+            occurrences
+                .iter()
+                .all(|occurrence| occurrence.original_time != excluded)
+        );
+        let moved = occurrences
+            .iter()
+            .find(|occurrence| occurrence.original_time == original)
+            .expect("moved second");
+        assert_eq!(moved.time, replacement);
+        assert_eq!(
+            moved.id,
+            occurrence_identity(event.id, &original).expect("stable identity")
+        );
+    }
+
+    #[test]
+    fn bysecond_defaults_when_missing_from_legacy_recurrence_json() {
+        let rule: RecurrenceRule =
+            serde_json::from_str(r#"{"frequency":"daily"}"#).expect("legacy recurrence JSON");
+
+        assert!(rule.by_second.is_empty());
+        assert_eq!(rule.interval, 1);
     }
 
     #[test]
