@@ -174,10 +174,28 @@ fn format_selector_values<T: ToString>(values: &[T]) -> String {
         .join(",")
 }
 
+fn recurrence_weekday_rrule_code(weekday: RecurrenceWeekday) -> &'static str {
+    match weekday {
+        RecurrenceWeekday::Monday => "MO",
+        RecurrenceWeekday::Tuesday => "TU",
+        RecurrenceWeekday::Wednesday => "WE",
+        RecurrenceWeekday::Thursday => "TH",
+        RecurrenceWeekday::Friday => "FR",
+        RecurrenceWeekday::Saturday => "SA",
+        RecurrenceWeekday::Sunday => "SU",
+    }
+}
+
 fn format_ordinal_byday_values(values: &[RecurrenceOrdinalWeekday]) -> String {
     values
         .iter()
-        .map(|selector| format!("{}{}", selector.ordinal, selector.weekday.short_label()))
+        .map(|selector| {
+            format!(
+                "{}{}",
+                selector.ordinal,
+                recurrence_weekday_rrule_code(selector.weekday)
+            )
+        })
         .collect::<Vec<_>>()
         .join(",")
 }
