@@ -2684,7 +2684,10 @@ and continues here\r\nSUMMARY:Example\r\n";
         .expect("VEVENT");
         let event = source.canonical_event().expect("canonical event");
 
-        assert_eq!(event.source_record_key.as_deref(), Some("standalone@example.com"));
+        assert_eq!(
+            event.source_record_key.as_deref(),
+            Some("standalone@example.com")
+        );
         assert_eq!(event.normalized_title, "Project review");
         assert_eq!(event.raw_title.as_deref(), Some("Project review"));
         assert_eq!(
@@ -2698,10 +2701,12 @@ and continues here\r\nSUMMARY:Example\r\n";
             json!("standalone@example.com")
         );
         assert_eq!(event.properties["ical"]["sequence"], json!(3));
-        assert!(event.properties["ical"]["master_component"]
-            .as_str()
-            .expect("master component")
-            .contains("LOCATION:Room 5"));
+        assert!(
+            event.properties["ical"]["master_component"]
+                .as_str()
+                .expect("master component")
+                .contains("LOCATION:Room 5")
+        );
     }
 
     #[test]
@@ -2749,7 +2754,10 @@ and continues here\r\nSUMMARY:Example\r\n";
         let series = bind_vevent_series(master, vec![moved]).expect("series");
         let event = series.canonical_event().expect("canonical event");
 
-        assert_eq!(event.source_record_key.as_deref(), Some("projection-series@example.com"));
+        assert_eq!(
+            event.source_record_key.as_deref(),
+            Some("projection-series@example.com")
+        );
         let recurrence = event.recurrence.as_ref().expect("recurrence");
         assert_eq!(recurrence.overrides.len(), 1);
         assert!(recurrence.overrides[0].replacement.is_some());
