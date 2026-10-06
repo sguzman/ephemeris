@@ -3145,23 +3145,21 @@ and continues here\r\nSUMMARY:Example\r\n";
         event.updated_at = DateTime::parse_from_rfc3339("2026-10-06T12:00:00Z")
             .expect("updated")
             .with_timezone(&Utc);
-        event.recurrence = Some(RecurrenceRule {
-            frequency: RecurrenceFrequency::Daily,
-            count: Some(3),
-            overrides: vec![
-                RecurrenceOverride {
-                    original: original.clone(),
-                    replacement: Some(replacement.clone()),
-                    cancelled: false,
-                },
-                RecurrenceOverride {
-                    original: cancelled_original.clone(),
-                    replacement: None,
-                    cancelled: true,
-                },
-            ],
-            ..RecurrenceRule::default()
-        });
+        let mut recurrence = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        recurrence.count = Some(3);
+        recurrence.overrides = vec![
+            RecurrenceOverride {
+                original: original.clone(),
+                replacement: Some(replacement.clone()),
+                cancelled: false,
+            },
+            RecurrenceOverride {
+                original: cancelled_original.clone(),
+                replacement: None,
+                cancelled: true,
+            },
+        ];
+        event.recurrence = Some(recurrence);
         event.validate_recurrence().expect("canonical recurrence");
 
         let calendar = export_temporal_events_vcalendar(&[event.clone()], "-//Ephemeris Test//EN")
