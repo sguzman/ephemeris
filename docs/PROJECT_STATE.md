@@ -57,6 +57,8 @@ The structured BYWEEKNO editor is verified on `main` at `0dea3c2f151f2cfbdcb7864
 
 The structured BYYEARDAY editor is verified on `main` at `1c9f319491d879696f04239105b867b5d0597b7f`: format, check, strict Clippy, and all **362** library tests pass in GitHub Actions. Signed year-day selectors are edited as one row per positive/negative civil-year position with add/remove controls; compact syntax such as `1,100,-1` remains available in a collapsed raw fallback with the same authority, preset, contextual-preservation, and clearing rules.
 
+A child staging slice at `602911c83ab3f7be2d3b7eff363b101309b2e235` adds structured BYHOUR editing and targets **367** library tests. Each civil hour is an explicit row with add/remove controls; compact forms such as `9,17` remain available in a collapsed raw fallback, and contextual preservation/clearing plus raw-vs-structured authority follow the same non-parallel editing contract.
+
 DAILY reachability switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. YEARLY reachability likewise scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
 ## Implemented architecture
@@ -176,7 +178,7 @@ Implemented:
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, richer high-level recurrence editing ergonomics beyond presets/structured exceptions/contextual selector visibility/structured ordinal BYDAY/BYMONTHDAY/BYWEEKNO/BYYEARDAY, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, richer high-level recurrence editing ergonomics beyond presets/structured exceptions/contextual selector visibility/structured ordinal BYDAY/BYMONTHDAY/BYWEEKNO/BYYEARDAY/BYHOUR, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
