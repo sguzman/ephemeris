@@ -2390,6 +2390,16 @@ impl EphemerisApp {
                         .join(", ");
                     inspector_row(ui, "Minutes", &minutes);
                 }
+                if !rule.by_second.is_empty() {
+                    let mut seconds = rule.by_second.clone();
+                    seconds.sort_unstable();
+                    let seconds = seconds
+                        .into_iter()
+                        .map(|second| format!("{second:02}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    inspector_row(ui, "Seconds", &seconds);
+                }
                 if !rule.by_set_pos.is_empty() {
                     let mut positions = rule.by_set_pos.clone();
                     positions.sort_unstable();
