@@ -120,17 +120,41 @@ pub fn export_ics_source(
     let source = store
         .source_by_external_ref(source_external_ref)?
         .ok_or_else(|| anyhow::anyhow!("iCalendar source {source_external_ref} is not imported"))?;
+    export_ics_source_record(store, &source, output_path)
+}
+
+pub fn export_ics_source_by_id(
+    store: &TemporalStore,
+    source_id: Uuid,
+    output_path: impl AsRef<Path>,
+) -> anyhow::Result<IcsExportReport> {
+    let source = store
+        .source_by_id(source_id)?
+        .ok_or_else(|| anyhow::anyhow!("temporal source {source_id} does not exist"))?;
+    export_ics_source_record(store, &source, output_path)
+}
+
+fn export_ics_source_record(
+    store: &TemporalStore,
+    source: &TemporalSource,
+    output_path: impl AsRef<Path>,
+) -> anyhow::Result<IcsExportReport> {
     if source.kind != SourceKind::Ics {
         return Err(anyhow::anyhow!(
-            "source {source_external_ref} is {}, not an ICS source",
+            "source {} is {}, not an ICS source",
+            source.id,
             source.kind.as_str()
         ));
     }
+    let source_external_ref = source
+        .external_ref
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("ICS source {} is missing external identity", source.id))?;
 
     let events = store.events_for_source(source.id)?;
     let mut calendar = export_temporal_events_vcalendar(&events, "-//Ephemeris//EN")
         .context("failed to project canonical source events into VCALENDAR")?;
-    preserve_source_calendar_properties(&source, &mut calendar)?;
+    preserve_source_calendar_properties(source, &mut calendar)?;
     let encoded = format_vcalendar(&calendar).context("failed to serialize VCALENDAR")?;
 
     let output_path = output_path.as_ref().to_path_buf();
@@ -434,6 +458,24 @@ mod tests {
                 .iter()
                 .any(|event| event.normalized_title == "First edited")
         );
+    }
+
+    #[test]
+    fn source_export_by_id_uses_the_same_canonical_source() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let directory = tempfile::tempdir().expect("tempdir");
+        let source_path = directory.path().join("source-by-id.ics");
+        let output_path = directory.path().join("source-by-id-export.ics");
+        std::fs::write(&source_path, FIXTURE).expect("write fixture");
+
+        let imported = import_ics_file(&store, &source_path).expect("import");
+        let report = export_ics_source_by_id(&store, imported.source_id, &output_path)
+            .expect("export source by id");
+
+        assert_eq!(report.source_id, imported.source_id);
+        assert_eq!(report.source_external_ref, imported.source_external_ref);
+        assert_eq!(report.total_events, 2);
+        assert!(output_path.exists());
     }
 
     #[test]
