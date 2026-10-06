@@ -222,9 +222,7 @@ pub fn parse_ical_content_line(raw: &str) -> Result<IcalContentLine, IcalRecurre
     })
 }
 
-pub fn format_ical_content_line(
-    line: &IcalContentLine,
-) -> Result<String, IcalRecurrenceError> {
+pub fn format_ical_content_line(line: &IcalContentLine) -> Result<String, IcalRecurrenceError> {
     validate_ical_token(&line.name, &line.name)?;
     if line.value.contains(['\r', '\n']) {
         return Err(IcalRecurrenceError::InvalidContentLine(line.value.clone()));
@@ -234,7 +232,9 @@ pub fn format_ical_content_line(
     for (name, value) in &line.parameters {
         validate_ical_token(name, name)?;
         if value.is_empty() || value.contains(['\r', '\n']) || !valid_parameter_quoting(value) {
-            return Err(IcalRecurrenceError::InvalidContentLine(format!("{name}={value}")));
+            return Err(IcalRecurrenceError::InvalidContentLine(format!(
+                "{name}={value}"
+            )));
         }
         encoded.push(';');
         encoded.push_str(&name.to_ascii_uppercase());
@@ -349,9 +349,7 @@ pub fn unescape_ical_text(raw: &str) -> Result<String, IcalRecurrenceError> {
 ///
 /// Semantic interpretation is deliberately layered above this function; this
 /// boundary preserves unknown properties instead of silently discarding them.
-pub fn parse_vevent_content_lines(
-    raw: &str,
-) -> Result<Vec<IcalContentLine>, IcalRecurrenceError> {
+pub fn parse_vevent_content_lines(raw: &str) -> Result<Vec<IcalContentLine>, IcalRecurrenceError> {
     let lines = unfold_ical_content_lines(raw)?;
     if lines.len() < 2
         || !lines[0].eq_ignore_ascii_case("BEGIN:VEVENT")
