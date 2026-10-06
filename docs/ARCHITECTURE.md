@@ -189,6 +189,24 @@ TemporalBundleRelease
 
 The original source representation or sufficient source record metadata should remain addressable when practical.
 
+### Implemented local ICS path
+
+Local iCalendar files now follow the general ingestion boundary rather than bypassing it:
+
+```text
+local .ics/.ical file
+    -> strict VCALENDAR / VEVENT parser
+    -> UID master/detached grouping
+    -> canonical TemporalEvent projection
+    -> stable local-file source + UID record identity
+    -> TemporalStore::import_batch transaction
+    -> normal query/view rendering
+```
+
+The RFC transport layer is bidirectional for the supported subset, so canonical events can also be projected back into VEVENT/VCALENDAR. User-facing stored-source export-to-file is the next integration step.
+
+Unsupported RFC semantics are rejected at the adapter boundary rather than leaking partial interpretations into the domain model.
+
 ## Taria boundary
 
 Taria is not treated as "just another ICS source."
