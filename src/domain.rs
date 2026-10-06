@@ -12333,7 +12333,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn minutely_reachability_detects_unreachable_calendar_limiter_cycle() {
         let start = NaiveDateTime::parse_from_str("2026-10-05T08:30:20", "%Y-%m-%dT%H:%M:%S")
@@ -12367,5 +12366,4 @@ mod tests {
                 .is_empty()
         );
     }
-
 }
