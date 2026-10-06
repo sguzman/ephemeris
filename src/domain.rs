@@ -12931,7 +12931,7 @@ mod tests {
         );
         let mut rule = RecurrenceRule::new(RecurrenceFrequency::Secondly);
         rule.count = Some(3);
-        rule.by_second = vec![59, 0, 1];
+        rule.by_second = vec![58, 59, 0];
         event.recurrence = Some(rule);
 
         let zone = chrono_tz::America::New_York;
