@@ -249,9 +249,9 @@ fn parse_exception_start_values(
                 let end_exclusive = (*end_exclusive)
                     .map(|end| end.signed_duration_since(*base_start))
                     .map(|duration| {
-                        start
-                            .checked_add_signed(duration)
-                            .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
+                        start.checked_add_signed(duration).ok_or_else(|| {
+                            format!("{label} value '{token}' overflows its duration.")
+                        })
                     })
                     .transpose()?;
                 Ok(TimeSpec::DateOnly {
@@ -293,7 +293,9 @@ fn parse_exception_start_values(
                         start_utc
                             .clone()
                             .checked_add_signed(duration)
-                            .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
+                            .ok_or_else(|| {
+                                format!("{label} value '{token}' overflows its duration.")
+                            })
                     })
                     .transpose()?;
                 Ok(TimeSpec::Instant {
@@ -323,9 +325,12 @@ fn parse_exception_start_values(
                     source_timezone: source_timezone.clone(),
                 })
             }
-            TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => Err(
-                format!("{label} cannot be authored for {} recurrence.", base_time.kind_name()),
-            ),
+            TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+                Err(format!(
+                    "{label} cannot be authored for {} recurrence.",
+                    base_time.kind_name()
+                ))
+            }
         })
         .collect()
 }
@@ -6269,12 +6274,8 @@ mod tests {
             source_timezone: Some("America/New_York".to_string()),
         };
 
-        let parsed = parse_exception_start_values(
-            "2026-04-01T13:00:00Z",
-            &base,
-            "RDATE",
-        )
-        .expect("parse");
+        let parsed =
+            parse_exception_start_values("2026-04-01T13:00:00Z", &base, "RDATE").expect("parse");
         let TimeSpec::Instant {
             start_utc,
             end_utc,
@@ -6389,5 +6390,4 @@ mod tests {
 
         assert!(draft.parsed_rule().is_err());
     }
-
 }
