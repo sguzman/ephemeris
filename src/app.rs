@@ -290,10 +290,9 @@ fn parse_exception_start_values(
                     .as_ref()
                     .map(|end| end.signed_duration_since(*base_start))
                     .map(|duration| {
-                        start_utc.checked_add_signed(duration)
-                            .ok_or_else(|| {
-                                format!("{label} value '{token}' overflows its duration.")
-                            })
+                        start_utc.checked_add_signed(duration).ok_or_else(|| {
+                            format!("{label} value '{token}' overflows its duration.")
+                        })
                     })
                     .transpose()?;
                 Ok(TimeSpec::Instant {
@@ -6251,11 +6250,15 @@ mod tests {
             vec![
                 TimeSpec::DateOnly {
                     start: NaiveDate::from_ymd_opt(2026, 3, 10).expect("expected date"),
-                    end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 3, 13).expect("expected date")),
+                    end_exclusive: Some(
+                        NaiveDate::from_ymd_opt(2026, 3, 13).expect("expected date")
+                    ),
                 },
                 TimeSpec::DateOnly {
                     start: NaiveDate::from_ymd_opt(2026, 4, 15).expect("expected date"),
-                    end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 4, 18).expect("expected date")),
+                    end_exclusive: Some(
+                        NaiveDate::from_ymd_opt(2026, 4, 18).expect("expected date")
+                    ),
                 },
             ]
         );
