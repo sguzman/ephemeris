@@ -35,6 +35,9 @@ pub enum IcalRecurrenceError {
     RecurrenceIdRequiresSingleValue,
     EventTimeRequiresSingleValue(&'static str),
     UnsupportedVeventTimeKind(&'static str),
+    InvalidContentLine(String),
+    InvalidTextEscape(String),
+    InvalidComponent(String),
     InvalidTimezone(String),
     TemporalKindMismatch {
         property: &'static str,
@@ -108,6 +111,15 @@ impl fmt::Display for IcalRecurrenceError {
             Self::UnsupportedVeventTimeKind(kind) => {
                 write!(formatter, "VEVENT transport cannot losslessly represent {kind}")
             }
+            Self::InvalidContentLine(value) => {
+                write!(formatter, "invalid iCalendar content line: {value}")
+            }
+            Self::InvalidTextEscape(value) => {
+                write!(formatter, "invalid iCalendar TEXT escape in {value}")
+            }
+            Self::InvalidComponent(value) => {
+                write!(formatter, "invalid iCalendar component: {value}")
+            }
             Self::InvalidTimezone(value) => {
                 write!(formatter, "unsupported or invalid iCalendar TZID {value}")
             }
@@ -155,6 +167,302 @@ impl From<RecurrenceError> for IcalRecurrenceError {
     fn from(value: RecurrenceError) -> Self {
         Self::Domain(value)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IcalContentLine {
+    pub name: String,
+    /// Parameter values are retained in their serialized form, including
+    /// surrounding quotes when the source used quoted-string syntax.
+    pub parameters: Vec<(String, String)>,
+    pub value: String,
+}
+
+/// Parse one unfolded RFC 5545 content line.
+///
+/// The head/value separator and parameter separators are recognized only
+/// outside quoted parameter values, so values such as ALTREP="cid:part:1"
+/// do not corrupt the parse.
+pub fn parse_ical_content_line(raw: &str) -> Result<IcalContentLine, IcalRecurrenceError> {
+    if raw.is_empty() || raw.contains(['\r', '\n']) {
+        return Err(IcalRecurrenceError::InvalidContentLine(raw.to_string()));
+    }
+    let separator = find_unquoted(raw, ':')
+        .ok_or_else(|| IcalRecurrenceError::InvalidContentLine(raw.to_string()))?;
+    let head = &raw[..separator];
+    let value = &raw[separator + 1..];
+    let head_parts = split_unquoted(head, ';')?;
+    let Some((raw_name, raw_parameters)) = head_parts.split_first() else {
+        return Err(IcalRecurrenceError::InvalidContentLine(raw.to_string()));
+    };
+    let name = raw_name.trim().to_ascii_uppercase();
+    validate_ical_token(&name, raw)?;
+
+    let mut parameters = Vec::with_capacity(raw_parameters.len());
+    for raw_parameter in raw_parameters {
+        let (raw_parameter_name, raw_parameter_value) = raw_parameter
+            .split_once('=')
+            .ok_or_else(|| IcalRecurrenceError::InvalidContentLine(raw.to_string()))?;
+        let parameter_name = raw_parameter_name.trim().to_ascii_uppercase();
+        validate_ical_token(&parameter_name, raw)?;
+        let parameter_value = raw_parameter_value.trim();
+        if parameter_value.is_empty()
+            || parameter_value.contains(['\r', '\n'])
+            || !valid_parameter_quoting(parameter_value)
+        {
+            return Err(IcalRecurrenceError::InvalidContentLine(raw.to_string()));
+        }
+        parameters.push((parameter_name, parameter_value.to_string()));
+    }
+
+    Ok(IcalContentLine {
+        name,
+        parameters,
+        value: value.to_string(),
+    })
+}
+
+pub fn format_ical_content_line(
+    line: &IcalContentLine,
+) -> Result<String, IcalRecurrenceError> {
+    validate_ical_token(&line.name, &line.name)?;
+    if line.value.contains(['\r', '\n']) {
+        return Err(IcalRecurrenceError::InvalidContentLine(line.value.clone()));
+    }
+
+    let mut encoded = line.name.to_ascii_uppercase();
+    for (name, value) in &line.parameters {
+        validate_ical_token(name, name)?;
+        if value.is_empty() || value.contains(['\r', '\n']) || !valid_parameter_quoting(value) {
+            return Err(IcalRecurrenceError::InvalidContentLine(format!("{name}={value}")));
+        }
+        encoded.push(';');
+        encoded.push_str(&name.to_ascii_uppercase());
+        encoded.push('=');
+        encoded.push_str(value);
+    }
+    encoded.push(':');
+    encoded.push_str(&line.value);
+    Ok(encoded)
+}
+
+/// Unfold RFC 5545 physical lines into logical content lines.
+pub fn unfold_ical_content_lines(raw: &str) -> Result<Vec<String>, IcalRecurrenceError> {
+    let normalized = raw.replace("\r\n", "\n");
+    if normalized.contains('\r') {
+        return Err(IcalRecurrenceError::InvalidContentLine(
+            "bare carriage return".to_string(),
+        ));
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    for physical in normalized.split('\n') {
+        if physical.is_empty() {
+            continue;
+        }
+        if let Some(rest) = physical
+            .strip_prefix(' ')
+            .or_else(|| physical.strip_prefix('\t'))
+        {
+            let previous = lines.last_mut().ok_or_else(|| {
+                IcalRecurrenceError::InvalidContentLine(
+                    "folded continuation without a preceding line".to_string(),
+                )
+            })?;
+            previous.push_str(rest);
+        } else {
+            lines.push(physical.to_string());
+        }
+    }
+    Ok(lines)
+}
+
+/// Fold one logical content line at RFC 5545's 75-octet boundary without
+/// splitting UTF-8 code points. Continuation payloads use 74 octets because
+/// the leading SPACE counts toward the physical-line limit.
+pub fn fold_ical_content_line(raw: &str) -> Result<String, IcalRecurrenceError> {
+    if raw.contains(['\r', '\n']) {
+        return Err(IcalRecurrenceError::InvalidContentLine(raw.to_string()));
+    }
+    if raw.len() <= 75 {
+        return Ok(raw.to_string());
+    }
+
+    let mut remaining = raw;
+    let mut limit = 75_usize;
+    let mut encoded = String::new();
+    while !remaining.is_empty() {
+        let cut = utf8_prefix_len(remaining, limit);
+        if cut == 0 {
+            return Err(IcalRecurrenceError::InvalidContentLine(raw.to_string()));
+        }
+        encoded.push_str(&remaining[..cut]);
+        remaining = &remaining[cut..];
+        if !remaining.is_empty() {
+            encoded.push_str("\r\n ");
+            limit = 74;
+        }
+    }
+    Ok(encoded)
+}
+
+/// Encode an RFC 5545 TEXT value.
+pub fn escape_ical_text(raw: &str) -> String {
+    let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
+    let mut encoded = String::with_capacity(normalized.len());
+    for character in normalized.chars() {
+        match character {
+            '\\' => encoded.push_str("\\\\"),
+            '\n' => encoded.push_str("\\n"),
+            ';' => encoded.push_str("\\;"),
+            ',' => encoded.push_str("\\,"),
+            _ => encoded.push(character),
+        }
+    }
+    encoded
+}
+
+/// Decode an RFC 5545 TEXT value, rejecting undefined backslash escapes.
+pub fn unescape_ical_text(raw: &str) -> Result<String, IcalRecurrenceError> {
+    let mut decoded = String::with_capacity(raw.len());
+    let mut characters = raw.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        let escaped = characters
+            .next()
+            .ok_or_else(|| IcalRecurrenceError::InvalidTextEscape(raw.to_string()))?;
+        match escaped {
+            '\\' => decoded.push('\\'),
+            'n' | 'N' => decoded.push('\n'),
+            ';' => decoded.push(';'),
+            ',' => decoded.push(','),
+            _ => return Err(IcalRecurrenceError::InvalidTextEscape(raw.to_string())),
+        }
+    }
+    Ok(decoded)
+}
+
+/// Parse exactly one VEVENT envelope into unfolded generic content lines.
+///
+/// Semantic interpretation is deliberately layered above this function; this
+/// boundary preserves unknown properties instead of silently discarding them.
+pub fn parse_vevent_content_lines(
+    raw: &str,
+) -> Result<Vec<IcalContentLine>, IcalRecurrenceError> {
+    let lines = unfold_ical_content_lines(raw)?;
+    if lines.len() < 2
+        || !lines[0].eq_ignore_ascii_case("BEGIN:VEVENT")
+        || !lines[lines.len() - 1].eq_ignore_ascii_case("END:VEVENT")
+    {
+        return Err(IcalRecurrenceError::InvalidComponent(
+            "expected exactly one BEGIN:VEVENT ... END:VEVENT envelope".to_string(),
+        ));
+    }
+
+    let mut parsed = Vec::with_capacity(lines.len().saturating_sub(2));
+    for line in &lines[1..lines.len() - 1] {
+        let content = parse_ical_content_line(line)?;
+        if matches!(content.name.as_str(), "BEGIN" | "END") {
+            return Err(IcalRecurrenceError::InvalidComponent(
+                "nested components are not allowed in the single-VEVENT envelope".to_string(),
+            ));
+        }
+        parsed.push(content);
+    }
+    Ok(parsed)
+}
+
+/// Serialize one VEVENT envelope using CRLF and UTF-8-safe RFC line folding.
+pub fn format_vevent_content_lines(
+    lines: &[IcalContentLine],
+) -> Result<String, IcalRecurrenceError> {
+    let mut physical = Vec::with_capacity(lines.len() + 2);
+    physical.push("BEGIN:VEVENT".to_string());
+    for line in lines {
+        if matches!(line.name.to_ascii_uppercase().as_str(), "BEGIN" | "END") {
+            return Err(IcalRecurrenceError::InvalidComponent(
+                "component marker supplied as a VEVENT property".to_string(),
+            ));
+        }
+        physical.push(fold_ical_content_line(&format_ical_content_line(line)?)?);
+    }
+    physical.push("END:VEVENT".to_string());
+    Ok(format!("{}\r\n", physical.join("\r\n")))
+}
+
+fn find_unquoted(raw: &str, needle: char) -> Option<usize> {
+    let mut quoted = false;
+    for (index, character) in raw.char_indices() {
+        match character {
+            '"' => quoted = !quoted,
+            _ if character == needle && !quoted => return Some(index),
+            _ => {}
+        }
+    }
+    if quoted {
+        None
+    } else {
+        None
+    }
+}
+
+fn split_unquoted(raw: &str, separator: char) -> Result<Vec<&str>, IcalRecurrenceError> {
+    let mut parts = Vec::new();
+    let mut quoted = false;
+    let mut start = 0_usize;
+    for (index, character) in raw.char_indices() {
+        match character {
+            '"' => quoted = !quoted,
+            _ if character == separator && !quoted => {
+                parts.push(&raw[start..index]);
+                start = index + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if quoted {
+        return Err(IcalRecurrenceError::InvalidContentLine(raw.to_string()));
+    }
+    parts.push(&raw[start..]);
+    Ok(parts)
+}
+
+fn validate_ical_token(token: &str, raw: &str) -> Result<(), IcalRecurrenceError> {
+    if token.is_empty()
+        || !token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err(IcalRecurrenceError::InvalidContentLine(raw.to_string()));
+    }
+    Ok(())
+}
+
+fn valid_parameter_quoting(value: &str) -> bool {
+    let starts = value.starts_with('"');
+    let ends = value.ends_with('"');
+    if starts != ends {
+        return false;
+    }
+    if starts {
+        value.len() >= 2 && !value[1..value.len() - 1].contains('"')
+    } else {
+        !value.contains('"')
+    }
+}
+
+fn utf8_prefix_len(raw: &str, max_bytes: usize) -> usize {
+    if raw.len() <= max_bytes {
+        return raw.len();
+    }
+    let mut cut = max_bytes.min(raw.len());
+    while cut > 0 && !raw.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    cut
 }
 
 /// Parse an RFC 5545 RRULE value into Ephemeris' canonical recurrence rule.
@@ -1505,6 +1813,106 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_line_parser_handles_quoted_parameter_colons() {
+        let line = parse_ical_content_line(
+            "DESCRIPTION;ALTREP=\"cid:part1.0001@example.org\":The Fall'98 Wild Wizards",
+        )
+        .expect("content line");
+        assert_eq!(line.name, "DESCRIPTION");
+        assert_eq!(
+            line.parameters,
+            vec![(
+                "ALTREP".to_string(),
+                "\"cid:part1.0001@example.org\"".to_string()
+            )]
+        );
+        assert_eq!(line.value, "The Fall'98 Wild Wizards");
+        assert_eq!(
+            format_ical_content_line(&line).expect("format"),
+            "DESCRIPTION;ALTREP=\"cid:part1.0001@example.org\":The Fall'98 Wild Wizards"
+        );
+    }
+
+    #[test]
+    fn content_lines_unfold_rfc_continuations() {
+        let raw = "DESCRIPTION:This is a long description that exists on a long line.\r\n \
+and continues here\r\nSUMMARY:Example\r\n";
+        assert_eq!(
+            unfold_ical_content_lines(raw).expect("unfold"),
+            vec![
+                "DESCRIPTION:This is a long description that exists on a long line.and continues here",
+                "SUMMARY:Example",
+            ]
+        );
+    }
+
+    #[test]
+    fn ical_text_escape_roundtrips_delimiters_and_newlines() {
+        let original = "alpha\\beta; gamma, delta: epsilon\nsecond line";
+        let encoded = escape_ical_text(original);
+        assert_eq!(
+            encoded,
+            "alpha\\\\beta\\; gamma\\, delta: epsilon\\nsecond line"
+        );
+        assert_eq!(unescape_ical_text(&encoded).expect("unescape"), original);
+        assert!(matches!(
+            unescape_ical_text("bad\\qescape"),
+            Err(IcalRecurrenceError::InvalidTextEscape(_))
+        ));
+    }
+
+    #[test]
+    fn content_line_folding_is_utf8_safe_and_reversible() {
+        let logical = format!("DESCRIPTION:{}{}", "é".repeat(40), "x".repeat(30));
+        let folded = fold_ical_content_line(&logical).expect("fold");
+        for physical in folded.split("\r\n") {
+            assert!(physical.len() <= 75);
+        }
+        assert_eq!(
+            unfold_ical_content_lines(&format!("{folded}\r\n")).expect("unfold"),
+            vec![logical]
+        );
+    }
+
+    #[test]
+    fn vevent_envelope_preserves_unknown_and_parameterized_properties() {
+        let raw = concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:abc-123\r\n",
+            "SUMMARY;LANGUAGE=en-US:Hello\\, world\r\n",
+            "X-EPHEMERIS-TEST:opaque:value\r\n",
+            "END:VEVENT\r\n"
+        );
+        let lines = parse_vevent_content_lines(raw).expect("VEVENT");
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[1].name, "SUMMARY");
+        assert_eq!(
+            lines[1].parameters,
+            vec![("LANGUAGE".to_string(), "en-US".to_string())]
+        );
+        assert_eq!(lines[2].value, "opaque:value");
+        assert_eq!(
+            parse_vevent_content_lines(&format_vevent_content_lines(&lines).expect("format"))
+                .expect("reparse"),
+            lines
+        );
+    }
+
+    #[test]
+    fn vevent_envelope_rejects_nested_components_and_bad_continuations() {
+        assert!(matches!(
+            parse_vevent_content_lines(
+                "BEGIN:VEVENT\r\nBEGIN:VALARM\r\nEND:VALARM\r\nEND:VEVENT\r\n"
+            ),
+            Err(IcalRecurrenceError::InvalidComponent(_))
+        ));
+        assert!(matches!(
+            unfold_ical_content_lines(" orphan continuation\r\n"),
+            Err(IcalRecurrenceError::InvalidContentLine(_))
+        ));
+    }
 
     #[test]
     fn vevent_time_roundtrips_all_day_with_noninclusive_end() {
