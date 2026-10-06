@@ -5913,7 +5913,7 @@ mod tests {
         let draft = RecurrenceEditDraft::from_event(&event);
         let parsed = draft.parsed_rule().expect("parsed rule");
 
-        assert!(draft.has_advanced_selectors());
+        assert!(draft.has_unedited_exceptions());
         assert_eq!(parsed.by_hour, rule.by_hour);
         assert_eq!(parsed.by_minute, rule.by_minute);
         assert_eq!(parsed.by_second, rule.by_second);
