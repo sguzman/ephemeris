@@ -268,9 +268,9 @@ fn parse_exception_start_values(
                 let end_exclusive = (*end_exclusive)
                     .map(|end| end.signed_duration_since(*base_start))
                     .map(|duration| {
-                        start
-                            .checked_add_signed(duration)
-                            .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
+                        start.checked_add_signed(duration).ok_or_else(|| {
+                            format!("{label} value '{token}' overflows its duration.")
+                        })
                     })
                     .transpose()?;
                 Ok(TimeSpec::AllDay {
@@ -314,9 +314,9 @@ fn parse_exception_start_values(
                     .as_ref()
                     .map(|end| end.signed_duration_since(*base_start))
                     .map(|duration| {
-                        start
-                            .checked_add_signed(duration)
-                            .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
+                        start.checked_add_signed(duration).ok_or_else(|| {
+                            format!("{label} value '{token}' overflows its duration.")
+                        })
                     })
                     .transpose()?;
                 Ok(TimeSpec::Floating {
