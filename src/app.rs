@@ -5969,4 +5969,84 @@ mod tests {
         assert!(draft.count_text.is_empty());
         assert!(draft.until_text.is_empty());
     }
+
+    #[test]
+    fn recurrence_selector_numeric_parsers_accept_commas_and_spaces() {
+        assert_eq!(
+            parse_i8_selector_values("1, 15 -1", "BYMONTHDAY").expect("i8 selectors"),
+            vec![1, 15, -1]
+        );
+        assert_eq!(
+            parse_i16_selector_values("1 100,-1", "BYYEARDAY").expect("i16 selectors"),
+            vec![1, 100, -1]
+        );
+        assert_eq!(
+            parse_u8_selector_values("9,17 23", "BYHOUR").expect("u8 selectors"),
+            vec![9, 17, 23]
+        );
+    }
+
+    #[test]
+    fn recurrence_selector_ordinal_byday_parser_roundtrips() {
+        let selectors = parse_ordinal_byday_values("1MO,-1fr 3WE").expect("ordinal selectors");
+        assert_eq!(
+            selectors,
+            vec![
+                RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
+                RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
+                RecurrenceOrdinalWeekday::new(3, RecurrenceWeekday::Wednesday),
+            ]
+        );
+        assert_eq!(format_ordinal_byday_values(&selectors), "1MO,-1FR,3WE");
+    }
+
+    #[test]
+    fn recurrence_selector_parsers_reject_malformed_values() {
+        assert!(parse_i8_selector_values("1,nope", "BYMONTHDAY").is_err());
+        assert!(parse_u8_selector_values("-1", "BYHOUR").is_err());
+        assert!(parse_ordinal_byday_values("MO").is_err());
+        assert!(parse_ordinal_byday_values("1XX").is_err());
+    }
+
+    #[test]
+    fn recurrence_edit_draft_applies_advanced_selector_text() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Advanced edit",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.by_month = vec![1, 7];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.year_day_text = "1,-1".to_string();
+        draft.month_day_text = "1,-1".to_string();
+        draft.ordinal_byday_text = "1MO,-1FR".to_string();
+        draft.hour_text = "9,17".to_string();
+        draft.minute_text = "0,30".to_string();
+        draft.second_text = "15".to_string();
+        draft.set_pos_text = "1,-1".to_string();
+
+        let parsed = draft.parsed_rule().expect("advanced rule");
+
+        assert_eq!(parsed.by_year_day, vec![1, -1]);
+        assert_eq!(parsed.by_month_day, vec![1, -1]);
+        assert_eq!(
+            parsed.by_month_weekday,
+            vec![
+                RecurrenceOrdinalWeekday::new(1, RecurrenceWeekday::Monday),
+                RecurrenceOrdinalWeekday::new(-1, RecurrenceWeekday::Friday),
+            ]
+        );
+        assert_eq!(parsed.by_hour, vec![9, 17]);
+        assert_eq!(parsed.by_minute, vec![0, 30]);
+        assert_eq!(parsed.by_second, vec![15]);
+        assert_eq!(parsed.by_set_pos, vec![1, -1]);
+    }
+
 }
