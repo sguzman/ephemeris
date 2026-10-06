@@ -91,8 +91,12 @@ impl RecurrenceEditDraft {
             event_id: event.id,
             had_recurrence,
             interval_text: rule.interval.to_string(),
-            count_text: rule.count.map_or_else(String::new, |count| count.to_string()),
-            until_text: rule.until.map_or_else(String::new, |until| until.to_string()),
+            count_text: rule
+                .count
+                .map_or_else(String::new, |count| count.to_string()),
+            until_text: rule
+                .until
+                .map_or_else(String::new, |until| until.to_string()),
             rule,
         }
     }
@@ -886,8 +890,9 @@ impl EphemerisApp {
             }
             Ok(Some(_)) => {
                 self.last_message = None;
-                self.last_error =
-                    Some("This event comes from a read-only source and cannot be edited.".to_string());
+                self.last_error = Some(
+                    "This event comes from a read-only source and cannot be edited.".to_string(),
+                );
             }
             Ok(None) => {
                 self.last_message = None;
@@ -2441,9 +2446,7 @@ impl EphemerisApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.strong("Recurrence");
-                    if self.event_is_editable(&event)
-                        && ui.small_button("Edit series").clicked()
-                    {
+                    if self.event_is_editable(&event) && ui.small_button("Edit series").clicked() {
                         self.begin_recurrence_edit(event.id);
                     }
                 });
@@ -2867,11 +2870,7 @@ fn render_recurrence_editor(
         .selected_text(draft.rule.frequency.as_str())
         .show_ui(ui, |ui| {
             for frequency in RecurrenceFrequency::ALL {
-                ui.selectable_value(
-                    &mut draft.rule.frequency,
-                    frequency,
-                    frequency.as_str(),
-                );
+                ui.selectable_value(&mut draft.rule.frequency, frequency, frequency.as_str());
             }
         });
 
@@ -2904,11 +2903,7 @@ fn render_recurrence_editor(
         .selected_text(draft.rule.week_start.short_label())
         .show_ui(ui, |ui| {
             for weekday in RecurrenceWeekday::ALL {
-                ui.selectable_value(
-                    &mut draft.rule.week_start,
-                    weekday,
-                    weekday.short_label(),
-                );
+                ui.selectable_value(&mut draft.rule.week_start, weekday, weekday.short_label());
             }
         });
 
@@ -5841,5 +5836,4 @@ mod tests {
         assert!(draft.count_text.is_empty());
         assert!(draft.until_text.is_empty());
     }
-
 }
