@@ -192,7 +192,7 @@ mod tests {
 
         let error =
             resolve_ics_source(&store, "manual:test").expect_err("non-ICS source must fail");
-        assert!(error.to_string().contains("not an ICS source"));
+        assert!(error.to_string().contains("not an iCalendar source"));
     }
 
     #[test]
