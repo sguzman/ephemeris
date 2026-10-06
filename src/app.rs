@@ -1564,14 +1564,21 @@ impl EphemerisApp {
             Ok(report) => {
                 self.selected_source_id = Some(report.source_id);
                 self.state.show_sources = true;
-                self.last_message = Some(format!(
-                    "Imported {}: {} created, {} updated, {} unchanged, {} retained missing",
-                    report.source_name,
-                    report.created,
-                    report.updated,
-                    report.unchanged,
-                    report.retained_missing
-                ));
+                self.last_message = Some(if report.not_modified {
+                    format!(
+                        "{} is unchanged · {} events · HTTP 304",
+                        report.source_name, report.total_events
+                    )
+                } else {
+                    format!(
+                        "Imported {}: {} created, {} updated, {} unchanged, {} retained missing",
+                        report.source_name,
+                        report.created,
+                        report.updated,
+                        report.unchanged,
+                        report.retained_missing
+                    )
+                });
                 self.last_error = None;
                 self.reload_or_report();
             }
