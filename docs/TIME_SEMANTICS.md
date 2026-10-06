@@ -146,6 +146,8 @@ Still required for fuller interoperable recurrence semantics:
 - external recurrence/exception source-adapter interoperability;
 - source-adapter mapping for external recurrence-exception representations.
 
+Recurrence presets are editor-only canonical transformations, not a second recurrence representation. Daily, Weekdays, Weekly, Monthly, Last weekday/month, and Yearly presets set frequency, interval, WKST, and cadence selectors to known canonical combinations while deliberately preserving COUNT, UNTIL, RDATE, EXDATE, and occurrence overrides; users can continue editing the resulting ordinary rule through the same selector fields and validators.
+
 The system distinguishes the persisted recurrence definition from materialized view occurrences.
 
 ## Expansion strategy
