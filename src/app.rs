@@ -285,6 +285,42 @@ fn validate_recurrence_yearday_edit_rows(rows: &[String]) -> Result<(), String> 
     Ok(())
 }
 
+fn recurrence_hour_edit_rows(values: &[u8]) -> Vec<String> {
+    values.iter().map(ToString::to_string).collect()
+}
+
+fn format_recurrence_hour_edit_rows(rows: &[String]) -> String {
+    rows.iter()
+        .map(|value| value.trim())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_recurrence_hour_edit_rows(raw: &str) -> Result<Vec<String>, String> {
+    parse_u8_selector_values(raw, "BYHOUR")
+        .map(|values| values.iter().map(ToString::to_string).collect())
+}
+
+fn validate_recurrence_hour_edit_rows(rows: &[String]) -> Result<(), String> {
+    for (index, value) in rows.iter().enumerate() {
+        let raw = value.trim();
+        if raw.is_empty() {
+            return Err(format!(
+                "BYHOUR row #{} needs an hour or must be removed.",
+                index + 1
+            ));
+        }
+        raw.parse::<u8>().map_err(|_| {
+            format!(
+                "BYHOUR row #{} has invalid hour '{}'.",
+                index + 1,
+                value
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn recurrence_monthday_edit_rows(values: &[i8]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
 }
@@ -501,6 +537,7 @@ struct RecurrenceEditDraft {
     ordinal_byday_text: String,
     ordinal_byday_rows: Vec<RecurrenceOrdinalByDayEditRow>,
     hour_text: String,
+    hour_rows: Vec<String>,
     minute_text: String,
     second_text: String,
     set_pos_text: String,
@@ -532,6 +569,8 @@ impl RecurrenceEditDraft {
         let year_day_rows = recurrence_yearday_edit_rows(&rule.by_year_day);
         let month_day_text = format_selector_values(&rule.by_month_day);
         let month_day_rows = recurrence_monthday_edit_rows(&rule.by_month_day);
+        let hour_text = format_selector_values(&rule.by_hour);
+        let hour_rows = recurrence_hour_edit_rows(&rule.by_hour);
         let ordinal_byday_text = format_ordinal_byday_values(&rule.by_month_weekday);
         let ordinal_byday_rows = recurrence_ordinal_byday_edit_rows(&rule.by_month_weekday);
         Self {
@@ -552,7 +591,8 @@ impl RecurrenceEditDraft {
             month_day_rows,
             ordinal_byday_text,
             ordinal_byday_rows,
-            hour_text: format_selector_values(&rule.by_hour),
+            hour_text,
+            hour_rows,
             minute_text: format_selector_values(&rule.by_minute),
             second_text: format_selector_values(&rule.by_second),
             set_pos_text: format_selector_values(&rule.by_set_pos),
@@ -581,6 +621,7 @@ impl RecurrenceEditDraft {
         self.ordinal_byday_text.clear();
         self.ordinal_byday_rows.clear();
         self.hour_text.clear();
+        self.hour_rows.clear();
         self.minute_text.clear();
         self.second_text.clear();
         self.set_pos_text.clear();
@@ -692,7 +733,17 @@ impl RecurrenceEditDraft {
             rule.by_month_weekday = parse_ordinal_byday_values(&structured_ordinal_byday_text)?;
         }
 
-        rule.by_hour = parse_u8_selector_values(&self.hour_text, "BYHOUR")?;
+        let canonical_hour_text = format_selector_values(&self.rule.by_hour);
+        let structured_hour_text = format_recurrence_hour_edit_rows(&self.hour_rows);
+        let hour_raw_override =
+            self.hour_text != canonical_hour_text && self.hour_text != structured_hour_text;
+        if hour_raw_override {
+            rule.by_hour = parse_u8_selector_values(&self.hour_text, "BYHOUR")?;
+        } else {
+            validate_recurrence_hour_edit_rows(&self.hour_rows)?;
+            rule.by_hour = parse_u8_selector_values(&structured_hour_text, "BYHOUR")?;
+        }
+
         rule.by_minute = parse_u8_selector_values(&self.minute_text, "BYMINUTE")?;
         rule.by_second = parse_u8_selector_values(&self.second_text, "BYSECOND")?;
         rule.by_set_pos = parse_i16_selector_values(&self.set_pos_text, "BYSETPOS")?;
@@ -4168,6 +4219,87 @@ fn render_structured_monthday(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft
         });
 }
 
+fn render_structured_hour(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, available: bool) {
+    if !available {
+        if draft.hour_text.trim().is_empty() && draft.hour_rows.is_empty() {
+            return;
+        }
+
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("BYHOUR (preserved)").strong());
+                ui.add_enabled(
+                    false,
+                    egui::TextEdit::singleline(&mut draft.hour_text)
+                        .desired_width(150.0)
+                        .hint_text("9,17"),
+                );
+                if ui.small_button("Clear").clicked() {
+                    draft.hour_text.clear();
+                    draft.hour_rows.clear();
+                }
+            });
+            ui.small(RecurrenceEditorSelector::Hour.unavailable_reason());
+            ui.small("The structured rows are preserved until cleared or the context is restored.");
+        });
+        return;
+    }
+
+    ui.label("BYHOUR");
+    ui.small("One civil hour per row, using 0 through 23.");
+
+    let mut structured_changed = false;
+    let mut remove_index = None;
+    for (index, value) in draft.hour_rows.iter_mut().enumerate() {
+        ui.push_id(("byhour", index), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("#{}", index + 1));
+                structured_changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(value)
+                            .desired_width(84.0)
+                            .hint_text("0..23"),
+                    )
+                    .changed();
+                if ui.small_button("Remove").clicked() {
+                    remove_index = Some(index);
+                }
+            });
+        });
+    }
+
+    if let Some(index) = remove_index {
+        draft.hour_rows.remove(index);
+        structured_changed = true;
+    }
+
+    if ui.small_button("+ Add BYHOUR").clicked() {
+        draft.hour_rows.push("0".to_string());
+        structured_changed = true;
+    }
+
+    if structured_changed {
+        draft.hour_text = format_recurrence_hour_edit_rows(&draft.hour_rows);
+    }
+
+    egui::CollapsingHeader::new("Raw BYHOUR syntax")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.small("Power-user form: comma- or space-separated hours such as 9,17.");
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.hour_text)
+                    .desired_width(260.0)
+                    .hint_text("9,17"),
+            );
+            if ui.small_button("Load raw syntax into rows").clicked()
+                && let Ok(rows) = parse_recurrence_hour_edit_rows(&draft.hour_text)
+            {
+                draft.hour_text = format_recurrence_hour_edit_rows(&rows);
+                draft.hour_rows = rows;
+            }
+        });
+}
+
 fn render_structured_ordinal_byday(
     ui: &mut egui::Ui,
     draft: &mut RecurrenceEditDraft,
@@ -4574,14 +4706,7 @@ fn render_recurrence_editor(
     render_structured_yearday(ui, draft, year_day_available);
     render_structured_monthday(ui, draft, month_day_available);
     render_structured_ordinal_byday(ui, draft, ordinal_byday_available);
-    contextual_recurrence_selector_text_row(
-        ui,
-        RecurrenceEditorSelector::Hour,
-        "BYHOUR",
-        &mut draft.hour_text,
-        "9,17",
-        hour_available,
-    );
+    render_structured_hour(ui, draft, hour_available);
     contextual_recurrence_selector_text_row(
         ui,
         RecurrenceEditorSelector::Minute,
@@ -8836,5 +8961,95 @@ mod tests {
 
         assert!(draft.year_day_text.is_empty());
         assert!(draft.year_day_rows.is_empty());
+    }
+
+    #[test]
+    fn recurrence_hour_edit_rows_roundtrip_compact_syntax() {
+        let rows = recurrence_hour_edit_rows(&[9, 17, 23]);
+
+        assert_eq!(rows, vec!["9", "17", "23"]);
+        assert_eq!(format_recurrence_hour_edit_rows(&rows), "9,17,23");
+        assert_eq!(
+            parse_recurrence_hour_edit_rows("9 17,23").expect("parse"),
+            vec!["9", "17", "23"]
+        );
+    }
+
+    #[test]
+    fn recurrence_edit_draft_applies_structured_hour_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Structured BYHOUR",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.hour_rows = vec!["9".to_string(), "17".to_string()];
+        draft.hour_text = format_recurrence_hour_edit_rows(&draft.hour_rows);
+
+        let parsed = draft.parsed_rule().expect("structured rule");
+        assert_eq!(parsed.by_hour, vec![9, 17]);
+    }
+
+    #[test]
+    fn recurrence_edit_draft_raw_hour_override_remains_supported() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Raw BYHOUR",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.by_hour = vec![9];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.hour_text = "17,23".to_string();
+
+        let parsed = draft.parsed_rule().expect("raw override");
+        assert_eq!(parsed.by_hour, vec![17, 23]);
+        assert_eq!(draft.hour_rows, vec!["9"]);
+    }
+
+    #[test]
+    fn recurrence_hour_edit_rows_reject_blank_hour() {
+        let rows = vec![String::new()];
+
+        assert_eq!(
+            validate_recurrence_hour_edit_rows(&rows),
+            Err("BYHOUR row #1 needs an hour or must be removed.".to_string())
+        );
+    }
+
+    #[test]
+    fn recurrence_preset_clears_structured_hour_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Preset clears structured BYHOUR",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.by_hour = vec![9, 17];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        assert_eq!(draft.hour_rows, vec!["9", "17"]);
+
+        draft.apply_preset(RecurrencePreset::Daily);
+
+        assert!(draft.hour_text.is_empty());
+        assert!(draft.hour_rows.is_empty());
     }
 }
