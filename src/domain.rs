@@ -1942,18 +1942,13 @@ fn hourly_rule_has_reachable_candidate(
     let cycle_start = NaiveDate::from_ymd_opt(2000, 1, 1)
         .and_then(|date| date.and_hms_opt(0, 0, 0))
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
-    let equivalent_base = NaiveDate::from_ymd_opt(
-        cycle_year,
-        base_local.month(),
-        base_local.day(),
-    )
-    .and_then(|date| date.and_hms_opt(base_local.hour(), 0, 0))
-    .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let equivalent_base = NaiveDate::from_ymd_opt(cycle_year, base_local.month(), base_local.day())
+        .and_then(|date| date.and_hms_opt(base_local.hour(), 0, 0))
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
     let mut hour_offset = u64::try_from((equivalent_base - cycle_start).num_hours())
         .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
     let step = u64::from(rule.interval) % GREGORIAN_CYCLE_HOURS;
-    let cycle_len =
-        GREGORIAN_CYCLE_HOURS / greatest_common_divisor(GREGORIAN_CYCLE_HOURS, step);
+    let cycle_len = GREGORIAN_CYCLE_HOURS / greatest_common_divisor(GREGORIAN_CYCLE_HOURS, step);
 
     for _ in 0..cycle_len {
         let candidate = cycle_start
@@ -1991,15 +1986,10 @@ fn hourly_rule_has_reachable_candidate(
             });
         let hour_matches = rule.by_hour.is_empty()
             || rule.by_hour.contains(
-                &u8::try_from(candidate.hour())
-                    .map_err(|_| RecurrenceError::ArithmeticOverflow)?,
+                &u8::try_from(candidate.hour()).map_err(|_| RecurrenceError::ArithmeticOverflow)?,
             );
 
-        if month_matches
-            && year_day_matches
-            && month_day_matches
-            && weekday_matches
-            && hour_matches
+        if month_matches && year_day_matches && month_day_matches && weekday_matches && hour_matches
         {
             return Ok(true);
         }
