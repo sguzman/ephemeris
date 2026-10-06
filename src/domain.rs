@@ -1139,8 +1139,7 @@ impl TemporalEvent {
         ) && matches!(
             &self.time,
             TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. }
-        )
-        {
+        ) {
             return Err(RecurrenceError::FrequencyRequiresDateTime(
                 rule.frequency,
                 self.time.kind_name(),
@@ -1983,10 +1982,9 @@ fn minutely_rule_has_reachable_candidate(
     let cycle_start = cycle_start_date
         .and_hms_opt(0, 0, 0)
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
-    let equivalent_base =
-        NaiveDate::from_ymd_opt(cycle_year, base_local.month(), base_local.day())
-            .and_then(|date| date.and_hms_opt(base_local.hour(), base_local.minute(), 0))
-            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let equivalent_base = NaiveDate::from_ymd_opt(cycle_year, base_local.month(), base_local.day())
+        .and_then(|date| date.and_hms_opt(base_local.hour(), base_local.minute(), 0))
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
     let start_offset = u64::try_from((equivalent_base - cycle_start).num_minutes())
         .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
     let step = u64::from(rule.interval) % GREGORIAN_CYCLE_MINUTES;
@@ -2277,9 +2275,8 @@ fn minutely_recurrence_candidates(
     }
 
     if !rule.by_month_day.is_empty() {
-        let month_start =
-            NaiveDate::from_ymd_opt(candidate_date.year(), candidate_date.month(), 1)
-                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+        let month_start = NaiveDate::from_ymd_opt(candidate_date.year(), candidate_date.month(), 1)
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
         if !rule
             .by_month_day
             .iter()
@@ -2304,7 +2301,10 @@ fn minutely_recurrence_candidates(
     if !rule.by_hour.is_empty() && !rule.by_hour.contains(&recurrence_rule_hour(&candidate)?) {
         return Ok(Vec::new());
     }
-    if !rule.by_minute.is_empty() && !rule.by_minute.contains(&recurrence_rule_minute(&candidate)?)
+    if !rule.by_minute.is_empty()
+        && !rule
+            .by_minute
+            .contains(&recurrence_rule_minute(&candidate)?)
     {
         return Ok(Vec::new());
     }
@@ -3920,12 +3920,9 @@ fn shift_date(
     steps: u32,
 ) -> Result<Option<NaiveDate>, RecurrenceError> {
     match frequency {
-        RecurrenceFrequency::Minutely | RecurrenceFrequency::Hourly => {
-            Err(RecurrenceError::FrequencyRequiresDateTime(
-                frequency,
-                "date_only",
-            ))
-        }
+        RecurrenceFrequency::Minutely | RecurrenceFrequency::Hourly => Err(
+            RecurrenceError::FrequencyRequiresDateTime(frequency, "date_only"),
+        ),
         RecurrenceFrequency::Daily => Ok(value.checked_add_days(Days::new(u64::from(steps)))),
         RecurrenceFrequency::Weekly => {
             let days = u64::from(steps)
@@ -12093,10 +12090,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            starts,
-            vec!["2026-02-01 00:00:30", "2026-02-01 00:30:30"]
-        );
+        assert_eq!(starts, vec!["2026-02-01 00:00:30", "2026-02-01 00:30:30"]);
     }
 
     #[test]
@@ -12132,10 +12126,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            starts,
-            vec!["2026-01-02 00:00:30", "2026-01-02 00:30:30"]
-        );
+        assert_eq!(starts, vec!["2026-01-02 00:00:30", "2026-01-02 00:30:30"]);
     }
 
     #[test]
@@ -12172,10 +12163,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            starts,
-            vec!["2026-10-05 09:15:35", "2026-10-06 09:15:35"]
-        );
+        assert_eq!(starts, vec!["2026-10-05 09:15:35", "2026-10-06 09:15:35"]);
     }
 
     #[test]
