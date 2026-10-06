@@ -16,7 +16,10 @@ pub enum IcalRecurrenceError {
     MissingFrequency,
     DuplicatePart(String),
     UnknownPart(String),
-    InvalidPart { name: String, value: String },
+    InvalidPart {
+        name: String,
+        value: String,
+    },
     CountUntilConflict,
     UnsupportedUntilDateTime(String),
     InvalidProperty(String),
@@ -316,7 +319,6 @@ pub fn format_rrule(rule: &RecurrenceRule) -> Result<String, IcalRecurrenceError
     Ok(parts.join(";"))
 }
 
-
 #[derive(Debug)]
 struct ParsedDateProperty<'a> {
     tzid: Option<String>,
@@ -587,7 +589,11 @@ fn resolve_ical_local_datetime(
                     LocalResult::Ambiguous(first, second) => {
                         let first_utc = first.with_timezone(&Utc);
                         let second_utc = second.with_timezone(&Utc);
-                        let value = if first_utc <= second_utc { first } else { second };
+                        let value = if first_utc <= second_utc {
+                            first
+                        } else {
+                            second
+                        };
                         Some(value.offset().fix().local_minus_utc())
                     }
                     LocalResult::None => None,
@@ -764,8 +770,7 @@ fn ensure_exception_shape(
                 start,
                 end_exclusive,
             },
-        ) => optional_duration(*base_start, *base_end)
-            == optional_duration(*start, *end_exclusive),
+        ) => optional_duration(*base_start, *base_end) == optional_duration(*start, *end_exclusive),
         (
             TimeSpec::Floating {
                 start: base_start,
@@ -1005,8 +1010,7 @@ mod tests {
             start: NaiveDate::from_ymd_opt(2026, 2, 1).expect("start"),
             end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 2, 2).expect("end")),
         };
-        let values =
-            parse_exdate_property("EXDATE;VALUE=DATE:20260208", &base).expect("EXDATE");
+        let values = parse_exdate_property("EXDATE;VALUE=DATE:20260208", &base).expect("EXDATE");
 
         assert!(matches!(values.as_slice(), [TimeSpec::AllDay { .. }]));
         assert_eq!(
@@ -1060,8 +1064,7 @@ mod tests {
             end_utc: Some(base_start + Duration::hours(1)),
             source_timezone: Some("America/New_York".to_string()),
         };
-        let values =
-            parse_rdate_property("RDATE:20260702T130000Z", &base).expect("UTC RDATE");
+        let values = parse_rdate_property("RDATE:20260702T130000Z", &base).expect("UTC RDATE");
 
         let TimeSpec::Instant {
             start_utc,
@@ -1095,11 +1098,8 @@ mod tests {
             end_utc: None,
             source_timezone: Some("America/New_York".to_string()),
         };
-        let values = parse_rdate_property(
-            "RDATE;TZID=America/New_York:20261101T013000",
-            &base,
-        )
-        .expect("TZID RDATE");
+        let values = parse_rdate_property("RDATE;TZID=America/New_York:20261101T013000", &base)
+            .expect("TZID RDATE");
 
         let TimeSpec::Instant { start_utc, .. } = values[0] else {
             panic!("instant");
@@ -1122,11 +1122,8 @@ mod tests {
             end_utc: None,
             source_timezone: Some("America/New_York".to_string()),
         };
-        let values = parse_rdate_property(
-            "RDATE;TZID=America/New_York:20260308T023000",
-            &base,
-        )
-        .expect("gap RDATE");
+        let values = parse_rdate_property("RDATE;TZID=America/New_York:20260308T023000", &base)
+            .expect("gap RDATE");
 
         let TimeSpec::Instant { start_utc, .. } = values[0] else {
             panic!("instant");
@@ -1174,10 +1171,7 @@ mod tests {
             source_timezone: Some("America/New_York".to_string()),
         };
         assert!(matches!(
-            parse_rdate_property(
-                "RDATE;TZID=Europe/London:20260102T090000",
-                &instant_base
-            ),
+            parse_rdate_property("RDATE;TZID=Europe/London:20260102T090000", &instant_base),
             Err(IcalRecurrenceError::TimezoneMismatch { .. })
         ));
     }
@@ -1191,11 +1185,9 @@ mod tests {
             end_utc: None,
             source_timezone: Some("America/New_York".to_string()),
         };
-        let values = parse_exdate_property(
-            "EXDATE;TZID=\"America/New_York\":20260702T090000",
-            &base,
-        )
-        .expect("quoted TZID");
+        let values =
+            parse_exdate_property("EXDATE;TZID=\"America/New_York\":20260702T090000", &base)
+                .expect("quoted TZID");
         assert_eq!(values.len(), 1);
 
         assert_eq!(
@@ -1234,11 +1226,8 @@ mod tests {
             start: NaiveDate::from_ymd_opt(2026, 1, 1).expect("date"),
             end_exclusive: None,
         };
-        let values = parse_rdate_property(
-            "RDATE;VALUE=DATE:20260102,20260102,20260103",
-            &base,
-        )
-        .expect("RDATE");
+        let values = parse_rdate_property("RDATE;VALUE=DATE:20260102,20260102,20260103", &base)
+            .expect("RDATE");
         assert_eq!(values.len(), 2);
     }
 
