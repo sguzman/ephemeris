@@ -409,11 +409,12 @@ Implemented recurrence foundation:
 - override-target validation so detached overrides cannot manufacture occurrences outside the RRULE/RDATE set
 - recurrence definition + occurrence origin/index/identity/override inspection in the GUI
 - canonical-series recurrence editor in the inspector: frequency, interval, COUNT, UNTIL, WKST, plain BYDAY, BYMONTH, advanced selector fields, RDATE/EXDATE, and moved/cancelled occurrence overrides are directly editable; read-only sources are protected and save/remove routes through canonical-event recurrence validation
+- structured occurrence-override controls layered over the canonical compact syntax: explicit Move / Cancel / Cancel + move / Keep rows with original/replacement fields, add/remove controls, and a collapsed raw-syntax fallback
 
 Next Phase 8 work:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
-- richer structured recurrence/exception editing ergonomics beyond the now-complete compact canonical editor, including more discoverable per-exception controls rather than text-only override syntax
+- richer structured recurrence/exception editing ergonomics beyond the now-complete compact canonical editor, especially structured RDATE/EXDATE controls and higher-level recurrence presets
 - recurrence-exception source-adapter interoperability for external calendar payloads
 - relations
 - collections/sequences
