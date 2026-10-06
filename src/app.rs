@@ -310,13 +310,8 @@ fn validate_recurrence_hour_edit_rows(rows: &[String]) -> Result<(), String> {
                 index + 1
             ));
         }
-        raw.parse::<u8>().map_err(|_| {
-            format!(
-                "BYHOUR row #{} has invalid hour '{}'.",
-                index + 1,
-                value
-            )
-        })?;
+        raw.parse::<u8>()
+            .map_err(|_| format!("BYHOUR row #{} has invalid hour '{}'.", index + 1, value))?;
     }
     Ok(())
 }
