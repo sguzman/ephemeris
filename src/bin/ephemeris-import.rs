@@ -24,14 +24,22 @@ fn main() -> anyhow::Result<()> {
         )
     {
         let report = import_remote_ics(&store, remote)?;
-        println!("Imported remote iCalendar source: {}", report.source_name);
+        if report.not_modified {
+            println!(
+                "Remote iCalendar not modified (HTTP 304): {}",
+                report.source_name
+            );
+            println!("Events in calendar: {}", report.total_events);
+        } else {
+            println!("Imported remote iCalendar source: {}", report.source_name);
+            println!("Events in calendar: {}", report.total_events);
+            println!(
+                "Created: {}  Updated: {}  Unchanged: {}",
+                report.created, report.updated, report.unchanged
+            );
+            println!("Prior missing retained: {}", report.retained_missing);
+        }
         println!("Source: {}", report.source_external_ref);
-        println!("Events in calendar: {}", report.total_events);
-        println!(
-            "Created: {}  Updated: {}  Unchanged: {}",
-            report.created, report.updated, report.unchanged
-        );
-        println!("Prior missing retained: {}", report.retained_missing);
         return Ok(());
     }
 
