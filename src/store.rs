@@ -5980,7 +5980,9 @@ mod tests {
         rule.by_set_pos = vec![-1];
         event.recurrence = Some(rule);
 
-        store.upsert_event(&event).expect("persist hourly recurrence");
+        store
+            .upsert_event(&event)
+            .expect("persist hourly recurrence");
         let loaded = store.event_by_id(event.id).expect("query").expect("event");
 
         assert_eq!(loaded.recurrence, event.recurrence);
@@ -6011,5 +6013,4 @@ mod tests {
         );
         assert_eq!(store.event_count().expect("event count"), 0);
     }
-
 }
