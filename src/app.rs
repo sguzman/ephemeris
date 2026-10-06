@@ -6836,6 +6836,108 @@ mod tests {
     }
 
     #[test]
+    fn structured_override_rows_roundtrip_all_override_actions() {
+        let base = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 5).expect("base"),
+            end_exclusive: None,
+        };
+        let raw = concat!(
+            "2026-10-12=>2026-10-13\n",
+            "2026-10-19=>CANCEL\n",
+            "2026-10-26=>KEEP\n",
+            "2026-11-02=>CANCEL@2026-11-03"
+        );
+
+        let rows = parse_recurrence_override_edit_rows(raw, &base).expect("structured rows");
+
+        assert_eq!(format_recurrence_override_edit_rows(&rows), raw);
+        assert_eq!(rows[0].action, RecurrenceOverrideEditAction::Move);
+        assert_eq!(rows[1].action, RecurrenceOverrideEditAction::Cancel);
+        assert_eq!(rows[2].action, RecurrenceOverrideEditAction::Keep);
+        assert_eq!(rows[3].action, RecurrenceOverrideEditAction::CancelMove);
+        assert_eq!(rows[3].replacement_text, "2026-11-03");
+    }
+
+    #[test]
+    fn recurrence_edit_draft_applies_structured_override_rows() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Structured override editor",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(10);
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.override_rows = vec![
+            RecurrenceOverrideEditRow {
+                original_text: "2026-10-07".to_string(),
+                action: RecurrenceOverrideEditAction::Move,
+                replacement_text: "2026-10-20".to_string(),
+            },
+            RecurrenceOverrideEditRow {
+                original_text: "2026-10-08".to_string(),
+                action: RecurrenceOverrideEditAction::CancelMove,
+                replacement_text: "2026-10-21".to_string(),
+            },
+            RecurrenceOverrideEditRow {
+                original_text: "2026-10-09".to_string(),
+                action: RecurrenceOverrideEditAction::Keep,
+                replacement_text: String::new(),
+            },
+        ];
+
+        let parsed = draft.parsed_rule().expect("valid structured overrides");
+
+        assert_eq!(parsed.overrides.len(), 3);
+        assert!(!parsed.overrides[0].cancelled);
+        assert!(parsed.overrides[0].replacement.is_some());
+        assert!(parsed.overrides[1].cancelled);
+        assert!(parsed.overrides[1].replacement.is_some());
+        assert!(!parsed.overrides[2].cancelled);
+        assert!(parsed.overrides[2].replacement.is_none());
+    }
+
+    #[test]
+    fn untouched_structured_override_rows_preserve_persisted_payloads() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Preserve override payload",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 6).expect("base end")),
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(10);
+        rule.overrides = vec![RecurrenceOverride {
+            original: TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("original"),
+                end_exclusive: Some(
+                    NaiveDate::from_ymd_opt(2026, 10, 8).expect("original end"),
+                ),
+            },
+            replacement: Some(TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 20).expect("replacement"),
+                end_exclusive: Some(
+                    NaiveDate::from_ymd_opt(2026, 10, 22).expect("replacement end"),
+                ),
+            }),
+            cancelled: false,
+        }];
+        event.recurrence = Some(rule.clone());
+
+        let draft = RecurrenceEditDraft::from_event(&event);
+        let parsed = draft.parsed_rule().expect("unchanged structured draft");
+
+        assert_eq!(parsed.overrides, rule.overrides);
+    }
+
+    #[test]
     fn recurrence_override_parser_rejects_malformed_entry() {
         let base = TimeSpec::DateOnly {
             start: NaiveDate::from_ymd_opt(2026, 10, 5).expect("base"),
