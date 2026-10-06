@@ -426,7 +426,7 @@ Next Phase 8 work:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
 - richer structured recurrence editing ergonomics beyond presets, structured exceptions, contextual selector visibility, and the fully structured advanced BY-selector set, especially higher-level controls for cadence/bounds and explanations for uncommon combinations
-- recurrence-exception source-adapter interoperability for external calendar payloads; RRULE and strict RDATE/EXDATE parse/format are implemented, with RECURRENCE-ID overrides and full VEVENT transport still ahead
+- recurrence-exception source-adapter interoperability for external calendar payloads; RRULE, strict RDATE/EXDATE parse/format, and strict RECURRENCE-ID original-slot parse/format are implemented, with `RANGE=THISANDFUTURE` deliberately deferred until range overrides are canonical and full VEVENT transport still ahead
 - relations
 - collections/sequences
 - uncertainty
