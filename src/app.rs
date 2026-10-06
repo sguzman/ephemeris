@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
-use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate, Timelike, Utc};
+use chrono::{
+    DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate, NaiveDateTime, Timelike, Utc,
+};
 use chrono_tz::Tz;
 use eframe::egui::{self, Color32, RichText};
 use uuid::Uuid;
@@ -86,6 +88,9 @@ struct RecurrenceEditDraft {
     minute_text: String,
     second_text: String,
     set_pos_text: String,
+    rdate_text: String,
+    exdate_text: String,
+    base_time: TimeSpec,
 }
 
 impl RecurrenceEditDraft {
@@ -113,6 +118,9 @@ impl RecurrenceEditDraft {
             minute_text: format_selector_values(&rule.by_minute),
             second_text: format_selector_values(&rule.by_second),
             set_pos_text: format_selector_values(&rule.by_set_pos),
+            rdate_text: format_exception_start_values(&rule.rdates),
+            exdate_text: format_exception_start_values(&rule.exdates),
+            base_time: event.time.clone(),
             rule,
         }
     }
@@ -150,14 +158,27 @@ impl RecurrenceEditDraft {
         rule.by_minute = parse_u8_selector_values(&self.minute_text, "BYMINUTE")?;
         rule.by_second = parse_u8_selector_values(&self.second_text, "BYSECOND")?;
         rule.by_set_pos = parse_i16_selector_values(&self.set_pos_text, "BYSETPOS")?;
+
+        if self.rdate_text != format_exception_start_values(&self.rule.rdates) {
+            rule.rdates = parse_exception_start_values(&self.rdate_text, &self.base_time, "RDATE")?;
+        }
+        if self.exdate_text != format_exception_start_values(&self.rule.exdates) {
+            rule.exdates =
+                parse_exception_start_values(&self.exdate_text, &self.base_time, "EXDATE")?;
+        }
+
         rule.validate().map_err(|error| error.to_string())?;
+        let mut validation_event =
+            TemporalEvent::new("Recurrence editor validation", self.base_time.clone());
+        validation_event.recurrence = Some(rule.clone());
+        validation_event
+            .validate_recurrence()
+            .map_err(|error| error.to_string())?;
         Ok(rule)
     }
 
-    fn has_unedited_exceptions(&self) -> bool {
-        !self.rule.rdates.is_empty()
-            || !self.rule.exdates.is_empty()
-            || !self.rule.overrides.is_empty()
+    fn has_unedited_overrides(&self) -> bool {
+        !self.rule.overrides.is_empty()
     }
 }
 
@@ -172,6 +193,149 @@ fn format_selector_values<T: ToString>(values: &[T]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn format_exception_start_values(values: &[TimeSpec]) -> String {
+    values
+        .iter()
+        .map(|value| match value {
+            TimeSpec::DateOnly { start, .. } | TimeSpec::AllDay { start, .. } => start.to_string(),
+            TimeSpec::Instant { start_utc, .. } => {
+                start_utc.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+            }
+            TimeSpec::Floating { start, .. } => {
+                if start.nanosecond() == 0 {
+                    start.format("%Y-%m-%dT%H:%M:%S").to_string()
+                } else {
+                    start.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
+                }
+            }
+            TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+                format!("<unsupported:{}>", value.kind_name())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_floating_exception_start(raw: &str, label: &str) -> Result<NaiveDateTime, String> {
+    for format in [
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+    ] {
+        if let Ok(value) = NaiveDateTime::parse_from_str(raw, format) {
+            return Ok(value);
+        }
+    }
+    Err(format!(
+        "{label} value '{raw}' must use YYYY-MM-DDTHH:MM[:SS[.fraction]]."
+    ))
+}
+
+fn parse_exception_start_values(
+    raw: &str,
+    base_time: &TimeSpec,
+    label: &str,
+) -> Result<Vec<TimeSpec>, String> {
+    selector_tokens(raw)
+        .map(|token| match base_time {
+            TimeSpec::DateOnly {
+                start: base_start,
+                end_exclusive,
+            } => {
+                let start = NaiveDate::parse_from_str(token, "%Y-%m-%d")
+                    .map_err(|_| format!("{label} value '{token}' must use YYYY-MM-DD."))?;
+                let end_exclusive = (*end_exclusive)
+                    .map(|end| end.signed_duration_since(*base_start))
+                    .map(|duration| {
+                        start
+                            .checked_add_signed(duration)
+                            .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
+                    })
+                    .transpose()?;
+                Ok(TimeSpec::DateOnly {
+                    start,
+                    end_exclusive,
+                })
+            }
+            TimeSpec::AllDay {
+                start: base_start,
+                end_exclusive,
+            } => {
+                let start = NaiveDate::parse_from_str(token, "%Y-%m-%d")
+                    .map_err(|_| format!("{label} value '{token}' must use YYYY-MM-DD."))?;
+                let end_exclusive = (*end_exclusive)
+                    .map(|end| end.signed_duration_since(*base_start))
+                    .map(|duration| {
+                        start
+                            .checked_add_signed(duration)
+                            .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
+                    })
+                    .transpose()?;
+                Ok(TimeSpec::AllDay {
+                    start,
+                    end_exclusive,
+                })
+            }
+            TimeSpec::Instant {
+                start_utc: base_start,
+                end_utc,
+                source_timezone,
+            } => {
+                let start_utc = DateTime::parse_from_rfc3339(token)
+                    .map_err(|_| format!("{label} value '{token}' must be RFC3339."))?
+                    .with_timezone(&Utc);
+                let end_utc = end_utc
+                    .as_ref()
+                    .map(|end| end.signed_duration_since(*base_start))
+                    .map(|duration| {
+                        start_utc
+                            .checked_add_signed(duration)
+                            .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
+                    })
+                    .transpose()?;
+                Ok(TimeSpec::Instant {
+                    start_utc,
+                    end_utc,
+                    source_timezone: source_timezone.clone(),
+                })
+            }
+            TimeSpec::Floating {
+                start: base_start,
+                end,
+                source_timezone,
+            } => {
+                let start = parse_floating_exception_start(token, label)?;
+                let end = end
+                    .as_ref()
+                    .map(|end| end.signed_duration_since(*base_start))
+                    .map(|duration| {
+                        start
+                            .checked_add_signed(duration)
+                            .ok_or_else(|| format!("{label} value '{token}' overflows its duration."))
+                    })
+                    .transpose()?;
+                Ok(TimeSpec::Floating {
+                    start,
+                    end,
+                    source_timezone: source_timezone.clone(),
+                })
+            }
+            TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => Err(
+                format!("{label} cannot be authored for {} recurrence.", base_time.kind_name()),
+            ),
+        })
+        .collect()
+}
+
+fn recurrence_exception_hint(base_time: &TimeSpec) -> &'static str {
+    match base_time {
+        TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => "2026-03-10,2026-04-15",
+        TimeSpec::Floating { .. } => "2026-03-10T09:00:00",
+        TimeSpec::Instant { .. } => "2026-03-10T15:00:00Z",
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => "",
+    }
 }
 
 fn recurrence_weekday_rrule_code(weekday: RecurrenceWeekday) -> &'static str {
@@ -3083,8 +3247,13 @@ fn render_recurrence_editor(
     recurrence_selector_text_row(ui, "BYSECOND", &mut draft.second_text, "0,15,30,45");
     recurrence_selector_text_row(ui, "BYSETPOS", &mut draft.set_pos_text, "1,-1");
 
-    if draft.has_unedited_exceptions() {
-        ui.small("RDATE, EXDATE, and occurrence overrides are preserved unchanged in this slice.");
+    ui.separator();
+    ui.small("Exception dates: comma- or space-separated occurrence starts.");
+    let exception_hint = recurrence_exception_hint(&draft.base_time);
+    recurrence_selector_text_row(ui, "RDATE", &mut draft.rdate_text, exception_hint);
+    recurrence_selector_text_row(ui, "EXDATE", &mut draft.exdate_text, exception_hint);
+    if draft.has_unedited_overrides() {
+        ui.small("Moved/cancelled occurrence overrides are preserved unchanged in this slice.");
     }
 
     let validation = draft.parsed_rule();
@@ -5931,7 +6100,8 @@ mod tests {
         let draft = RecurrenceEditDraft::from_event(&event);
         let parsed = draft.parsed_rule().expect("parsed rule");
 
-        assert!(draft.has_unedited_exceptions());
+        assert_eq!(draft.rdate_text, "2026-10-05T12:00:00");
+        assert!(!draft.has_unedited_overrides());
         assert_eq!(parsed.by_hour, rule.by_hour);
         assert_eq!(parsed.by_minute, rule.by_minute);
         assert_eq!(parsed.by_second, rule.by_second);
@@ -6061,4 +6231,162 @@ mod tests {
         assert_eq!(parsed.by_second, vec![15]);
         assert_eq!(parsed.by_set_pos, vec![1, -1]);
     }
+
+    #[test]
+    fn recurrence_exception_date_parser_preserves_date_only_duration() {
+        let base = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 1, 10).expect("start"),
+            end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 1, 13).expect("end")),
+        };
+
+        let parsed =
+            parse_exception_start_values("2026-03-10,2026-04-15", &base, "RDATE").expect("parse");
+
+        assert_eq!(
+            parsed,
+            vec![
+                TimeSpec::DateOnly {
+                    start: NaiveDate::from_ymd_opt(2026, 3, 10).unwrap(),
+                    end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 3, 13).unwrap()),
+                },
+                TimeSpec::DateOnly {
+                    start: NaiveDate::from_ymd_opt(2026, 4, 15).unwrap(),
+                    end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 4, 18).unwrap()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn recurrence_exception_date_parser_preserves_instant_duration_and_timezone() {
+        let start_utc = DateTime::parse_from_rfc3339("2026-03-01T14:00:00Z")
+            .expect("start")
+            .with_timezone(&Utc);
+        let base = TimeSpec::Instant {
+            start_utc,
+            end_utc: Some(start_utc + ChronoDuration::minutes(90)),
+            source_timezone: Some("America/New_York".to_string()),
+        };
+
+        let parsed = parse_exception_start_values(
+            "2026-04-01T13:00:00Z",
+            &base,
+            "RDATE",
+        )
+        .expect("parse");
+        let TimeSpec::Instant {
+            start_utc,
+            end_utc,
+            source_timezone,
+        } = &parsed[0]
+        else {
+            panic!("expected instant");
+        };
+
+        assert_eq!(
+            *start_utc,
+            DateTime::parse_from_rfc3339("2026-04-01T13:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+        assert_eq!(
+            *end_utc,
+            Some(
+                DateTime::parse_from_rfc3339("2026-04-01T14:30:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc)
+            )
+        );
+        assert_eq!(source_timezone.as_deref(), Some("America/New_York"));
+        assert_eq!(
+            format_exception_start_values(&parsed),
+            "2026-04-01T13:00:00Z"
+        );
+    }
+
+    #[test]
+    fn recurrence_edit_draft_applies_rdate_and_exdate_text_preserving_overrides() {
+        use crate::domain::RecurrenceOverride;
+
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Exception edit",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let original = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+            end_exclusive: None,
+        };
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.overrides = vec![RecurrenceOverride {
+            original: original.clone(),
+            replacement: Some(TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 13).unwrap(),
+                end_exclusive: None,
+            }),
+            cancelled: false,
+        }];
+        event.recurrence = Some(rule.clone());
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.rdate_text = "2026-10-20,2026-10-21".to_string();
+        draft.exdate_text = "2026-10-7".replace("-7", "-07");
+
+        let parsed = draft.parsed_rule().expect("parsed rule");
+
+        assert_eq!(parsed.rdates.len(), 2);
+        assert_eq!(parsed.exdates.len(), 1);
+        assert_eq!(parsed.overrides, rule.overrides);
+        assert!(draft.has_unedited_overrides());
+    }
+
+    #[test]
+    fn recurrence_edit_draft_rejects_malformed_exception_value() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
+        let event = TemporalEvent::new(
+            "Invalid exception",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.rdate_text = "10/20/2026".to_string();
+
+        assert!(draft.parsed_rule().is_err());
+    }
+
+    #[test]
+    fn recurrence_edit_draft_rejects_exdate_override_conflict_live() {
+        use crate::domain::RecurrenceOverride;
+
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let original = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Conflict",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.overrides = vec![RecurrenceOverride {
+            original: original.clone(),
+            replacement: None,
+            cancelled: true,
+        }];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.exdate_text = "2026-10-12".to_string();
+
+        assert!(draft.parsed_rule().is_err());
+    }
+
 }
