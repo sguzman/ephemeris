@@ -1899,6 +1899,7 @@ fn recurrence_candidates_before_set_pos(
 const MINUTES_PER_DAY: u64 = 24 * 60;
 const GREGORIAN_CYCLE_DAYS: u64 = 146_097;
 const GREGORIAN_CYCLE_HOURS: u64 = GREGORIAN_CYCLE_DAYS * 24;
+const GREGORIAN_CYCLE_MINUTES: u64 = GREGORIAN_CYCLE_DAYS * MINUTES_PER_DAY;
 const GREGORIAN_CYCLE_WEEKS: u64 = 20_871;
 const GREGORIAN_CYCLE_MONTHS: u64 = 4_800;
 
@@ -1929,40 +1930,146 @@ fn minutely_rule_has_reachable_candidate(
         return Ok(false);
     }
 
-    if rule.by_hour.is_empty() && rule.by_minute.is_empty() {
-        return Ok(true);
-    }
-
-    let base_local = recurrence_rule_local_datetime(base)?;
-    let start_minute = u64::from(base_local.hour())
-        .checked_mul(60)
-        .and_then(|value| value.checked_add(u64::from(base_local.minute())))
-        .ok_or(RecurrenceError::ArithmeticOverflow)?;
-    let step = u64::from(rule.interval) % MINUTES_PER_DAY;
-    let mut minute_of_day = start_minute;
-    let mut seen = vec![false; usize::try_from(MINUTES_PER_DAY)
-        .map_err(|_| RecurrenceError::ArithmeticOverflow)?];
-
-    loop {
-        let index =
-            usize::try_from(minute_of_day).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
-        if seen[index] {
-            return Ok(false);
-        }
-
-        let hour = u8::try_from(minute_of_day / 60)
-            .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
-        let minute = u8::try_from(minute_of_day % 60)
-            .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
-        let hour_matches = rule.by_hour.is_empty() || rule.by_hour.contains(&hour);
-        let minute_matches = rule.by_minute.is_empty() || rule.by_minute.contains(&minute);
-        if hour_matches && minute_matches {
+    let has_date_limiter = !rule.by_month.is_empty()
+        || !rule.by_year_day.is_empty()
+        || !rule.by_month_day.is_empty()
+        || !rule.by_weekday.is_empty();
+    if !has_date_limiter {
+        if rule.by_hour.is_empty() && rule.by_minute.is_empty() {
             return Ok(true);
         }
 
-        seen[index] = true;
-        minute_of_day = (minute_of_day + step) % MINUTES_PER_DAY;
+        let base_local = recurrence_rule_local_datetime(base)?;
+        let start_minute = u64::from(base_local.hour())
+            .checked_mul(60)
+            .and_then(|value| value.checked_add(u64::from(base_local.minute())))
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+        let step = u64::from(rule.interval) % MINUTES_PER_DAY;
+        let mut minute_of_day = start_minute;
+        let mut seen = vec![
+            false;
+            usize::try_from(MINUTES_PER_DAY)
+                .map_err(|_| RecurrenceError::ArithmeticOverflow)?
+        ];
+
+        loop {
+            let index =
+                usize::try_from(minute_of_day).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+            if seen[index] {
+                return Ok(false);
+            }
+
+            let hour = u8::try_from(minute_of_day / 60)
+                .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+            let minute = u8::try_from(minute_of_day % 60)
+                .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+            let hour_matches = rule.by_hour.is_empty() || rule.by_hour.contains(&hour);
+            let minute_matches = rule.by_minute.is_empty() || rule.by_minute.contains(&minute);
+            if hour_matches && minute_matches {
+                return Ok(true);
+            }
+
+            seen[index] = true;
+            minute_of_day = (minute_of_day + step) % MINUTES_PER_DAY;
+        }
     }
+
+    let base_local = recurrence_rule_local_datetime(base)?;
+    let cycle_year = 2000_i32
+        .checked_add(base_local.year().rem_euclid(400))
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let cycle_start_date =
+        NaiveDate::from_ymd_opt(2000, 1, 1).ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let cycle_start = cycle_start_date
+        .and_hms_opt(0, 0, 0)
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let equivalent_base =
+        NaiveDate::from_ymd_opt(cycle_year, base_local.month(), base_local.day())
+            .and_then(|date| date.and_hms_opt(base_local.hour(), base_local.minute(), 0))
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let start_offset = u64::try_from((equivalent_base - cycle_start).num_minutes())
+        .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+    let step = u64::from(rule.interval) % GREGORIAN_CYCLE_MINUTES;
+    let cadence_modulus = greatest_common_divisor(GREGORIAN_CYCLE_MINUTES, step);
+    let cadence_residue = start_offset % cadence_modulus;
+
+    for day_index in 0..GREGORIAN_CYCLE_DAYS {
+        let candidate_date = cycle_start_date
+            .checked_add_days(Days::new(day_index))
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+
+        let month_matches = rule.by_month.is_empty()
+            || u8::try_from(candidate_date.month())
+                .ok()
+                .is_some_and(|month| rule.by_month.contains(&month));
+        let year_day_matches = rule.by_year_day.is_empty()
+            || rule
+                .by_year_day
+                .iter()
+                .filter_map(|selector| resolve_year_day(candidate_date.year(), *selector))
+                .any(|date| date == candidate_date);
+        let month_day_matches = if rule.by_month_day.is_empty() {
+            true
+        } else {
+            let month_start =
+                NaiveDate::from_ymd_opt(candidate_date.year(), candidate_date.month(), 1)
+                    .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            rule.by_month_day
+                .iter()
+                .filter_map(|selector| resolve_month_day(month_start, *selector))
+                .any(|date| date == candidate_date)
+        };
+        let weekday_matches = rule.by_weekday.is_empty()
+            || rule.by_weekday.iter().any(|weekday| {
+                weekday.offset_from_monday()
+                    == u64::from(candidate_date.weekday().num_days_from_monday())
+            });
+
+        if !(month_matches && year_day_matches && month_day_matches && weekday_matches) {
+            continue;
+        }
+
+        let day_start = day_index
+            .checked_mul(MINUTES_PER_DAY)
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+        if rule.by_hour.is_empty() && rule.by_minute.is_empty() {
+            let day_residue = day_start % cadence_modulus;
+            let first_matching_minute =
+                (cadence_residue + cadence_modulus - day_residue) % cadence_modulus;
+            if first_matching_minute < MINUTES_PER_DAY {
+                return Ok(true);
+            }
+            continue;
+        }
+
+        let hours = if rule.by_hour.is_empty() {
+            (0_u8..24).collect::<Vec<_>>()
+        } else {
+            rule.by_hour.clone()
+        };
+        let minutes = if rule.by_minute.is_empty() {
+            (0_u8..60).collect::<Vec<_>>()
+        } else {
+            rule.by_minute.clone()
+        };
+
+        for hour in &hours {
+            for minute in &minutes {
+                let minute_of_day = u64::from(*hour)
+                    .checked_mul(60)
+                    .and_then(|value| value.checked_add(u64::from(*minute)))
+                    .ok_or(RecurrenceError::ArithmeticOverflow)?;
+                let absolute_minute = day_start
+                    .checked_add(minute_of_day)
+                    .ok_or(RecurrenceError::ArithmeticOverflow)?;
+                if absolute_minute % cadence_modulus == cadence_residue {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 fn hourly_rule_has_reachable_candidate(
@@ -12236,6 +12343,41 @@ mod tests {
             week_no.validate(),
             Err(RecurrenceError::ByWeekNoRequiresYearly)
         ));
+    }
+
+
+    #[test]
+    fn minutely_reachability_detects_unreachable_calendar_limiter_cycle() {
+        let start = NaiveDateTime::parse_from_str("2026-10-05T08:30:20", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let base = TimeSpec::Floating {
+            start,
+            end: None,
+            source_timezone: None,
+        };
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Minutely);
+        rule.interval =
+            u32::try_from(GREGORIAN_CYCLE_MINUTES).expect("Gregorian cycle minutes fit u32");
+        rule.count = Some(1);
+        rule.by_month = vec![11];
+
+        assert!(
+            !minutely_rule_has_reachable_candidate(&base, &rule).expect("reachability"),
+            "a 400-year cadence pinned to October can never satisfy BYMONTH=11"
+        );
+
+        let mut event = TemporalEvent::new("Never November minutely", base);
+        event.recurrence = Some(rule);
+        assert!(
+            event
+                .occurrences_in_window(
+                    NaiveDate::from_ymd_opt(2026, 10, 1).expect("window start"),
+                    NaiveDate::from_ymd_opt(2026, 12, 1).expect("window end"),
+                    chrono_tz::UTC,
+                )
+                .expect("expand")
+                .is_empty()
+        );
     }
 
 }
