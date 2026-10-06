@@ -12,8 +12,8 @@ use crate::calendar::{
     shift_focus, week_days, window_for_view, year_months,
 };
 use crate::domain::{
-    EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin, TemporalEvent, TemporalSource,
-    TimeSpec,
+    EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceRule,
+    RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
 };
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
@@ -70,6 +70,84 @@ struct OccurrenceContext {
     cancelled_by_override: bool,
 }
 
+#[derive(Debug, Clone)]
+struct RecurrenceEditDraft {
+    event_id: Uuid,
+    had_recurrence: bool,
+    rule: RecurrenceRule,
+    interval_text: String,
+    count_text: String,
+    until_text: String,
+}
+
+impl RecurrenceEditDraft {
+    fn from_event(event: &TemporalEvent) -> Self {
+        let had_recurrence = event.recurrence.is_some();
+        let rule = event
+            .recurrence
+            .clone()
+            .unwrap_or_else(|| RecurrenceRule::new(RecurrenceFrequency::Daily));
+        Self {
+            event_id: event.id,
+            had_recurrence,
+            interval_text: rule.interval.to_string(),
+            count_text: rule.count.map_or_else(String::new, |count| count.to_string()),
+            until_text: rule.until.map_or_else(String::new, |until| until.to_string()),
+            rule,
+        }
+    }
+
+    fn parsed_rule(&self) -> Result<RecurrenceRule, String> {
+        let mut rule = self.rule.clone();
+        rule.interval = self
+            .interval_text
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| "Interval must be a positive integer.".to_string())?;
+        rule.count = if self.count_text.trim().is_empty() {
+            None
+        } else {
+            Some(
+                self.count_text
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| "Count must be a positive integer or blank.".to_string())?,
+            )
+        };
+        rule.until = if self.until_text.trim().is_empty() {
+            None
+        } else {
+            Some(
+                NaiveDate::parse_from_str(self.until_text.trim(), "%Y-%m-%d")
+                    .map_err(|_| "Until must be YYYY-MM-DD or blank.".to_string())?,
+            )
+        };
+        rule.validate().map_err(|error| error.to_string())?;
+        Ok(rule)
+    }
+
+    fn has_advanced_selectors(&self) -> bool {
+        !self.rule.by_week_no.is_empty()
+            || !self.rule.by_year_day.is_empty()
+            || !self.rule.by_month_day.is_empty()
+            || !self.rule.by_month_weekday.is_empty()
+            || !self.rule.by_hour.is_empty()
+            || !self.rule.by_minute.is_empty()
+            || !self.rule.by_second.is_empty()
+            || !self.rule.by_set_pos.is_empty()
+            || !self.rule.rdates.is_empty()
+            || !self.rule.exdates.is_empty()
+            || !self.rule.overrides.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecurrenceEditorAction {
+    Save,
+    Cancel,
+    Remove,
+}
+
 pub struct EphemerisApp {
     store: TemporalStore,
     state: PersistedUiState,
@@ -90,6 +168,7 @@ pub struct EphemerisApp {
     taria_update_receiver: Option<(Uuid, Receiver<Result<TariaWorkspaceUpdateReport, String>>)>,
     last_message: Option<String>,
     last_error: Option<String>,
+    recurrence_editor: Option<RecurrenceEditDraft>,
     dirty_state: bool,
     saved_view_name: String,
     saved_views: Vec<SavedView>,
@@ -136,6 +215,7 @@ impl EphemerisApp {
             taria_update_receiver: None,
             last_message: None,
             last_error: None,
+            recurrence_editor: None,
             dirty_state: false,
             saved_view_name: String::new(),
             saved_views,
@@ -786,6 +866,86 @@ impl EphemerisApp {
         self.occurrence_contexts
             .get(&event_id)
             .map_or(event_id, |occurrence| occurrence.event_id)
+    }
+
+    fn event_is_editable(&self, event: &TemporalEvent) -> bool {
+        event.source_id.is_none_or(|source_id| {
+            self.sources
+                .iter()
+                .find(|source| source.id == source_id)
+                .is_none_or(|source| !source.read_only)
+        })
+    }
+
+    fn begin_recurrence_edit(&mut self, event_id: Uuid) {
+        let canonical_id = self.canonical_event_id(event_id);
+        match self.store.event_by_id(canonical_id) {
+            Ok(Some(event)) if self.event_is_editable(&event) => {
+                self.recurrence_editor = Some(RecurrenceEditDraft::from_event(&event));
+                self.last_error = None;
+            }
+            Ok(Some(_)) => {
+                self.last_message = None;
+                self.last_error =
+                    Some("This event comes from a read-only source and cannot be edited.".to_string());
+            }
+            Ok(None) => {
+                self.last_message = None;
+                self.last_error = Some("The canonical event could not be found.".to_string());
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to load recurrence editor: {error:#}"));
+            }
+        }
+    }
+
+    fn save_recurrence_edit(&mut self, remove: bool) {
+        let Some(draft) = self.recurrence_editor.clone() else {
+            return;
+        };
+
+        let result = (|| -> anyhow::Result<()> {
+            let mut event = self
+                .store
+                .event_by_id(draft.event_id)?
+                .ok_or_else(|| anyhow::anyhow!("canonical event no longer exists"))?;
+            if !self.event_is_editable(&event) {
+                anyhow::bail!("event source is read-only");
+            }
+
+            event.recurrence = if remove {
+                None
+            } else {
+                Some(
+                    draft
+                        .parsed_rule()
+                        .map_err(|error| anyhow::anyhow!("{error}"))?,
+                )
+            };
+            event.updated_at = Utc::now();
+            self.store.upsert_event(&event)?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.recurrence_editor = None;
+                self.last_message = Some(if remove {
+                    "Removed recurrence from canonical event.".to_string()
+                } else {
+                    "Saved recurrence on canonical event.".to_string()
+                });
+                self.last_error = None;
+                self.state.selected_event_id = None;
+                self.mark_state_dirty();
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to save recurrence: {error:#}"));
+            }
+        }
     }
 
     fn reload(&mut self) -> anyhow::Result<()> {
@@ -2238,7 +2398,7 @@ impl EphemerisApp {
         });
     }
 
-    fn render_inspector(&self, ui: &mut egui::Ui, events: &[TemporalEvent]) {
+    fn render_inspector(&mut self, ui: &mut egui::Ui, events: &[TemporalEvent]) {
         ui.set_width(320.0);
         ui.heading("Event Inspector");
         ui.separator();
@@ -2255,7 +2415,8 @@ impl EphemerisApp {
                 self.unplaced_events
                     .iter()
                     .find(|event| event.id == selected_id)
-            });
+            })
+            .cloned();
         let Some(event) = event else {
             ui.label("The selected event is not in the current view.");
             return;
@@ -2278,7 +2439,14 @@ impl EphemerisApp {
 
             if let Some(rule) = event.recurrence.as_ref() {
                 ui.separator();
-                ui.strong("Recurrence");
+                ui.horizontal(|ui| {
+                    ui.strong("Recurrence");
+                    if self.event_is_editable(&event)
+                        && ui.small_button("Edit series").clicked()
+                    {
+                        self.begin_recurrence_edit(event.id);
+                    }
+                });
                 inspector_row(ui, "Frequency", rule.frequency.as_str());
                 inspector_row(ui, "Interval", &rule.interval.to_string());
                 inspector_row(
@@ -2417,7 +2585,39 @@ impl EphemerisApp {
                     "Occurrence overrides",
                     &rule.overrides.len().to_string(),
                 );
+            } else if self.event_is_editable(&event)
+                && !matches!(
+                    event.time,
+                    TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. }
+                )
+            {
+                ui.separator();
+                if ui.button("Add recurrence").clicked() {
+                    self.begin_recurrence_edit(event.id);
+                }
             }
+
+            if self
+                .recurrence_editor
+                .as_ref()
+                .is_some_and(|draft| draft.event_id == self.canonical_event_id(event.id))
+            {
+                ui.separator();
+                let action = {
+                    let draft = self.recurrence_editor.as_mut().expect("checked above");
+                    render_recurrence_editor(ui, draft)
+                };
+                match action {
+                    Some(RecurrenceEditorAction::Save) => self.save_recurrence_edit(false),
+                    Some(RecurrenceEditorAction::Remove) => self.save_recurrence_edit(true),
+                    Some(RecurrenceEditorAction::Cancel) => {
+                        self.recurrence_editor = None;
+                        self.last_error = None;
+                    }
+                    None => {}
+                }
+            }
+
             if let Some(value) = event.event_type.as_deref() {
                 inspector_row(ui, "Type", value);
             }
@@ -2650,6 +2850,128 @@ impl eframe::App for EphemerisApp {
 struct MembershipPredicateOptions {
     bundles: Vec<String>,
     calendars: Vec<TariaProjectedCalendarChoice>,
+}
+
+fn render_recurrence_editor(
+    ui: &mut egui::Ui,
+    draft: &mut RecurrenceEditDraft,
+) -> Option<RecurrenceEditorAction> {
+    ui.strong(if draft.had_recurrence {
+        "Edit recurrence"
+    } else {
+        "Add recurrence"
+    });
+    ui.small("Edits the canonical series definition, not the selected materialized occurrence.");
+
+    egui::ComboBox::from_label("Frequency")
+        .selected_text(draft.rule.frequency.as_str())
+        .show_ui(ui, |ui| {
+            for frequency in RecurrenceFrequency::ALL {
+                ui.selectable_value(
+                    &mut draft.rule.frequency,
+                    frequency,
+                    frequency.as_str(),
+                );
+            }
+        });
+
+    ui.horizontal(|ui| {
+        ui.label("Interval");
+        ui.add(
+            egui::TextEdit::singleline(&mut draft.interval_text)
+                .desired_width(70.0)
+                .hint_text("1"),
+        );
+    });
+    ui.horizontal(|ui| {
+        ui.label("Count");
+        ui.add(
+            egui::TextEdit::singleline(&mut draft.count_text)
+                .desired_width(90.0)
+                .hint_text("unbounded"),
+        );
+    });
+    ui.horizontal(|ui| {
+        ui.label("Until");
+        ui.add(
+            egui::TextEdit::singleline(&mut draft.until_text)
+                .desired_width(120.0)
+                .hint_text("YYYY-MM-DD"),
+        );
+    });
+
+    egui::ComboBox::from_label("Week start")
+        .selected_text(draft.rule.week_start.short_label())
+        .show_ui(ui, |ui| {
+            for weekday in RecurrenceWeekday::ALL {
+                ui.selectable_value(
+                    &mut draft.rule.week_start,
+                    weekday,
+                    weekday.short_label(),
+                );
+            }
+        });
+
+    ui.label("BYDAY");
+    ui.horizontal_wrapped(|ui| {
+        for weekday in RecurrenceWeekday::ALL {
+            let mut selected = draft.rule.by_weekday.contains(&weekday);
+            if ui.checkbox(&mut selected, weekday.short_label()).changed() {
+                if selected {
+                    draft.rule.by_weekday.push(weekday);
+                } else {
+                    draft.rule.by_weekday.retain(|value| *value != weekday);
+                }
+            }
+        }
+    });
+
+    ui.label("BYMONTH");
+    ui.horizontal_wrapped(|ui| {
+        for month in 1_u8..=12 {
+            let mut selected = draft.rule.by_month.contains(&month);
+            if ui.checkbox(&mut selected, month.to_string()).changed() {
+                if selected {
+                    draft.rule.by_month.push(month);
+                } else {
+                    draft.rule.by_month.retain(|value| *value != month);
+                }
+            }
+        }
+    });
+
+    if draft.has_advanced_selectors() {
+        ui.small(
+            "Advanced selectors/exceptions are preserved unchanged in this first editor slice.",
+        );
+    }
+
+    let validation = draft.parsed_rule();
+    match &validation {
+        Ok(_) => {
+            ui.small(RichText::new("Rule is valid.").color(Color32::from_rgb(90, 180, 110)));
+        }
+        Err(error) => {
+            ui.small(RichText::new(error).color(Color32::from_rgb(220, 90, 90)));
+        }
+    }
+
+    let mut action = None;
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(validation.is_ok(), egui::Button::new("Save"))
+            .clicked()
+        {
+            action = Some(RecurrenceEditorAction::Save);
+        }
+        if ui.button("Cancel").clicked() {
+            action = Some(RecurrenceEditorAction::Cancel);
+        }
+        if draft.had_recurrence && ui.button("Remove recurrence").clicked() {
+            action = Some(RecurrenceEditorAction::Remove);
+        }
+    });
+    action
 }
 
 fn render_color_rules_editor(
