@@ -4,10 +4,11 @@ use chrono::{
     DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone, Timelike, Utc,
 };
 use chrono_tz::Tz;
+use serde_json::json;
 
 use crate::domain::{
-    RecurrenceError, RecurrenceFrequency, RecurrenceOrdinalWeekday, RecurrenceOverride,
-    RecurrenceRule, RecurrenceWeekday, TemporalEvent, TimeSpec,
+    EventStatus, RecurrenceError, RecurrenceFrequency, RecurrenceOrdinalWeekday,
+    RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TimeSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -646,6 +647,69 @@ pub fn format_vevent(event: &IcalVevent) -> Result<String, IcalRecurrenceError> 
     format_vevent_content_lines(&lines)
 }
 
+impl IcalVevent {
+    /// Project one master or non-recurring VEVENT into the canonical event
+    /// model. Detached instances require master context and are rejected here.
+    pub fn canonical_event(&self) -> Result<TemporalEvent, IcalRecurrenceError> {
+        if self.recurrence_id.is_some() {
+            return Err(IcalRecurrenceError::DetachedMissingRecurrenceId);
+        }
+
+        let recurrence = match self.rrule.as_ref() {
+            Some(rrule) => {
+                let mut rule = rrule.value.clone();
+                rule.rdates = self.rdates.clone();
+                rule.exdates = self.exdates.clone();
+                rule.overrides.clear();
+                Some(rule)
+            }
+            None if self.rdates.is_empty() && self.exdates.is_empty() => None,
+            None => {
+                return Err(IcalRecurrenceError::UnsupportedRecurrenceSet(
+                    "RDATE/EXDATE without RRULE is not representable by the canonical recurrence model"
+                        .to_string(),
+                ));
+            }
+        };
+
+        let title = self
+            .summary
+            .as_ref()
+            .map(|property| property.value.clone())
+            .unwrap_or_else(|| self.uid.value.clone());
+        let mut event = TemporalEvent::new(title, self.time.clone());
+        event.source_record_key = Some(self.uid.value.clone());
+        event.raw_title = self.summary.as_ref().map(|property| property.value.clone());
+        event.description = self
+            .description
+            .as_ref()
+            .map(|property| property.value.clone());
+        event.status = canonical_status(self.status.as_ref().map(|property| property.value));
+        event.recurrence = recurrence;
+        event.properties = json!({
+            "ical": {
+                "transport": "rfc5545_vevent",
+                "uid": self.uid.value,
+                "dtstamp": self.dtstamp.value.to_rfc3339(),
+                "sequence": self.sequence.as_ref().map(|property| property.value),
+                "master_component": format_vevent(self)?,
+                "detached_components": [],
+            }
+        });
+        event.validate_recurrence()?;
+        Ok(event)
+    }
+}
+
+fn canonical_status(status: Option<IcalVeventStatus>) -> EventStatus {
+    match status {
+        Some(IcalVeventStatus::Tentative) => EventStatus::Tentative,
+        Some(IcalVeventStatus::Confirmed) => EventStatus::Confirmed,
+        Some(IcalVeventStatus::Cancelled) => EventStatus::Cancelled,
+        None => EventStatus::Scheduled,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct IcalBoundDetachedVevent {
     pub original: TimeSpec,
@@ -701,6 +765,31 @@ pub fn bind_vevent_series(
 }
 
 impl IcalVeventSeries {
+    /// Project the full representable master/detached series into one canonical
+    /// TemporalEvent while retaining normalized source components in metadata.
+    pub fn canonical_event(&self) -> Result<TemporalEvent, IcalRecurrenceError> {
+        let mut event = self.master.canonical_event()?;
+        event.recurrence = Some(self.canonical_recurrence_rule()?);
+
+        let detached_components = self
+            .detached
+            .iter()
+            .map(|detached| format_vevent(&detached.event))
+            .collect::<Result<Vec<_>, _>>()?;
+        event.properties = json!({
+            "ical": {
+                "transport": "rfc5545_vevent",
+                "uid": self.master.uid.value,
+                "dtstamp": self.master.dtstamp.value.to_rfc3339(),
+                "sequence": self.master.sequence.as_ref().map(|property| property.value),
+                "master_component": format_vevent(&self.master)?,
+                "detached_components": detached_components,
+            }
+        });
+        event.validate_recurrence()?;
+        Ok(event)
+    }
+
     /// Convert the representable recurrence subset into the canonical domain
     /// rule. Unsupported occurrence-specific property changes are rejected
     /// instead of being discarded.
@@ -2574,6 +2663,133 @@ and continues here\r\nSUMMARY:Example\r\n";
                 property: "SEQUENCE",
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn standalone_vevent_projects_into_canonical_event_and_retains_transport() {
+        let source = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:standalone@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART:20261007T140000Z\r\n",
+            "DTEND:20261007T150000Z\r\n",
+            "SUMMARY:Project review\r\n",
+            "DESCRIPTION:Review\\, decisions\\nNext steps\r\n",
+            "STATUS:TENTATIVE\r\n",
+            "SEQUENCE:3\r\n",
+            "LOCATION:Room 5\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("VEVENT");
+        let event = source.canonical_event().expect("canonical event");
+
+        assert_eq!(event.source_record_key.as_deref(), Some("standalone@example.com"));
+        assert_eq!(event.normalized_title, "Project review");
+        assert_eq!(event.raw_title.as_deref(), Some("Project review"));
+        assert_eq!(
+            event.description.as_deref(),
+            Some("Review, decisions\nNext steps")
+        );
+        assert_eq!(event.status, EventStatus::Tentative);
+        assert!(event.recurrence.is_none());
+        assert_eq!(
+            event.properties["ical"]["uid"],
+            json!("standalone@example.com")
+        );
+        assert_eq!(event.properties["ical"]["sequence"], json!(3));
+        assert!(event.properties["ical"]["master_component"]
+            .as_str()
+            .expect("master component")
+            .contains("LOCATION:Room 5"));
+    }
+
+    #[test]
+    fn standalone_vevent_without_summary_uses_uid_as_noninvented_fallback_title() {
+        let source = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:untitled@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART;VALUE=DATE:20261007\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("VEVENT");
+        let event = source.canonical_event().expect("canonical event");
+
+        assert_eq!(event.normalized_title, "untitled@example.com");
+        assert!(event.raw_title.is_none());
+        assert!(matches!(event.time, TimeSpec::AllDay { .. }));
+    }
+
+    #[test]
+    fn recurring_vevent_series_projects_overrides_and_retains_detached_components() {
+        let master = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:projection-series@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART:20261102T090000Z\r\n",
+            "DTEND:20261102T100000Z\r\n",
+            "RRULE:FREQ=DAILY;COUNT=2\r\n",
+            "SUMMARY:Daily sync\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("master");
+        let moved = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:projection-series@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "RECURRENCE-ID:20261103T090000Z\r\n",
+            "DTSTART:20261103T110000Z\r\n",
+            "DTEND:20261103T120000Z\r\n",
+            "SUMMARY:Daily sync\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("moved");
+
+        let series = bind_vevent_series(master, vec![moved]).expect("series");
+        let event = series.canonical_event().expect("canonical event");
+
+        assert_eq!(event.source_record_key.as_deref(), Some("projection-series@example.com"));
+        let recurrence = event.recurrence.as_ref().expect("recurrence");
+        assert_eq!(recurrence.overrides.len(), 1);
+        assert!(recurrence.overrides[0].replacement.is_some());
+        assert_eq!(
+            event.properties["ical"]["detached_components"]
+                .as_array()
+                .expect("detached components")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn canonical_projection_rejects_detached_directly_and_rdate_only_recurrence() {
+        let detached = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:series@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "RECURRENCE-ID:20261103T090000Z\r\n",
+            "DTSTART:20261103T110000Z\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("detached");
+        assert_eq!(
+            detached.canonical_event(),
+            Err(IcalRecurrenceError::DetachedMissingRecurrenceId)
+        );
+
+        let rdate_only = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:rdate-only@example.com\r\n",
+            "DTSTAMP:20261006T120000Z\r\n",
+            "DTSTART:20261102T090000Z\r\n",
+            "RDATE:20261103T090000Z\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("RDATE-only");
+        assert!(matches!(
+            rdate_only.canonical_event(),
+            Err(IcalRecurrenceError::UnsupportedRecurrenceSet(_))
         ));
     }
 
