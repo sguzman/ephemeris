@@ -439,7 +439,7 @@ Status: **active — bidirectional RFC 5545 transport, local ICS store import, C
 
 Goals:
 
-- ICS import/export projection
+- ICS import/export projection — transport and local import implemented; stored-source export surface next
 - webcal/remote ICS ingestion
 - CalDAV where valuable
 - JSCalendar/jCal
