@@ -527,10 +527,7 @@ pub fn parse_vevent_time_properties(
         return Err(IcalRecurrenceError::EventTimeRequiresSingleValue("DTSTART"));
     }
     let start_value = start_property.values[0];
-    let start_value_type = start_property
-        .value_type
-        .as_deref()
-        .unwrap_or("DATE-TIME");
+    let start_value_type = start_property.value_type.as_deref().unwrap_or("DATE-TIME");
     if !matches!(start_value_type, "DATE" | "DATE-TIME") {
         return Err(IcalRecurrenceError::UnsupportedValueType(
             start_value_type.to_string(),
@@ -555,10 +552,7 @@ pub fn parse_vevent_time_properties(
                 if end_property.values.len() != 1 {
                     return Err(IcalRecurrenceError::EventTimeRequiresSingleValue("DTEND"));
                 }
-                let end_value_type = end_property
-                    .value_type
-                    .as_deref()
-                    .unwrap_or("DATE-TIME");
+                let end_value_type = end_property.value_type.as_deref().unwrap_or("DATE-TIME");
                 if end_value_type != "DATE" {
                     return Err(IcalRecurrenceError::TemporalKindMismatch {
                         property: "DTEND",
@@ -594,21 +588,15 @@ pub fn parse_vevent_time_properties(
         });
     }
 
-    let start_time = parse_vevent_datetime_value(
-        "DTSTART",
-        start_value,
-        start_property.tzid.as_deref(),
-    )?;
+    let start_time =
+        parse_vevent_datetime_value("DTSTART", start_value, start_property.tzid.as_deref())?;
     let end_time = match dtend {
         Some(raw_end) => {
             let end_property = parse_date_property(raw_end, "DTEND")?;
             if end_property.values.len() != 1 {
                 return Err(IcalRecurrenceError::EventTimeRequiresSingleValue("DTEND"));
             }
-            let end_value_type = end_property
-                .value_type
-                .as_deref()
-                .unwrap_or("DATE-TIME");
+            let end_value_type = end_property.value_type.as_deref().unwrap_or("DATE-TIME");
             if end_value_type != "DATE-TIME" {
                 return Err(IcalRecurrenceError::TemporalKindMismatch {
                     property: "DTEND",
@@ -835,9 +823,9 @@ pub fn format_vevent_time_properties(
                 }
             }
         }
-        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
-            Err(IcalRecurrenceError::UnsupportedVeventTimeKind(time.kind_name()))
-        }
+        TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => Err(
+            IcalRecurrenceError::UnsupportedVeventTimeKind(time.kind_name()),
+        ),
     }
 }
 
@@ -845,7 +833,10 @@ pub fn format_vevent_time_properties(
 enum ParsedVeventDateTime {
     Floating(NaiveDateTime),
     Utc(DateTime<Utc>),
-    Zoned { utc: DateTime<Utc>, timezone: String },
+    Zoned {
+        utc: DateTime<Utc>,
+        timezone: String,
+    },
 }
 
 impl ParsedVeventDateTime {
@@ -1540,11 +1531,9 @@ mod tests {
 
     #[test]
     fn vevent_time_roundtrips_floating_and_utc_date_times() {
-        let floating = parse_vevent_time_properties(
-            "DTSTART:20260704T090000",
-            Some("DTEND:20260704T103000"),
-        )
-        .expect("floating VEVENT time");
+        let floating =
+            parse_vevent_time_properties("DTSTART:20260704T090000", Some("DTEND:20260704T103000"))
+                .expect("floating VEVENT time");
         assert!(matches!(
             floating,
             TimeSpec::Floating {
@@ -1620,12 +1609,8 @@ mod tests {
             }
         ));
 
-        let timed =
-            parse_vevent_time_properties("DTSTART:20260704T090000Z", None).expect("timed");
-        assert!(matches!(
-            timed,
-            TimeSpec::Instant { end_utc: None, .. }
-        ));
+        let timed = parse_vevent_time_properties("DTSTART:20260704T090000Z", None).expect("timed");
+        assert!(matches!(timed, TimeSpec::Instant { end_utc: None, .. }));
     }
 
     #[test]
@@ -1659,10 +1644,7 @@ mod tests {
     #[test]
     fn vevent_time_rejects_nonpositive_end_and_unrepresentable_floating_metadata() {
         assert!(matches!(
-            parse_vevent_time_properties(
-                "DTSTART:20260704T090000",
-                Some("DTEND:20260704T090000")
-            ),
+            parse_vevent_time_properties("DTSTART:20260704T090000", Some("DTEND:20260704T090000")),
             Err(IcalRecurrenceError::InvalidPropertyValue {
                 property: "DTEND",
                 ..
