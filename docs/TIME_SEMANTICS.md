@@ -141,14 +141,21 @@ Conceptually, the visible occurrence set is built from RRULE candidates plus RDA
 
 RFC 5545 RRULE interoperability has a strict parse/format boundary over the canonical recurrence model. The adapter accepts rule parts in arbitrary order while emitting FREQ first, rejects duplicate or unknown parts, enforces COUNT-vs-UNTIL exclusivity, maps plain and ordinal BYDAY into their existing canonical fields, and delegates selector legality to the domain validator. The adapter intentionally accepts only DATE-form UNTIL (`YYYYMMDD`) because the canonical model does not yet retain an UNTIL time-of-day; RFC DATE-TIME UNTIL is rejected rather than lossy-converted.
 
-RDATE and EXDATE now also have strict property codecs anchored to the master series `TimeSpec`. Date-only and all-day series require `VALUE=DATE` and preserve their distinct canonical kind plus duration. Floating series use local basic DATE-TIME without `Z`/TZID and inherit duration/source metadata. Exact series accept UTC `Z` values or a TZID exactly matching the master source timezone; ambiguous local times choose the first occurrence, while nonexistent local times use the pre-gap offset. Parsed duplicate values are deduplicated. Formatting refuses exception values whose kind, duration, source-timezone shape, or fractional-second precision cannot round-trip. RDATE `VALUE=PERIOD` is rejected until occurrence-specific period semantics are canonical. RECURRENCE-ID remains separate adapter work.
+RDATE and EXDATE have strict property codecs anchored to the master series `TimeSpec`. Date-only and all-day series require `VALUE=DATE` and preserve their distinct canonical kind plus duration. Floating series use local basic DATE-TIME without `Z`/TZID and inherit duration/source metadata. Exact series accept UTC `Z` values or a TZID exactly matching the master source timezone; ambiguous local times choose the first occurrence, while nonexistent local times use the pre-gap offset. Parsed duplicate values are deduplicated. Formatting refuses exception values whose kind, duration, source-timezone shape, or fractional-second precision cannot round-trip. RDATE `VALUE=PERIOD` remains deliberately unsupported until occurrence-specific periods have canonical semantics.
+
+RECURRENCE-ID and VEVENT transport are implemented for the canonical single-occurrence override model. Detached VEVENTs bind to the master's original recurrence slot, preserve UID identity, and map moved, cancelled, and cancelled+moved instances into canonical overrides. Phantom targets are rejected through the domain recurrence validator. `RANGE=THISANDFUTURE` is rejected because cascading range overrides are not canonical yet.
+
+VCALENDAR transport is implemented for the supported subset. Ephemeris validates VERSION 2.0 and PRODID, groups VEVENTs by UID, requires exactly one master when detached instances exist, projects supported series into canonical events, and exports canonical events back to deterministic master/detached VEVENT sets. Unsupported nested component families such as VTIMEZONE and VALARM are explicit errors rather than silently skipped.
 
 Still required for fuller interoperable recurrence semantics:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented seven-frequency BY-part matrix, with `BYSECOND=60` intentionally deferred until leap-second timestamps can be represented faithfully;
-- richer recurrence-editor ergonomics beyond structured exceptions, canonical presets, contextual selector visibility, structured ordinal BYDAY, structured BYMONTHDAY, structured BYWEEKNO, structured BYYEARDAY, structured BYHOUR, structured BYMINUTE, structured BYSECOND, and structured BYSETPOS, especially higher-level controls for remaining numeric selectors and uncommon combinations;
-- remaining recurrence/exception source-adapter interoperability: RECURRENCE-ID and full VEVENT transport;
-- source-adapter mapping for external recurrence-exception representations.
+- `RANGE=THISANDFUTURE` and other recurrence-range semantics;
+- RDATE-only recurrence and RDATE PERIOD support;
+- VEVENT DURATION transport;
+- occurrence-specific non-temporal detached overrides;
+- VTIMEZONE and VALARM preservation/semantics;
+- richer recurrence-editor ergonomics for uncommon combinations.
 
 Recurrence presets are editor-only canonical transformations, not a second recurrence representation. Daily, Weekdays, Weekly, Monthly, Last weekday/month, and Yearly presets set frequency, interval, WKST, and cadence selectors to known canonical combinations while deliberately preserving COUNT, UNTIL, RDATE, EXDATE, and occurrence overrides; users can continue editing the resulting ordinary rule through the same selector fields and validators.
 
