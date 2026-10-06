@@ -402,11 +402,7 @@ fn find_unquoted(raw: &str, needle: char) -> Option<usize> {
             _ => {}
         }
     }
-    if quoted {
-        None
-    } else {
-        None
-    }
+    None
 }
 
 fn split_unquoted(raw: &str, separator: char) -> Result<Vec<&str>, IcalRecurrenceError> {
