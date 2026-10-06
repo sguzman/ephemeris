@@ -12,8 +12,8 @@ use crate::calendar::{
     shift_focus, week_days, window_for_view, year_months,
 };
 use crate::domain::{
-    EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceRule,
-    RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
+    EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday,
+    RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
 };
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
@@ -78,6 +78,14 @@ struct RecurrenceEditDraft {
     interval_text: String,
     count_text: String,
     until_text: String,
+    week_no_text: String,
+    year_day_text: String,
+    month_day_text: String,
+    ordinal_byday_text: String,
+    hour_text: String,
+    minute_text: String,
+    second_text: String,
+    set_pos_text: String,
 }
 
 impl RecurrenceEditDraft {
@@ -97,6 +105,14 @@ impl RecurrenceEditDraft {
             until_text: rule
                 .until
                 .map_or_else(String::new, |until| until.to_string()),
+            week_no_text: format_selector_values(&rule.by_week_no),
+            year_day_text: format_selector_values(&rule.by_year_day),
+            month_day_text: format_selector_values(&rule.by_month_day),
+            ordinal_byday_text: format_ordinal_byday_values(&rule.by_month_weekday),
+            hour_text: format_selector_values(&rule.by_hour),
+            minute_text: format_selector_values(&rule.by_minute),
+            second_text: format_selector_values(&rule.by_second),
+            set_pos_text: format_selector_values(&rule.by_set_pos),
             rule,
         }
     }
@@ -126,23 +142,110 @@ impl RecurrenceEditDraft {
                     .map_err(|_| "Until must be YYYY-MM-DD or blank.".to_string())?,
             )
         };
+        rule.by_week_no = parse_i8_selector_values(&self.week_no_text, "BYWEEKNO")?;
+        rule.by_year_day = parse_i16_selector_values(&self.year_day_text, "BYYEARDAY")?;
+        rule.by_month_day = parse_i8_selector_values(&self.month_day_text, "BYMONTHDAY")?;
+        rule.by_month_weekday = parse_ordinal_byday_values(&self.ordinal_byday_text)?;
+        rule.by_hour = parse_u8_selector_values(&self.hour_text, "BYHOUR")?;
+        rule.by_minute = parse_u8_selector_values(&self.minute_text, "BYMINUTE")?;
+        rule.by_second = parse_u8_selector_values(&self.second_text, "BYSECOND")?;
+        rule.by_set_pos = parse_i16_selector_values(&self.set_pos_text, "BYSETPOS")?;
         rule.validate().map_err(|error| error.to_string())?;
         Ok(rule)
     }
 
-    fn has_advanced_selectors(&self) -> bool {
-        !self.rule.by_week_no.is_empty()
-            || !self.rule.by_year_day.is_empty()
-            || !self.rule.by_month_day.is_empty()
-            || !self.rule.by_month_weekday.is_empty()
-            || !self.rule.by_hour.is_empty()
-            || !self.rule.by_minute.is_empty()
-            || !self.rule.by_second.is_empty()
-            || !self.rule.by_set_pos.is_empty()
-            || !self.rule.rdates.is_empty()
+    fn has_unedited_exceptions(&self) -> bool {
+        !self.rule.rdates.is_empty()
             || !self.rule.exdates.is_empty()
             || !self.rule.overrides.is_empty()
     }
+}
+
+fn selector_tokens(raw: &str) -> impl Iterator<Item = &str> {
+    raw.split(|character: char| character == ',' || character.is_whitespace())
+        .filter(|token| !token.is_empty())
+}
+
+fn format_selector_values<T: ToString>(values: &[T]) -> String {
+    values
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_ordinal_byday_values(values: &[RecurrenceOrdinalWeekday]) -> String {
+    values
+        .iter()
+        .map(|selector| format!("{}{}", selector.ordinal, selector.weekday.short_label()))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_i8_selector_values(raw: &str, label: &str) -> Result<Vec<i8>, String> {
+    selector_tokens(raw)
+        .map(|token| {
+            token
+                .parse::<i8>()
+                .map_err(|_| format!("{label} contains invalid integer '{token}'."))
+        })
+        .collect()
+}
+
+fn parse_i16_selector_values(raw: &str, label: &str) -> Result<Vec<i16>, String> {
+    selector_tokens(raw)
+        .map(|token| {
+            token
+                .parse::<i16>()
+                .map_err(|_| format!("{label} contains invalid integer '{token}'."))
+        })
+        .collect()
+}
+
+fn parse_u8_selector_values(raw: &str, label: &str) -> Result<Vec<u8>, String> {
+    selector_tokens(raw)
+        .map(|token| {
+            token
+                .parse::<u8>()
+                .map_err(|_| format!("{label} contains invalid non-negative integer '{token}'."))
+        })
+        .collect()
+}
+
+fn parse_ordinal_byday_values(raw: &str) -> Result<Vec<RecurrenceOrdinalWeekday>, String> {
+    selector_tokens(raw)
+        .map(|token| {
+            let weekday_start = token
+                .find(|character: char| character.is_ascii_alphabetic())
+                .ok_or_else(|| {
+                    format!("Ordinal BYDAY token '{token}' must look like 1MO or -1FR.")
+                })?;
+            let (ordinal_raw, weekday_raw) = token.split_at(weekday_start);
+            if ordinal_raw.is_empty() {
+                return Err(format!(
+                    "Ordinal BYDAY token '{token}' needs a numeric ordinal; use BYDAY checkboxes for plain weekdays."
+                ));
+            }
+            let ordinal = ordinal_raw
+                .parse::<i8>()
+                .map_err(|_| format!("Ordinal BYDAY token '{token}' has an invalid ordinal."))?;
+            let weekday = match weekday_raw.to_ascii_uppercase().as_str() {
+                "MO" => RecurrenceWeekday::Monday,
+                "TU" => RecurrenceWeekday::Tuesday,
+                "WE" => RecurrenceWeekday::Wednesday,
+                "TH" => RecurrenceWeekday::Thursday,
+                "FR" => RecurrenceWeekday::Friday,
+                "SA" => RecurrenceWeekday::Saturday,
+                "SU" => RecurrenceWeekday::Sunday,
+                _ => {
+                    return Err(format!(
+                        "Ordinal BYDAY token '{token}' has an invalid weekday."
+                    ));
+                }
+            };
+            Ok(RecurrenceOrdinalWeekday::new(ordinal, weekday))
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2855,6 +2958,22 @@ struct MembershipPredicateOptions {
     calendars: Vec<TariaProjectedCalendarChoice>,
 }
 
+fn recurrence_selector_text_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    hint: &str,
+) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .desired_width(150.0)
+                .hint_text(hint),
+        );
+    });
+}
+
 fn render_recurrence_editor(
     ui: &mut egui::Ui,
     draft: &mut RecurrenceEditDraft,
@@ -2935,10 +3054,24 @@ fn render_recurrence_editor(
         }
     });
 
-    if draft.has_advanced_selectors() {
-        ui.small(
-            "Advanced selectors/exceptions are preserved unchanged in this first editor slice.",
-        );
+    ui.separator();
+    ui.small("Advanced selectors: comma- or space-separated values; leave blank for none.");
+    recurrence_selector_text_row(ui, "BYWEEKNO", &mut draft.week_no_text, "20,-1");
+    recurrence_selector_text_row(ui, "BYYEARDAY", &mut draft.year_day_text, "1,100,-1");
+    recurrence_selector_text_row(ui, "BYMONTHDAY", &mut draft.month_day_text, "1,15,-1");
+    recurrence_selector_text_row(
+        ui,
+        "Ordinal BYDAY",
+        &mut draft.ordinal_byday_text,
+        "1MO,-1FR",
+    );
+    recurrence_selector_text_row(ui, "BYHOUR", &mut draft.hour_text, "9,17");
+    recurrence_selector_text_row(ui, "BYMINUTE", &mut draft.minute_text, "0,30");
+    recurrence_selector_text_row(ui, "BYSECOND", &mut draft.second_text, "0,15,30,45");
+    recurrence_selector_text_row(ui, "BYSETPOS", &mut draft.set_pos_text, "1,-1");
+
+    if draft.has_unedited_exceptions() {
+        ui.small("RDATE, EXDATE, and occurrence overrides are preserved unchanged in this slice.");
     }
 
     let validation = draft.parsed_rule();
