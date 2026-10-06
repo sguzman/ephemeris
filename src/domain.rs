@@ -1428,9 +1428,7 @@ fn recurrence_candidates_for_period(
     let candidates = recurrence_candidates_before_set_pos(base, rule, period)?;
     let candidates = if matches!(
         rule.frequency,
-        RecurrenceFrequency::Secondly
-            | RecurrenceFrequency::Minutely
-            | RecurrenceFrequency::Hourly
+        RecurrenceFrequency::Secondly | RecurrenceFrequency::Minutely | RecurrenceFrequency::Hourly
     ) {
         candidates
     } else {
@@ -1455,9 +1453,7 @@ fn recurrence_candidates_for_period(
 fn recurrence_time_multiplier(rule: &RecurrenceRule) -> usize {
     let hours = if matches!(
         rule.frequency,
-        RecurrenceFrequency::Secondly
-            | RecurrenceFrequency::Minutely
-            | RecurrenceFrequency::Hourly
+        RecurrenceFrequency::Secondly | RecurrenceFrequency::Minutely | RecurrenceFrequency::Hourly
     ) || rule.by_hour.is_empty()
     {
         1
@@ -2468,9 +2464,8 @@ fn secondly_recurrence_candidates(
     }
 
     if !rule.by_month_day.is_empty() {
-        let month_start =
-            NaiveDate::from_ymd_opt(candidate_date.year(), candidate_date.month(), 1)
-                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+        let month_start = NaiveDate::from_ymd_opt(candidate_date.year(), candidate_date.month(), 1)
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
         if !rule
             .by_month_day
             .iter()
@@ -2495,11 +2490,17 @@ fn secondly_recurrence_candidates(
     if !rule.by_hour.is_empty() && !rule.by_hour.contains(&recurrence_rule_hour(&candidate)?) {
         return Ok(Vec::new());
     }
-    if !rule.by_minute.is_empty() && !rule.by_minute.contains(&recurrence_rule_minute(&candidate)?)
+    if !rule.by_minute.is_empty()
+        && !rule
+            .by_minute
+            .contains(&recurrence_rule_minute(&candidate)?)
     {
         return Ok(Vec::new());
     }
-    if !rule.by_second.is_empty() && !rule.by_second.contains(&recurrence_rule_second(&candidate)?)
+    if !rule.by_second.is_empty()
+        && !rule
+            .by_second
+            .contains(&recurrence_rule_second(&candidate)?)
     {
         return Ok(Vec::new());
     }
@@ -4062,10 +4063,10 @@ fn recurrence_period_lower_bound_date(
     match rule.frequency {
         RecurrenceFrequency::Secondly
         | RecurrenceFrequency::Minutely
-        | RecurrenceFrequency::Hourly => Ok(
-            recurrence_period_lower_bound_local_datetime(base, rule, period)?
-                .map(|value| value.date()),
-        ),
+        | RecurrenceFrequency::Hourly => Ok(recurrence_period_lower_bound_local_datetime(
+            base, rule, period,
+        )?
+        .map(|value| value.date())),
         RecurrenceFrequency::Daily => Ok(base_date.checked_add_days(Days::new(u64::from(steps)))),
         RecurrenceFrequency::Weekly => {
             let base_weekday = u64::from(base_date.weekday().num_days_from_monday());
@@ -12846,10 +12847,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            starts,
-            vec!["2026-02-01 00:00:00", "2026-02-01 00:00:30"]
-        );
+        assert_eq!(starts, vec!["2026-02-01 00:00:00", "2026-02-01 00:00:30"]);
     }
 
     #[test]
@@ -12886,10 +12884,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            starts,
-            vec!["2026-01-02 00:00:00", "2026-01-02 00:00:30"]
-        );
+        assert_eq!(starts, vec!["2026-01-02 00:00:00", "2026-01-02 00:00:30"]);
     }
 
     #[test]
@@ -13164,5 +13159,4 @@ mod tests {
             occurrence_identity(event.id, &original).expect("stable identity")
         );
     }
-
 }
