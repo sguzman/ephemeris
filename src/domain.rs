@@ -1924,9 +1924,10 @@ fn hourly_rule_has_reachable_candidate(
             if seen[index] {
                 return Ok(false);
             }
-            if rule.by_hour.contains(
-                &u8::try_from(hour).map_err(|_| RecurrenceError::ArithmeticOverflow)?,
-            ) {
+            if rule
+                .by_hour
+                .contains(&u8::try_from(hour).map_err(|_| RecurrenceError::ArithmeticOverflow)?)
+            {
                 return Ok(true);
             }
             seen[index] = true;
@@ -2106,9 +2107,8 @@ fn hourly_recurrence_candidates(
     }
 
     if !rule.by_month_day.is_empty() {
-        let month_start =
-            NaiveDate::from_ymd_opt(candidate_date.year(), candidate_date.month(), 1)
-                .ok_or(RecurrenceError::ArithmeticOverflow)?;
+        let month_start = NaiveDate::from_ymd_opt(candidate_date.year(), candidate_date.month(), 1)
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
         if !rule
             .by_month_day
             .iter()
@@ -3540,8 +3540,7 @@ fn recurrence_period_lower_bound_local_datetime(
         .interval
         .checked_mul(period)
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
-    Ok(recurrence_rule_local_datetime(base)?
-        .checked_add_signed(Duration::hours(i64::from(steps))))
+    Ok(recurrence_rule_local_datetime(base)?.checked_add_signed(Duration::hours(i64::from(steps))))
 }
 
 fn recurrence_period_lower_bound_date(
@@ -3556,10 +3555,10 @@ fn recurrence_period_lower_bound_date(
         .ok_or(RecurrenceError::ArithmeticOverflow)?;
 
     match rule.frequency {
-        RecurrenceFrequency::Hourly => Ok(
-            recurrence_period_lower_bound_local_datetime(base, rule, period)?
-                .map(|value| value.date()),
-        ),
+        RecurrenceFrequency::Hourly => Ok(recurrence_period_lower_bound_local_datetime(
+            base, rule, period,
+        )?
+        .map(|value| value.date())),
         RecurrenceFrequency::Daily => Ok(base_date.checked_add_days(Days::new(u64::from(steps)))),
         RecurrenceFrequency::Weekly => {
             let base_weekday = u64::from(base_date.weekday().num_days_from_monday());
@@ -3606,12 +3605,12 @@ fn recurrence_rule_local_datetime(time: &TimeSpec) -> Result<NaiveDateTime, Recu
             };
             Ok(start_utc.with_timezone(&timezone).naive_local())
         }
-        TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => Err(
-            RecurrenceError::FrequencyRequiresDateTime(
+        TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. } => {
+            Err(RecurrenceError::FrequencyRequiresDateTime(
                 RecurrenceFrequency::Hourly,
                 time.kind_name(),
-            ),
-        ),
+            ))
+        }
         TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
             Err(RecurrenceError::UnsupportedTimeKind(time.kind_name()))
         }
@@ -11531,10 +11530,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            starts,
-            vec!["2026-10-05 09:45:35", "2026-10-06 09:45:35"]
-        );
+        assert_eq!(starts, vec!["2026-10-05 09:45:35", "2026-10-06 09:45:35"]);
     }
 
     #[test]
@@ -11602,15 +11598,17 @@ mod tests {
         rule.interval = 24;
         rule.by_hour = vec![10];
 
-        assert!(!hourly_rule_has_reachable_candidate(
-            &TimeSpec::Floating {
-                start,
-                end: None,
-                source_timezone: None,
-            },
-            &rule,
-        )
-        .expect("reachability"));
+        assert!(
+            !hourly_rule_has_reachable_candidate(
+                &TimeSpec::Floating {
+                    start,
+                    end: None,
+                    source_timezone: None,
+                },
+                &rule,
+            )
+            .expect("reachability")
+        );
     }
 
     #[test]
@@ -11696,7 +11694,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn hourly_reachability_detects_unreachable_calendar_limiter_cycle() {
         let start = NaiveDateTime::parse_from_str("2026-10-05T08:30:20", "%Y-%m-%dT%H:%M:%S")
@@ -11729,5 +11726,4 @@ mod tests {
                 .is_empty()
         );
     }
-
 }
