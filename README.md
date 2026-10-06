@@ -41,7 +41,7 @@ Implemented:
 - query-window recurrence expansion with deterministic original-slot occurrence identity instead of eager infinite materialization
 - recurrence support for date-only, all-day, floating, and exact/source-timezone events, including source-wall-clock preservation across DST and moved instances that enter the active window
 - canonical recurrence authoring with quick presets, structured exceptions, structured BYWEEKNO, BYYEARDAY, BYMONTHDAY, BYHOUR, BYMINUTE, BYSECOND, BYSETPOS, and ordinal-BYDAY rows with raw-syntax fallbacks, live validation, and frequency/time-kind-aware selector affordances that hide irrelevant empty fields while preserving incompatible existing values for explicit recovery or clearing
-- strict RFC 5545 RRULE parse/format adapter for the canonical recurrence model, including all currently supported FREQ/BY parts, WKST, INTERVAL, COUNT, and DATE-form UNTIL; duplicate/unknown parts and DATE-TIME UNTIL are rejected rather than coerced
+- strict RFC 5545 recurrence-property adapters: RRULE parse/format for the canonical recurrence model plus RDATE/EXDATE parse/format for DATE, floating DATE-TIME, UTC DATE-TIME, and matching-TZID exact series; lossy DATE-TIME UNTIL, RDATE PERIOD, mismatched exception shapes, and unsupported parameters are rejected rather than coerced
 - Year, Quarter, Month, Week, and Day date ranges
 - Grid, Agenda, Compact Agenda, chronological Stream, proportional Timeline, Density, Summary, and dense Table as independent layouts
 - ordered user-defined Table columns with add, hide, reorder, and reset controls
@@ -91,7 +91,7 @@ Implemented:
 - standalone local import CLI
 - CI enforcing rustfmt, compile, strict Clippy, and tests
 
-The verified Phase 8 recurrence + RFC 5545 adapter checkpoint at 2026-10-06 is `a9eacd509b3c7c2f4e58e4ed2842154b88093edc`: format, compile, strict Clippy, and **395 library tests** all pass.
+The verified Phase 8 recurrence + RFC 5545 adapter checkpoint at 2026-10-06 is `41e8aa62a090df82751506cf2ab30436563d936a`: format, compile, strict Clippy, and **407 library tests** all pass.
 
 ## Product boundary
 

@@ -21,7 +21,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-At the hardened Phase 8 recurrence + RFC 5545 adapter checkpoint, all **395** library tests pass. Verified implementation code checkpoint: `a9eacd509b3c7c2f4e58e4ed2842154b88093edc`, with format, check, strict Clippy, and tests all green.
+At the hardened Phase 8 recurrence + RFC 5545 adapter checkpoint, all **407** library tests pass. Verified implementation code checkpoint: `41e8aa62a090df82751506cf2ab30436563d936a`, with format, check, strict Clippy, and tests all green.
 
 `main` is verified through BYSECOND at `c5ce73bb86cf3c2281be69adcf15b93364f3f65a`: format, check, strict Clippy, and all **265** library tests pass in GitHub Actions. The preceding BYMINUTE checkpoint is independently verified at `1d2ce529facad7636be6f136740976351910e253` with **253** tests.
 
@@ -66,6 +66,8 @@ The structured BYSECOND editor is verified on `main` at `406ff4efa656c689f8c4b30
 The structured BYSETPOS editor is verified on `main` at `6484377a1cbd60a954c3d97851603f9ff9213f60`: format, check, strict Clippy, and all **382** library tests pass in GitHub Actions. Signed set positions are edited one per row; new rows default to `1` because zero is invalid, compact forms such as `1,-1` remain available in a collapsed raw fallback, and the Last weekday/month preset synchronizes its canonical `-1` selector into both raw and structured state. The obsolete generic raw-selector row helpers are removed because every advanced numeric BY selector now has a dedicated structured editor.
 
 The strict RFC 5545 RRULE adapter is verified on `main` at `a9eacd509b3c7c2f4e58e4ed2842154b88093edc`: format, check, strict Clippy, and all **395** library tests pass in GitHub Actions. The adapter parses bare RECUR values or `RRULE:` properties, emits stable FREQ-first RRULE text, maps every currently supported canonical selector, rejects duplicate/unknown parts and COUNT+UNTIL combinations, safely rejects malformed/non-ASCII BYDAY tokens, delegates selector legality to domain validation, and rejects DATE-TIME UNTIL rather than truncating it into Ephemeris' civil-date bound.
+
+The RFC 5545 RDATE/EXDATE adapter is verified on `main` at `41e8aa62a090df82751506cf2ab30436563d936a`: format, check, strict Clippy, and all **407** library tests pass in GitHub Actions. DATE and all-day series preserve their distinct canonical kind and duration; floating exceptions preserve local wall time and source metadata; exact exceptions accept UTC `Z` values or a TZID matching the master source timezone, with RFC-compatible first-occurrence handling for ambiguous local times and pre-gap-offset handling for nonexistent local times. Duplicate recurrence-date values collapse deterministically. RDATE `VALUE=PERIOD`, unknown value types/parameters, incompatible kinds/timezones, mismatched durations/source metadata, and fractional-second exports that RFC basic DATE-TIME cannot preserve are rejected instead of normalized.
 
 DAILY reachability switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. YEARLY reachability likewise scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
@@ -186,7 +188,7 @@ Implemented:
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, richer high-level recurrence editing ergonomics, and completion of source-adapter interoperability beyond the newly implemented strict RRULE codec (RDATE/EXDATE, RECURRENCE-ID overrides, and full VEVENT transport).
+Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, richer high-level recurrence editing ergonomics, and completion of source-adapter interoperability beyond the verified RRULE + RDATE/EXDATE codecs (RECURRENCE-ID overrides and full VEVENT transport).
 
 Implemented event metadata includes:
 
@@ -214,7 +216,7 @@ Implemented event metadata includes:
 
 ### RFC 5545 recurrence adapter
 
-The new `ical` module provides a strict canonical RRULE boundary for future ICS/WebCal/CalDAV ingestion and export. It accepts bare RECUR values or `RRULE:` property values, maps every currently supported canonical recurrence selector, rejects duplicate or unknown rule parts, enforces COUNT/UNTIL exclusivity, and delegates selector range/context validation to the existing recurrence domain model. Because Ephemeris currently stores recurrence UNTIL as a civil date, RFC DATE-TIME UNTIL values are rejected explicitly rather than truncated. RDATE, EXDATE, and RECURRENCE-ID remain separate follow-up adapter surfaces.
+The new `ical` module provides a strict canonical RRULE boundary for future ICS/WebCal/CalDAV ingestion and export. It accepts bare RECUR values or `RRULE:` property values, maps every currently supported canonical recurrence selector, rejects duplicate or unknown rule parts, enforces COUNT/UNTIL exclusivity, and delegates selector range/context validation to the existing recurrence domain model. Because Ephemeris currently stores recurrence UNTIL as a civil date, RFC DATE-TIME UNTIL values are rejected explicitly rather than truncated. RDATE and EXDATE now share a strict canonical property adapter that reconstructs the master series' temporal kind, duration, and source-timezone shape while supporting RFC DATE, floating DATE-TIME, UTC DATE-TIME, and matching-TZID exact values. RDATE `VALUE=PERIOD` remains deliberately unsupported until occurrence-specific periods have canonical semantics. RECURRENCE-ID remains the next exception-identity adapter surface.
 
 ### Taria ingestion
 
