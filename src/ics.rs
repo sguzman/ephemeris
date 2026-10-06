@@ -26,6 +26,7 @@ pub struct IcsImportReport {
     pub updated: usize,
     pub unchanged: usize,
     pub retained_missing: usize,
+    pub not_modified: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,10 +55,53 @@ pub fn import_ics_file(
 
 pub fn import_remote_ics(store: &TemporalStore, url: &str) -> anyhow::Result<IcsImportReport> {
     let normalized_url = normalize_remote_ics_url(url)?;
-    let target = remote_ics_external_ref(&normalized_url);
-    run_recorded_import(store, "webcal", &target, || {
-        let raw = fetch_remote_ics_text(&normalized_url)?;
-        import_remote_ics_text(store, &raw, &normalized_url)
+    let external_ref = remote_ics_external_ref(&normalized_url);
+    run_recorded_import(store, "webcal", &external_ref, || {
+        let existing = store.source_by_external_ref(&external_ref)?;
+        let validators = existing
+            .as_ref()
+            .map(remote_http_validators)
+            .unwrap_or_default();
+
+        match fetch_remote_ics(&normalized_url, &validators)? {
+            RemoteIcsFetch::Modified {
+                raw,
+                etag,
+                last_modified,
+            } => {
+                let report = import_remote_ics_text(store, &raw, &normalized_url)?;
+                persist_remote_http_validators(
+                    store,
+                    report.source_id,
+                    etag.as_deref(),
+                    last_modified.as_deref(),
+                )?;
+                Ok(report)
+            }
+            RemoteIcsFetch::NotModified => {
+                let mut source = existing.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "remote calendar returned 304 before Ephemeris had a stored source"
+                    )
+                })?;
+                source.updated_at = Utc::now();
+                store.upsert_source(&source)?;
+                let events = store.events_for_source(source.id)?;
+                let event_ids = events.iter().map(|event| event.id).collect();
+                Ok(IcsImportReport {
+                    source_id: source.id,
+                    source_external_ref: external_ref.clone(),
+                    source_name: source.name,
+                    event_ids,
+                    total_events: events.len(),
+                    created: 0,
+                    updated: 0,
+                    unchanged: events.len(),
+                    retained_missing: 0,
+                    not_modified: true,
+                })
+            }
+        }
     })
 }
 
@@ -177,6 +221,7 @@ fn import_ics_text_with_source(
         updated: batch.updated,
         unchanged: batch.unchanged,
         retained_missing: batch.retained_missing,
+        not_modified: false,
     })
 }
 
@@ -256,14 +301,21 @@ fn run_recorded_import(
 
     let history_result = match &result {
         Ok(report) => {
-            let summary = format!(
-                "{} events · {} created · {} updated · {} unchanged · {} retained missing",
-                report.total_events,
-                report.created,
-                report.updated,
-                report.unchanged,
-                report.retained_missing
-            );
+            let summary = if report.not_modified {
+                format!(
+                    "{} events · remote representation not modified (HTTP 304)",
+                    report.total_events
+                )
+            } else {
+                format!(
+                    "{} events · {} created · {} updated · {} unchanged · {} retained missing",
+                    report.total_events,
+                    report.created,
+                    report.updated,
+                    report.unchanged,
+                    report.retained_missing
+                )
+            };
             store.finish_refresh_attempt(attempt_id, true, None, Some(&summary), None)
         }
         Err(error) => {
@@ -283,19 +335,107 @@ fn run_recorded_import(
     }
 }
 
-fn fetch_remote_ics_text(url: &str) -> anyhow::Result<String> {
-    let mut response = ureq::get(url)
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct RemoteHttpValidators {
+    etag: Option<String>,
+    last_modified: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RemoteIcsFetch {
+    Modified {
+        raw: String,
+        etag: Option<String>,
+        last_modified: Option<String>,
+    },
+    NotModified,
+}
+
+fn fetch_remote_ics(
+    url: &str,
+    validators: &RemoteHttpValidators,
+) -> anyhow::Result<RemoteIcsFetch> {
+    let mut request = ureq::get(url)
         .header("Accept", "text/calendar, text/plain;q=0.9, */*;q=0.1")
         .header(
             "User-Agent",
             concat!("Ephemeris/", env!("CARGO_PKG_VERSION")),
-        )
+        );
+    if let Some(etag) = validators.etag.as_deref() {
+        request = request.header("If-None-Match", etag);
+    }
+    if let Some(last_modified) = validators.last_modified.as_deref() {
+        request = request.header("If-Modified-Since", last_modified);
+    }
+
+    let mut response = request
         .call()
         .with_context(|| "failed to fetch remote iCalendar source")?;
-    response
+    if response.status().as_u16() == 304 {
+        return Ok(RemoteIcsFetch::NotModified);
+    }
+
+    let etag = response_header(&response, "ETag");
+    let last_modified = response_header(&response, "Last-Modified");
+    let raw = response
         .body_mut()
         .read_to_string()
-        .context("failed to read remote iCalendar response body")
+        .context("failed to read remote iCalendar response body")?;
+    Ok(RemoteIcsFetch::Modified {
+        raw,
+        etag,
+        last_modified,
+    })
+}
+
+fn response_header(response: &ureq::http::Response<ureq::Body>, name: &str) -> Option<String> {
+    response
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned)
+}
+
+fn remote_http_validators(source: &TemporalSource) -> RemoteHttpValidators {
+    let http = source
+        .properties
+        .get("ical")
+        .and_then(|value| value.get("http"));
+    RemoteHttpValidators {
+        etag: http
+            .and_then(|value| value.get("etag"))
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned),
+        last_modified: http
+            .and_then(|value| value.get("last_modified"))
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned),
+    }
+}
+
+fn persist_remote_http_validators(
+    store: &TemporalStore,
+    source_id: Uuid,
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+) -> anyhow::Result<()> {
+    let mut source = store
+        .source_by_id(source_id)?
+        .ok_or_else(|| anyhow::anyhow!("remote iCalendar source {source_id} disappeared"))?;
+    let ical = source
+        .properties
+        .as_object_mut()
+        .and_then(|properties| properties.get_mut("ical"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| anyhow::anyhow!("remote iCalendar source is missing transport metadata"))?;
+    ical.insert(
+        "http".to_string(),
+        json!({
+            "etag": etag,
+            "last_modified": last_modified,
+        }),
+    );
+    store.upsert_source(&source)
 }
 
 fn remote_ics_external_ref(normalized_url: &str) -> String {
@@ -548,6 +688,31 @@ mod tests {
         assert!(first.source_external_ref.starts_with("ics:file:"));
         assert_eq!(second.source_id, first.source_id);
         assert_eq!(second.unchanged, 2);
+    }
+
+    #[test]
+    fn remote_http_validators_roundtrip_through_source_properties() {
+        let mut source = TemporalSource::new(
+            "Remote",
+            SourceKind::Webcal,
+            SourceAuthority::Unknown,
+        );
+        source.properties = json!({
+            "ical": {
+                "http": {
+                    "etag": "\"v1\"",
+                    "last_modified": "Tue, 06 Oct 2026 20:00:00 GMT"
+                }
+            }
+        });
+
+        assert_eq!(
+            remote_http_validators(&source),
+            RemoteHttpValidators {
+                etag: Some("\"v1\"".to_string()),
+                last_modified: Some("Tue, 06 Oct 2026 20:00:00 GMT".to_string()),
+            }
+        );
     }
 
     #[test]
