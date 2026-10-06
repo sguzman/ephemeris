@@ -17,7 +17,7 @@ use crate::domain::{
     EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday,
     RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
 };
-use crate::ics::{export_ics_source_by_id, import_ics_file};
+use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
@@ -47,7 +47,9 @@ fn is_ics_path(path: &std::path::Path) -> bool {
 }
 
 fn default_ics_export_path(source: &TemporalSource) -> String {
-    if let Some(locator) = source.locator.as_deref() {
+    if source.kind == crate::domain::SourceKind::Ics
+        && let Some(locator) = source.locator.as_deref()
+    {
         let path = std::path::Path::new(locator);
         if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
             let file_name = format!("{stem}-ephemeris.ics");
@@ -59,6 +61,18 @@ fn default_ics_export_path(source: &TemporalSource) -> String {
     }
 
     format!("ephemeris-{}.ics", source.id)
+}
+
+fn remote_locator_display(locator: &str) -> String {
+    let Some((scheme, rest)) = locator.split_once("://") else {
+        return "remote calendar URL".to_string();
+    };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    if authority.is_empty() {
+        "remote calendar URL".to_string()
+    } else {
+        format!("{scheme}://{authority}/…")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1361,6 +1375,8 @@ pub struct EphemerisApp {
     selected_source_id: Option<Uuid>,
     ics_export_source_id: Option<Uuid>,
     ics_export_path: String,
+    remote_ics_url: String,
+    remote_ics_import_receiver: Option<Receiver<Result<IcsImportReport, String>>>,
     taria_current_source_ids: BTreeSet<Uuid>,
     taria_memberships: HashMap<Uuid, EventMembership>,
     taria_release_status: Option<TariaReleaseStatusRecord>,
@@ -1410,6 +1426,8 @@ impl EphemerisApp {
             selected_source_id: None,
             ics_export_source_id: None,
             ics_export_path: String::new(),
+            remote_ics_url: String::new(),
+            remote_ics_import_receiver: None,
             taria_current_source_ids: BTreeSet::new(),
             taria_memberships: HashMap::new(),
             taria_release_status: None,
@@ -1485,6 +1503,78 @@ impl EphemerisApp {
             Err(error) => {
                 self.last_message = None;
                 self.last_error = Some(format!("Failed to export iCalendar: {error:#}"));
+            }
+        }
+    }
+
+    fn start_remote_ics_import(&mut self, url: String) {
+        if self.remote_ics_import_receiver.is_some() {
+            return;
+        }
+        let url = url.trim().to_string();
+        if url.is_empty() {
+            self.last_message = None;
+            self.last_error = Some("Enter a remote iCalendar URL first.".to_string());
+            return;
+        }
+
+        let Some(database_path) = self.store.path().map(std::path::Path::to_path_buf) else {
+            self.last_message = None;
+            self.last_error =
+                Some("Remote iCalendar import requires a file-backed Ephemeris database.".to_string());
+            return;
+        };
+
+        let (sender, receiver) = mpsc::channel();
+        self.remote_ics_import_receiver = Some(receiver);
+        self.last_message = Some("Fetching remote iCalendar source...".to_string());
+        self.last_error = None;
+
+        std::thread::spawn(move || {
+            let result = (|| -> anyhow::Result<IcsImportReport> {
+                let worker_store = TemporalStore::open(database_path)?;
+                import_remote_ics(&worker_store, &url)
+            })()
+            .map_err(|error| format!("{error:#}"));
+            let _ = sender.send(result);
+        });
+    }
+
+    fn poll_remote_ics_import(&mut self) {
+        let result = match self.remote_ics_import_receiver.as_ref() {
+            Some(receiver) => match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => Some(Err(
+                    "Remote iCalendar worker exited without returning a result.".to_string(),
+                )),
+            },
+            None => None,
+        };
+
+        let Some(result) = result else {
+            return;
+        };
+        self.remote_ics_import_receiver = None;
+
+        match result {
+            Ok(report) => {
+                self.selected_source_id = Some(report.source_id);
+                self.state.show_sources = true;
+                self.last_message = Some(format!(
+                    "Imported {}: {} created, {} updated, {} unchanged, {} retained missing",
+                    report.source_name,
+                    report.created,
+                    report.updated,
+                    report.unchanged,
+                    report.retained_missing
+                ));
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to import remote iCalendar: {error}"));
             }
         }
     }
@@ -2714,6 +2804,39 @@ impl EphemerisApp {
         ui.set_width(280.0);
 
         self.render_taria_workspace(ui);
+        ui.separator();
+        ui.heading("Remote iCalendar");
+        ui.small("Subscribe to an HTTP, HTTPS, webcal, or webcals calendar feed.");
+        let importing_remote = self.remote_ics_import_receiver.is_some();
+        ui.horizontal(|ui| {
+            let response = ui.add_enabled(
+                !importing_remote,
+                egui::TextEdit::singleline(&mut self.remote_ics_url)
+                    .hint_text("https://…/calendar.ics")
+                    .desired_width(190.0),
+            );
+            let submit = response.lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            let ready = !self.remote_ics_url.trim().is_empty() && !importing_remote;
+            if ui
+                .add_enabled(
+                    ready,
+                    egui::Button::new(if importing_remote {
+                        "Importing..."
+                    } else {
+                        "Add feed"
+                    }),
+                )
+                .clicked()
+                || (submit && ready)
+            {
+                self.start_remote_ics_import(self.remote_ics_url.clone());
+            }
+        });
+        if importing_remote {
+            ui.small("Fetching and importing in the background...");
+        }
+
         let membership_options = MembershipPredicateOptions {
             bundles: self.taria_bundle_refs.clone(),
             calendars: self.taria_calendar_choices.clone(),
@@ -3577,7 +3700,11 @@ impl EphemerisApp {
                 inspector_row(ui, "Enabled", if source.enabled { "yes" } else { "no" });
                 inspector_row(ui, "Read only", if source.read_only { "yes" } else { "no" });
                 if let Some(locator) = source.locator.as_deref() {
-                    inspector_row(ui, "Locator", locator);
+                    if source.kind == crate::domain::SourceKind::Webcal {
+                        inspector_row(ui, "Locator", &remote_locator_display(locator));
+                    } else {
+                        inspector_row(ui, "Locator", locator);
+                    }
                 }
                 inspector_row(
                     ui,
@@ -3604,7 +3731,10 @@ impl EphemerisApp {
                         inspector_row(ui, "Current release", release_id);
                     }
                 }
-                if source.kind == crate::domain::SourceKind::Ics {
+                if matches!(
+                    source.kind,
+                    crate::domain::SourceKind::Ics | crate::domain::SourceKind::Webcal
+                ) {
                     if self.ics_export_source_id != Some(source.id) {
                         self.ics_export_source_id = Some(source.id);
                         self.ics_export_path = default_ics_export_path(source);
@@ -3613,12 +3743,25 @@ impl EphemerisApp {
                     ui.separator();
                     ui.strong("iCalendar source");
                     if let Some(locator) = source.locator.as_deref() {
-                        ui.small("Refresh re-reads the original local file using stable source and UID identity.");
-                        if ui.button("Refresh ICS").clicked() {
-                            self.import_ics_path(std::path::Path::new(locator));
+                        if source.kind == crate::domain::SourceKind::Webcal {
+                            ui.small("Refresh fetches the remote feed in the background using stable source and UID identity.");
+                            if ui
+                                .add_enabled(
+                                    self.remote_ics_import_receiver.is_none(),
+                                    egui::Button::new("Refresh remote feed"),
+                                )
+                                .clicked()
+                            {
+                                self.start_remote_ics_import(locator.to_string());
+                            }
+                        } else {
+                            ui.small("Refresh re-reads the original local file using stable source and UID identity.");
+                            if ui.button("Refresh ICS").clicked() {
+                                self.import_ics_path(std::path::Path::new(locator));
+                            }
                         }
                     } else {
-                        ui.small("This ICS source has no local file locator, so it cannot be refreshed from disk.");
+                        ui.small("This iCalendar source has no refresh locator.");
                     }
 
                     ui.add_space(4.0);
@@ -4068,7 +4211,8 @@ impl EphemerisApp {
 impl eframe::App for EphemerisApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_taria_workspace_update();
-        if self.taria_update_receiver.is_some() {
+        self.poll_remote_ics_import();
+        if self.taria_update_receiver.is_some() || self.remote_ics_import_receiver.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
 
@@ -7708,6 +7852,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn remote_locator_display_hides_private_path_and_query() {
+        assert_eq!(
+            remote_locator_display("https://example.com/private/feed.ics?token=secret"),
+            "https://example.com/…"
+        );
+        assert_eq!(
+            remote_locator_display("http://localhost:8080/calendar.ics"),
+            "http://localhost:8080/…"
+        );
+    }
+
+    #[test]
     fn default_ics_export_path_uses_safe_sibling_name() {
         let mut source = TemporalSource::new(
             "Calendar",
@@ -7722,6 +7878,13 @@ mod tests {
         );
 
         source.locator = None;
+        assert_eq!(
+            default_ics_export_path(&source),
+            format!("ephemeris-{}.ics", source.id)
+        );
+
+        source.kind = crate::domain::SourceKind::Webcal;
+        source.locator = Some("https://example.com/calendar.ics".to_string());
         assert_eq!(
             default_ics_export_path(&source),
             format!("ephemeris-{}.ics", source.id)
