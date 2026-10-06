@@ -51,7 +51,7 @@ The existing direct reconciled-event-set importer and CompactReconciledEventInde
 
 ### 2. Non-Taria source formats
 
-For ICS, CalDAV, CSV, generic JSON, APIs, and locally authored events, Ephemeris may own more of the adapter pipeline:
+For ICS, CalDAV, CSV, generic JSON, APIs, and locally authored events, Ephemeris owns more of the adapter pipeline:
 
 ```text
 acquire/read
@@ -65,7 +65,13 @@ acquire/read
     -> record provenance/snapshot
 ```
 
-Each stage should provide diagnostics.
+Local ICS is the first implemented source in this class. The current adapter parses a strict supported VCALENDAR/VEVENT subset, projects UID groups into canonical events, creates a first-class `SourceKind::Ics` source, and imports through `TemporalStore::import_batch`.
+
+For local files, the canonicalized filesystem path is the stable source identity and VEVENT UID is the stable source-record identity. Refresh is transactional: unchanged records remain unchanged, changed UIDs update in place, new UIDs are created, and UIDs absent from a later file snapshot are retained unless stronger source semantics justify deletion or cancellation. Invalid calendars fail before source creation.
+
+ICS import is available from `ephemeris-import` and GUI drag/drop. The canonical RFC exporter is implemented; the remaining user-facing export work is selecting stored events/sources and writing the resulting VCALENDAR payload to disk.
+
+Each adapter stage should provide diagnostics.
 
 ## Taria release adoption
 
