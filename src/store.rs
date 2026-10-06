@@ -315,6 +315,28 @@ impl TemporalStore {
         Ok(sources)
     }
 
+    pub fn events_for_source(&self, source_id: Uuid) -> anyhow::Result<Vec<TemporalEvent>> {
+        let sql = event_select_sql(
+            "WHERE id IN (
+                SELECT id
+                FROM temporal_events
+                WHERE source_id = ?1
+                UNION
+                SELECT event_id
+                FROM temporal_event_import_records
+                WHERE source_id = ?1
+            )
+            ORDER BY normalized_title COLLATE NOCASE, id",
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![source_id.to_string()])?;
+        let mut events = Vec::new();
+        while let Some(row) = rows.next()? {
+            events.push(decode_event(row)?);
+        }
+        Ok(events)
+    }
+
     pub fn source_event_counts(&self) -> anyhow::Result<HashMap<Uuid, u64>> {
         let mut stmt = self.conn.prepare(
             r#"
