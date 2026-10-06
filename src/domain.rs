@@ -10704,11 +10704,9 @@ mod tests {
 
     #[test]
     fn floating_daily_bysecond_preserves_fractional_second_and_filters_first_period() {
-        let start = NaiveDateTime::parse_from_str(
-            "2026-10-05T14:20:30.250",
-            "%Y-%m-%dT%H:%M:%S%.3f",
-        )
-        .expect("start");
+        let start =
+            NaiveDateTime::parse_from_str("2026-10-05T14:20:30.250", "%Y-%m-%dT%H:%M:%S%.3f")
+                .expect("start");
         let mut event = TemporalEvent::new(
             "Selected seconds",
             TimeSpec::Floating {
