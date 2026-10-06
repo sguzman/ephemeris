@@ -6810,6 +6810,95 @@ mod tests {
     }
 
     #[test]
+    fn structured_exception_rows_roundtrip_occurrence_starts() {
+        let base = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 1, 10).expect("base"),
+            end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 1, 13).expect("base end")),
+        };
+        let raw = "2026-03-10,2026-04-15";
+
+        let rows =
+            parse_recurrence_exception_edit_rows(raw, &base, "RDATE").expect("structured rows");
+
+        assert_eq!(rows, vec!["2026-03-10", "2026-04-15"]);
+        assert_eq!(format_recurrence_exception_edit_rows(&rows), raw);
+    }
+
+    #[test]
+    fn recurrence_edit_draft_applies_structured_rdate_and_exdate_rows() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Structured exception dates",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(10);
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.rdate_rows = vec!["2026-10-20".to_string(), "2026-10-21".to_string()];
+        draft.exdate_rows = vec!["2026-10-07".to_string()];
+
+        let parsed = draft.parsed_rule().expect("valid structured exceptions");
+
+        assert_eq!(
+            format_exception_start_values(&parsed.rdates),
+            "2026-10-20,2026-10-21"
+        );
+        assert_eq!(format_exception_start_values(&parsed.exdates), "2026-10-07");
+    }
+
+    #[test]
+    fn recurrence_edit_draft_rejects_blank_structured_exception_row() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Incomplete exception row",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.rdate_rows.push(String::new());
+
+        assert!(draft.parsed_rule().is_err());
+    }
+
+    #[test]
+    fn untouched_structured_exception_rows_preserve_persisted_payloads() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Preserve exception payloads",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 6).expect("base end")),
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(10);
+        rule.rdates = vec![TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 20).expect("rdate"),
+            end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 23).expect("rdate end")),
+        }];
+        rule.exdates = vec![TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("exdate"),
+            end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 9).expect("exdate end")),
+        }];
+        event.recurrence = Some(rule.clone());
+
+        let draft = RecurrenceEditDraft::from_event(&event);
+        let parsed = draft.parsed_rule().expect("unchanged structured exceptions");
+
+        assert_eq!(parsed.rdates, rule.rdates);
+        assert_eq!(parsed.exdates, rule.exdates);
+    }
+
+    #[test]
     fn recurrence_edit_draft_rejects_malformed_exception_value() {
         let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("day");
         let event = TemporalEvent::new(
