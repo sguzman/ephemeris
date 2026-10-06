@@ -170,12 +170,8 @@ mod tests {
     #[test]
     fn source_resolution_accepts_webcal_source() {
         let store = TemporalStore::open_in_memory().expect("store");
-        let imported = import_remote_ics_text(
-            &store,
-            FIXTURE,
-            "webcal://example.com/calendar.ics",
-        )
-        .expect("import webcal");
+        let imported = import_remote_ics_text(&store, FIXTURE, "webcal://example.com/calendar.ics")
+            .expect("import webcal");
 
         let source = resolve_ics_source(&store, &imported.source_id.to_string())
             .expect("resolve webcal source");
