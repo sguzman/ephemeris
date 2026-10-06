@@ -47,6 +47,8 @@ The structured RDATE/EXDATE editor is verified on `main` at `3aaaa875a4cd66fb4e3
 
 The canonical recurrence preset slice is verified on `main` at `b97225fcc464041f0015ba4b21dc236eeb105b86`: format, check, strict Clippy, and all **337** library tests pass in GitHub Actions. Daily, Weekdays, Weekly, Monthly, Last weekday/month, and Yearly presets reset only cadence selectors plus interval to known canonical rules while preserving COUNT, UNTIL, RDATE, EXDATE, and occurrence overrides.
 
+A child staging slice at `13a1c8538b927f319cbdad1fe7f4de0a9fb6d0a2` adds contextual recurrence-editor selector affordances and targets **342** library tests. Selector rows now follow the domain frequency matrix and canonical event time kind; inapplicable empty fields are hidden, populated incompatible fields remain explicitly preserved with a Clear action, custom WKST appears only in real weekly/yearly week contexts, and sub-daily frequencies are omitted for date/all-day series. The slice is pending fresh CI verification before promotion.
+
 DAILY reachability switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. YEARLY reachability likewise scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
 ## Implemented architecture
@@ -162,10 +164,11 @@ Implemented:
 - exact/source-timezone recurrence by source wall clock across DST;
 - invalid calendar dates in monthly/yearly series are skipped rather than coerced;
 - recurrence definitions, SECONDLY/MINUTELY/HOURLY calendar/time limiters, daily-BYDAY/BYMONTH/BYMONTHDAY, monthly-BYMONTH/BYMONTHDAY, weekly/monthly/yearly-plain-BYDAY/WKST/BYWEEKNO/BYYEARDAY/yearly-BYMONTHDAY/monthly-ordinal-BYDAY/yearly-BYMONTH/BYHOUR/BYMINUTE/BYSECOND/BYSETPOS selector constraints, DATE-vs-date-time frequency/time-selector compatibility, exception time kinds/conflicts, and override target membership are validated at the SQLite persistence boundary; an override cannot manufacture a slot that does not exist in the RRULE/RDATE occurrence set;
+- recurrence authoring mirrors those constraints contextually: selector affordances are frequency/time-kind aware, unavailable persisted values are preserved visibly rather than silently discarded, and live domain validation remains the final save gate;
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, richer structured recurrence/exception editing ergonomics beyond the compact canonical editor, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, richer high-level recurrence editing ergonomics beyond presets/structured exceptions/contextual selector visibility, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
