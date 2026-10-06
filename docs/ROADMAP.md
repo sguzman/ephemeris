@@ -413,11 +413,12 @@ Implemented recurrence foundation:
 - structured RDATE/EXDATE controls with one occurrence start per row, add/remove controls, live blank-row validation, and collapsed raw compact-syntax fallbacks
 - one-click canonical recurrence presets for Daily, Weekdays, Weekly, Monthly, Last weekday/month, and Yearly; presets reset cadence selectors/interval while preserving bounds and exceptions
 - contextual recurrence-selector affordances driven by the domain frequency/time-kind matrix: irrelevant empty advanced fields are hidden, incompatible populated values are preserved with explicit clearing, WKST appears only in active week contexts, and date/all-day series do not offer sub-daily frequencies
+- structured ordinal-BYDAY authoring with one ordinal + weekday row per selector, add/remove controls, live validation, and a collapsed compact `1MO,-1FR` raw-syntax fallback
 
 Next Phase 8 work:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
-- richer structured recurrence editing ergonomics beyond presets, structured exceptions, and contextual selector visibility, especially higher-level selector controls and explanations for uncommon combinations
+- richer structured recurrence editing ergonomics beyond presets, structured exceptions, contextual selector visibility, and ordinal-BYDAY rows, especially higher-level controls for remaining numeric selectors and explanations for uncommon combinations
 - recurrence-exception source-adapter interoperability for external calendar payloads
 - relations
 - collections/sequences
