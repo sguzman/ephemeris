@@ -408,11 +408,12 @@ Implemented recurrence foundation:
 - moved-in exception materialization when the original slot lies outside the active view horizon
 - override-target validation so detached overrides cannot manufacture occurrences outside the RRULE/RDATE set
 - recurrence definition + occurrence origin/index/identity/override inspection in the GUI
+- first canonical-series recurrence editor in the inspector: frequency, interval, COUNT, UNTIL, WKST, plain BYDAY, and BYMONTH; advanced selectors/exceptions are preserved unchanged; read-only sources are protected; save/remove routes through canonical-event recurrence validation
 
 Next Phase 8 work:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
-- richer recurrence/exception authoring and editing, now the primary Phase 8 product boundary
+- richer recurrence/exception authoring and editing, now the primary Phase 8 product boundary; core series fields have a first editor surface, with advanced selector and exception authoring still ahead
 - recurrence-exception source-adapter interoperability for external calendar payloads
 - relations
 - collections/sequences
