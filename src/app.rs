@@ -2814,38 +2814,41 @@ impl EphemerisApp {
             .filter(|attempt| attempt.refresh_kind != "taria_workspace")
             .collect::<Vec<_>>();
 
-        ui.collapsing(format!("Calendar refresh history ({})", attempts.len()), |ui| {
-            if attempts.is_empty() {
-                ui.small("No persisted ICS/Webcal refresh attempts yet.");
-                return;
-            }
+        ui.collapsing(
+            format!("Calendar refresh history ({})", attempts.len()),
+            |ui| {
+                if attempts.is_empty() {
+                    ui.small("No persisted ICS/Webcal refresh attempts yet.");
+                    return;
+                }
 
-            for attempt in attempts {
-                let status = match attempt.success {
-                    Some(true) => "success",
-                    Some(false) => "failed",
-                    None => "incomplete",
-                };
-                let kind = match attempt.refresh_kind.as_str() {
-                    "ics_file" => "local ICS",
-                    "webcal" => "remote Webcal",
-                    other => other,
-                };
-                ui.strong(format!("{status} · {kind}"));
-                ui.small(format!("Target {}", attempt.target));
-                ui.small(format!("Started {}", attempt.started_at));
-                if let Some(completed_at) = attempt.completed_at.as_deref() {
-                    ui.small(format!("Completed {completed_at}"));
+                for attempt in attempts {
+                    let status = match attempt.success {
+                        Some(true) => "success",
+                        Some(false) => "failed",
+                        None => "incomplete",
+                    };
+                    let kind = match attempt.refresh_kind.as_str() {
+                        "ics_file" => "local ICS",
+                        "webcal" => "remote Webcal",
+                        other => other,
+                    };
+                    ui.strong(format!("{status} · {kind}"));
+                    ui.small(format!("Target {}", attempt.target));
+                    ui.small(format!("Started {}", attempt.started_at));
+                    if let Some(completed_at) = attempt.completed_at.as_deref() {
+                        ui.small(format!("Completed {completed_at}"));
+                    }
+                    if let Some(summary) = attempt.summary.as_deref() {
+                        ui.small(summary);
+                    }
+                    if let Some(error) = attempt.error.as_deref() {
+                        ui.colored_label(Color32::LIGHT_RED, error);
+                    }
+                    ui.add_space(6.0);
                 }
-                if let Some(summary) = attempt.summary.as_deref() {
-                    ui.small(summary);
-                }
-                if let Some(error) = attempt.error.as_deref() {
-                    ui.colored_label(Color32::LIGHT_RED, error);
-                }
-                ui.add_space(6.0);
-            }
-        });
+            },
+        );
     }
 
     fn render_sources(&mut self, ui: &mut egui::Ui) {
