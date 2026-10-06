@@ -142,7 +142,7 @@ Conceptually, the visible occurrence set is built from RRULE candidates plus RDA
 Still required for fuller interoperable recurrence semantics:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented seven-frequency BY-part matrix, with `BYSECOND=60` intentionally deferred until leap-second timestamps can be represented faithfully;
-- richer recurrence-editor ergonomics beyond structured exceptions, canonical presets, contextual selector visibility, and structured ordinal BYDAY, especially higher-level controls for remaining numeric selectors and uncommon combinations;
+- richer recurrence-editor ergonomics beyond structured exceptions, canonical presets, contextual selector visibility, structured ordinal BYDAY, and structured BYMONTHDAY, especially higher-level controls for remaining numeric selectors and uncommon combinations;
 - external recurrence/exception source-adapter interoperability;
 - source-adapter mapping for external recurrence-exception representations.
 
@@ -151,6 +151,8 @@ Recurrence presets are editor-only canonical transformations, not a second recur
 The recurrence editor's selector surface is contextual but non-destructive. Advanced selector rows are shown only when the current frequency and canonical event time kind can use them. Empty inapplicable fields are hidden; if a frequency change makes an existing populated selector inapplicable, its raw value remains preserved and is surfaced as unavailable with an explicit Clear action rather than being silently erased. Custom WKST is surfaced only for WEEKLY+BYDAY or YEARLY+BYWEEKNO contexts, matching the domain validator. Date-only/all-day series omit SECONDLY, MINUTELY, and HOURLY frequency choices and time-of-day selectors because those require a floating or exact date-time base. The existing canonical domain validator remains authoritative for saving.
 
 Ordinal BYDAY has a structured editor layered over the same persisted selector vector. Each row contains a signed ordinal and weekday; adding/removing/editing rows serializes back to the ordinary compact token form (`1MO`, `-1FR`, and so on). A collapsed raw editor remains available for power users. Raw text is authoritative when it diverges from both persisted and structured forms; loading raw syntax into rows canonicalizes the text and returns authority to the structured rows. Presets clear both forms together, and contextual clearing of an unavailable ordinal selector clears both forms together, so no hidden parallel state can survive.
+
+BYMONTHDAY follows the same non-parallel editing contract. Each structured row contains one signed civil day; positive values count from month start and negative values count backward from month end. Row edits serialize to the ordinary compact selector form (`1,15,-1`), while a collapsed raw editor remains available. Raw text overrides rows only while it diverges from both persisted and structured forms; loading raw syntax canonicalizes it back into rows. Presets and contextual clearing clear both forms together.
 
 The system distinguishes the persisted recurrence definition from materialized view occurrences.
 
