@@ -692,11 +692,8 @@ mod tests {
 
     #[test]
     fn remote_http_validators_roundtrip_through_source_properties() {
-        let mut source = TemporalSource::new(
-            "Remote",
-            SourceKind::Webcal,
-            SourceAuthority::Unknown,
-        );
+        let mut source =
+            TemporalSource::new("Remote", SourceKind::Webcal, SourceAuthority::Unknown);
         source.properties = json!({
             "ical": {
                 "http": {
