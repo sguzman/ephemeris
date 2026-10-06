@@ -426,7 +426,7 @@ Next Phase 8 work:
 
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
 - richer structured recurrence editing ergonomics beyond presets, structured exceptions, contextual selector visibility, and the fully structured advanced BY-selector set, especially higher-level controls for cadence/bounds and explanations for uncommon combinations
-- recurrence-exception source-adapter interoperability for external calendar payloads; RRULE, strict RDATE/EXDATE parse/format, strict RECURRENCE-ID original-slot parse/format, strict VEVENT DTSTART/DTEND time transport, RFC content-line/single-VEVENT envelope transport, typed VEVENT property binding, master/detached temporal-exception assembly, canonical TemporalEvent projection, and strict VCALENDAR payload grouping/ingestion are implemented; `RANGE=THISANDFUTURE`, occurrence-specific non-temporal overrides, DURATION transport, RDATE-only recurrence, VTIMEZONE, and VALARM remain deliberately unsupported until their canonical/preservation semantics exist, while canonical VEVENT/VCALENDAR export remains ahead
+- recurrence-exception source-adapter interoperability for external calendar payloads is bidirectional for the supported RFC subset: RRULE, strict RDATE/EXDATE parse/format, strict RECURRENCE-ID original-slot parse/format, DTSTART/DTEND transport, RFC content-line and VEVENT/VCALENDAR envelopes, typed VEVENT binding, master/detached temporal-exception assembly, canonical TemporalEvent projection, strict VCALENDAR grouping/ingestion, and canonical VEVENT/VCALENDAR export are implemented; `RANGE=THISANDFUTURE`, occurrence-specific non-temporal overrides, DURATION transport, RDATE-only recurrence, VTIMEZONE, and VALARM remain deliberately unsupported until their canonical/preservation semantics exist; source/store plus user-facing ICS import/export integration is next
 - relations
 - collections/sequences
 - uncertainty
@@ -435,7 +435,7 @@ Next Phase 8 work:
 
 ## Phase 9 - External interoperability
 
-Status: **not started**
+Status: **started — core RFC 5545 projection transport implemented; source/store and user-facing integration next**
 
 Goals:
 
