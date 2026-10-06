@@ -249,6 +249,42 @@ fn validate_recurrence_weekno_edit_rows(rows: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn recurrence_yearday_edit_rows(values: &[i16]) -> Vec<String> {
+    values.iter().map(ToString::to_string).collect()
+}
+
+fn format_recurrence_yearday_edit_rows(rows: &[String]) -> String {
+    rows.iter()
+        .map(|value| value.trim())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_recurrence_yearday_edit_rows(raw: &str) -> Result<Vec<String>, String> {
+    parse_i16_selector_values(raw, "BYYEARDAY")
+        .map(|values| values.iter().map(ToString::to_string).collect())
+}
+
+fn validate_recurrence_yearday_edit_rows(rows: &[String]) -> Result<(), String> {
+    for (index, value) in rows.iter().enumerate() {
+        let raw = value.trim();
+        if raw.is_empty() {
+            return Err(format!(
+                "BYYEARDAY row #{} needs a signed year day or must be removed.",
+                index + 1
+            ));
+        }
+        raw.parse::<i16>().map_err(|_| {
+            format!(
+                "BYYEARDAY row #{} has invalid signed year day '{}'.",
+                index + 1,
+                value
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn recurrence_monthday_edit_rows(values: &[i8]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
 }
@@ -459,6 +495,7 @@ struct RecurrenceEditDraft {
     week_no_text: String,
     week_no_rows: Vec<String>,
     year_day_text: String,
+    year_day_rows: Vec<String>,
     month_day_text: String,
     month_day_rows: Vec<String>,
     ordinal_byday_text: String,
@@ -491,6 +528,8 @@ impl RecurrenceEditDraft {
         let override_rows = recurrence_override_edit_rows(&rule.overrides);
         let week_no_text = format_selector_values(&rule.by_week_no);
         let week_no_rows = recurrence_weekno_edit_rows(&rule.by_week_no);
+        let year_day_text = format_selector_values(&rule.by_year_day);
+        let year_day_rows = recurrence_yearday_edit_rows(&rule.by_year_day);
         let month_day_text = format_selector_values(&rule.by_month_day);
         let month_day_rows = recurrence_monthday_edit_rows(&rule.by_month_day);
         let ordinal_byday_text = format_ordinal_byday_values(&rule.by_month_weekday);
@@ -507,7 +546,8 @@ impl RecurrenceEditDraft {
                 .map_or_else(String::new, |until| until.to_string()),
             week_no_text,
             week_no_rows,
-            year_day_text: format_selector_values(&rule.by_year_day),
+            year_day_text,
+            year_day_rows,
             month_day_text,
             month_day_rows,
             ordinal_byday_text,
@@ -535,6 +575,7 @@ impl RecurrenceEditDraft {
         self.week_no_text.clear();
         self.week_no_rows.clear();
         self.year_day_text.clear();
+        self.year_day_rows.clear();
         self.month_day_text.clear();
         self.month_day_rows.clear();
         self.ordinal_byday_text.clear();
@@ -617,7 +658,16 @@ impl RecurrenceEditDraft {
             rule.by_week_no = parse_i8_selector_values(&structured_week_no_text, "BYWEEKNO")?;
         }
 
-        rule.by_year_day = parse_i16_selector_values(&self.year_day_text, "BYYEARDAY")?;
+        let canonical_year_day_text = format_selector_values(&self.rule.by_year_day);
+        let structured_year_day_text = format_recurrence_yearday_edit_rows(&self.year_day_rows);
+        let year_day_raw_override = self.year_day_text != canonical_year_day_text
+            && self.year_day_text != structured_year_day_text;
+        if year_day_raw_override {
+            rule.by_year_day = parse_i16_selector_values(&self.year_day_text, "BYYEARDAY")?;
+        } else {
+            validate_recurrence_yearday_edit_rows(&self.year_day_rows)?;
+            rule.by_year_day = parse_i16_selector_values(&structured_year_day_text, "BYYEARDAY")?;
+        }
 
         let canonical_month_day_text = format_selector_values(&self.rule.by_month_day);
         let structured_month_day_text = format_recurrence_monthday_edit_rows(&self.month_day_rows);
@@ -3950,6 +4000,89 @@ fn render_structured_weekno(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, 
         });
 }
 
+fn render_structured_yearday(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, available: bool) {
+    if !available {
+        if draft.year_day_text.trim().is_empty() && draft.year_day_rows.is_empty() {
+            return;
+        }
+
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("BYYEARDAY (preserved)").strong());
+                ui.add_enabled(
+                    false,
+                    egui::TextEdit::singleline(&mut draft.year_day_text)
+                        .desired_width(150.0)
+                        .hint_text("1,100,-1"),
+                );
+                if ui.small_button("Clear").clicked() {
+                    draft.year_day_text.clear();
+                    draft.year_day_rows.clear();
+                }
+            });
+            ui.small(RecurrenceEditorSelector::YearDay.unavailable_reason());
+            ui.small("The structured rows are preserved until cleared or the context is restored.");
+        });
+        return;
+    }
+
+    ui.label("BYYEARDAY");
+    ui.small(
+        "One signed year day per row. Positive values count from January 1; negative values count backward from year end.",
+    );
+
+    let mut structured_changed = false;
+    let mut remove_index = None;
+    for (index, value) in draft.year_day_rows.iter_mut().enumerate() {
+        ui.push_id(("byyearday", index), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("#{}", index + 1));
+                structured_changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(value)
+                            .desired_width(90.0)
+                            .hint_text("100 or -1"),
+                    )
+                    .changed();
+                if ui.small_button("Remove").clicked() {
+                    remove_index = Some(index);
+                }
+            });
+        });
+    }
+
+    if let Some(index) = remove_index {
+        draft.year_day_rows.remove(index);
+        structured_changed = true;
+    }
+
+    if ui.small_button("+ Add BYYEARDAY").clicked() {
+        draft.year_day_rows.push("1".to_string());
+        structured_changed = true;
+    }
+
+    if structured_changed {
+        draft.year_day_text = format_recurrence_yearday_edit_rows(&draft.year_day_rows);
+    }
+
+    egui::CollapsingHeader::new("Raw BYYEARDAY syntax")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.small("Power-user form: comma- or space-separated signed year days such as 1,100,-1.");
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.year_day_text)
+                    .desired_width(260.0)
+                    .hint_text("1,100,-1"),
+            );
+            if ui.small_button("Load raw syntax into rows").clicked()
+                && let Ok(rows) = parse_recurrence_yearday_edit_rows(&draft.year_day_text)
+            {
+                draft.year_day_text = format_recurrence_yearday_edit_rows(&rows);
+                draft.year_day_rows = rows;
+            }
+        });
+}
+
 fn render_structured_monthday(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft, available: bool) {
     if !available {
         if draft.month_day_text.trim().is_empty() && draft.month_day_rows.is_empty() {
@@ -4436,14 +4569,7 @@ fn render_recurrence_editor(
         &draft.base_time,
     );
     render_structured_weekno(ui, draft, week_no_available);
-    contextual_recurrence_selector_text_row(
-        ui,
-        RecurrenceEditorSelector::YearDay,
-        "BYYEARDAY",
-        &mut draft.year_day_text,
-        "1,100,-1",
-        year_day_available,
-    );
+    render_structured_yearday(ui, draft, year_day_available);
     render_structured_monthday(ui, draft, month_day_available);
     render_structured_ordinal_byday(ui, draft, ordinal_byday_available);
     contextual_recurrence_selector_text_row(
@@ -8621,6 +8747,94 @@ mod tests {
 
         assert!(draft.week_no_text.is_empty());
         assert!(draft.week_no_rows.is_empty());
+    }
+
+
+    #[test]
+    fn recurrence_yearday_edit_rows_roundtrip_compact_syntax() {
+        let rows = recurrence_yearday_edit_rows(&[1, 100, -1]);
+
+        assert_eq!(rows, vec!["1", "100", "-1"]);
+        assert_eq!(format_recurrence_yearday_edit_rows(&rows), "1,100,-1");
+        assert_eq!(
+            parse_recurrence_yearday_edit_rows("1 100,-1").expect("parse"),
+            vec!["1", "100", "-1"]
+        );
+    }
+
+    #[test]
+    fn recurrence_edit_draft_applies_structured_yearday_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Structured BYYEARDAY",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Yearly));
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.year_day_rows = vec!["1".to_string(), "100".to_string(), "-1".to_string()];
+        draft.year_day_text = format_recurrence_yearday_edit_rows(&draft.year_day_rows);
+
+        let parsed = draft.parsed_rule().expect("structured rule");
+        assert_eq!(parsed.by_year_day, vec![1, 100, -1]);
+    }
+
+    #[test]
+    fn recurrence_edit_draft_raw_yearday_override_remains_supported() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Raw BYYEARDAY",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.by_year_day = vec![1];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.year_day_text = "100,-1".to_string();
+
+        let parsed = draft.parsed_rule().expect("raw override");
+        assert_eq!(parsed.by_year_day, vec![100, -1]);
+        assert_eq!(draft.year_day_rows, vec!["1"]);
+    }
+
+    #[test]
+    fn recurrence_yearday_edit_rows_reject_blank_day() {
+        let rows = vec![String::new()];
+
+        assert_eq!(
+            validate_recurrence_yearday_edit_rows(&rows),
+            Err("BYYEARDAY row #1 needs a signed year day or must be removed.".to_string())
+        );
+    }
+
+    #[test]
+    fn recurrence_preset_clears_structured_yearday_rows() {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).expect("day");
+        let mut event = TemporalEvent::new(
+            "Preset clears structured BYYEARDAY",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Yearly);
+        rule.by_year_day = vec![1, -1];
+        event.recurrence = Some(rule);
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        assert_eq!(draft.year_day_rows, vec!["1", "-1"]);
+
+        draft.apply_preset(RecurrencePreset::Daily);
+
+        assert!(draft.year_day_text.is_empty());
+        assert!(draft.year_day_rows.is_empty());
     }
 
 }
