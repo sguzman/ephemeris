@@ -511,7 +511,9 @@ pub fn format_vcalendar(calendar: &IcalVcalendar) -> Result<String, IcalRecurren
                 "component marker supplied as VCALENDAR property".to_string(),
             ));
         }
-        encoded.push_str(&fold_ical_content_line(&format_ical_content_line(property)?)?);
+        encoded.push_str(&fold_ical_content_line(&format_ical_content_line(
+            property,
+        )?)?);
         encoded.push_str("\r\n");
     }
     for event in &calendar.events {
@@ -573,7 +575,9 @@ fn validate_vcalendar_properties(
         return Err(IcalRecurrenceError::MissingProperty("VERSION"));
     }
     if versions.len() > 1 {
-        return Err(IcalRecurrenceError::DuplicateProperty("VERSION".to_string()));
+        return Err(IcalRecurrenceError::DuplicateProperty(
+            "VERSION".to_string(),
+        ));
     }
     if !versions[0].parameters.is_empty() || versions[0].value != "2.0" {
         return Err(IcalRecurrenceError::InvalidPropertyValue {
@@ -2914,7 +2918,8 @@ and continues here\r\nSUMMARY:Example\r\n";
             "END:VCALENDAR\r\n"
         );
         let calendar = parse_vcalendar(raw).expect("parse");
-        let reparsed = parse_vcalendar(&format_vcalendar(&calendar).expect("format")).expect("reparse");
+        let reparsed =
+            parse_vcalendar(&format_vcalendar(&calendar).expect("format")).expect("reparse");
         assert_eq!(reparsed, calendar);
     }
 
