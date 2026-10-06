@@ -37,7 +37,9 @@ The first recurrence-authoring slice is verified on `main` at `5ad550821fba6b7c6
 
 The advanced selector-authoring slice is verified on `main` at `680b7b55f22dab7d4125f2db7f49d571ba250ea7`: format, check, strict Clippy, and all **315** library tests pass in GitHub Actions. It adds direct editing for BYWEEKNO, BYYEARDAY, BYMONTHDAY, ordinal BYDAY, BYHOUR, BYMINUTE, BYSECOND, and BYSETPOS using compact comma/space-separated typed fields with live domain validation.
 
-The exception-date authoring slice is verified on `main` at `174ffa0a6485a21211adc20d83b81a42b8dba075`: format, check, strict Clippy, and all **320** library tests pass in GitHub Actions. It adds direct RDATE/EXDATE editing. Exception inputs are authored as occurrence starts in the canonical series' temporal kind, reconstruct canonical duration/source-timezone metadata on edited entries, preserve untouched exception payloads at the domain-object level, validate EXDATE/override conflicts live through canonical recurrence validation, and leave moved/cancelled overrides unchanged at this verified boundary.
+The exception-date authoring slice is verified on `main` at `174ffa0a6485a21211adc20d83b81a42b8dba075`: format, check, strict Clippy, and all **320** library tests pass in GitHub Actions. It adds direct RDATE/EXDATE editing. Exception inputs are authored as occurrence starts in the canonical series' temporal kind, reconstruct canonical duration/source-timezone metadata on edited entries, preserve untouched exception payloads at the domain-object level, and validate EXDATE/override conflicts live through canonical recurrence validation.
+
+A child override-authoring slice at code/test checkpoint `1c6da211e163f8329811af5e04c52ba8931286d0` targets **326** library tests. It adds multiline editing for moved, cancelled, cancelled+moved, and explicit no-op overrides using `original=>replacement`, `original=>CANCEL`, `original=>CANCEL@replacement`, and `original=>KEEP`; parsed endpoints inherit canonical temporal kind/duration/source-timezone metadata and the existing domain validator rejects malformed, duplicate, conflicting, or phantom targets before save.
 
 DAILY reachability switches to the finite 400-year Gregorian date cycle whenever BYMONTH or BYMONTHDAY is present, while BYDAY-only rules retain the smaller weekday-cycle fast path. YEARLY reachability likewise scans every distinct state in the 400-year Gregorian cycle using the existing yearly candidate generator, including BYSETPOS, and deliberately evaluates future-cycle periods so first-year DTSTART filtering cannot create false negatives.
 
@@ -157,7 +159,7 @@ Implemented:
 - month/year/unresolved precision is rejected as a recurrence base instead of failing later during view materialization;
 - materialized occurrences retain canonical event lineage, recurrence origin/index, original occurrence time, and override posture in the inspector.
 
-Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, moved/cancelled occurrence-override authoring, and source-adapter mapping for interoperable recurrence payloads.
+Still ahead in this recurrence layer: remaining RFC edge semantics and selector combinations beyond the now-implemented seven-frequency BY-part matrix, explicit leap-second representation before `BYSECOND=60` can be accepted, richer structured recurrence/exception editing ergonomics beyond the compact canonical editor, and source-adapter mapping for interoperable recurrence payloads.
 
 Implemented event metadata includes:
 
