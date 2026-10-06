@@ -31,6 +31,8 @@ pub enum IcalRecurrenceError {
     UnsupportedParameter(String),
     UnsupportedValueType(String),
     UnsupportedPeriod,
+    UnsupportedRecurrenceRange(String),
+    RecurrenceIdRequiresSingleValue,
     InvalidTimezone(String),
     TemporalKindMismatch {
         property: &'static str,
@@ -91,6 +93,13 @@ impl fmt::Display for IcalRecurrenceError {
             Self::UnsupportedPeriod => formatter.write_str(
                 "RDATE VALUE=PERIOD is not supported until occurrence-specific periods are canonical",
             ),
+            Self::UnsupportedRecurrenceRange(value) => write!(
+                formatter,
+                "RECURRENCE-ID RANGE={value} is not supported until range overrides are canonical"
+            ),
+            Self::RecurrenceIdRequiresSingleValue => {
+                formatter.write_str("RECURRENCE-ID requires exactly one date or date-time value")
+            }
             Self::InvalidTimezone(value) => {
                 write!(formatter, "unsupported or invalid iCalendar TZID {value}")
             }
@@ -352,6 +361,152 @@ pub fn format_exdate_property(
     base: &TimeSpec,
 ) -> Result<String, IcalRecurrenceError> {
     format_recurrence_date_property("EXDATE", values, base)
+}
+
+/// Parse an RFC 5545 RECURRENCE-ID property into Ephemeris' canonical
+/// original-slot identity. RANGE=THISANDFUTURE is rejected because the
+/// current domain models single-instance overrides only.
+pub fn parse_recurrence_id_property(
+    raw: &str,
+    base: &TimeSpec,
+) -> Result<TimeSpec, IcalRecurrenceError> {
+    let raw = raw.trim();
+    let (head, raw_value) = raw
+        .split_once(':')
+        .ok_or_else(|| IcalRecurrenceError::InvalidProperty(raw.to_string()))?;
+    if raw_value.trim().is_empty() {
+        return Err(IcalRecurrenceError::EmptyPropertyValues("RECURRENCE-ID"));
+    }
+    if raw_value.contains(',') {
+        return Err(IcalRecurrenceError::RecurrenceIdRequiresSingleValue);
+    }
+
+    let mut head_parts = head.split(';');
+    let actual_name = head_parts
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_uppercase();
+    if actual_name != "RECURRENCE-ID" {
+        return Err(IcalRecurrenceError::WrongProperty {
+            expected: "RECURRENCE-ID",
+            actual: actual_name,
+        });
+    }
+
+    let mut seen = HashSet::new();
+    let mut tzid = None;
+    let mut value_type = None;
+    for raw_parameter in head_parts {
+        let (raw_name, raw_parameter_value) = raw_parameter
+            .split_once('=')
+            .ok_or_else(|| IcalRecurrenceError::InvalidProperty(raw.to_string()))?;
+        let name = raw_name.trim().to_ascii_uppercase();
+        if !seen.insert(name.clone()) {
+            return Err(IcalRecurrenceError::DuplicateParameter(name));
+        }
+        let value = unquote_parameter_value(raw_parameter_value.trim());
+        if value.is_empty() {
+            return Err(IcalRecurrenceError::InvalidProperty(raw.to_string()));
+        }
+        match name.as_str() {
+            "VALUE" => value_type = Some(value.to_ascii_uppercase()),
+            "TZID" => tzid = Some(value.to_string()),
+            "RANGE" => {
+                return Err(IcalRecurrenceError::UnsupportedRecurrenceRange(
+                    value.to_ascii_uppercase(),
+                ));
+            }
+            _ => return Err(IcalRecurrenceError::UnsupportedParameter(name)),
+        }
+    }
+
+    let value_type = value_type.as_deref().unwrap_or("DATE-TIME");
+    if !matches!(value_type, "DATE" | "DATE-TIME") {
+        return Err(IcalRecurrenceError::UnsupportedValueType(
+            value_type.to_string(),
+        ));
+    }
+
+    match base {
+        TimeSpec::Instant {
+            source_timezone: Some(expected_timezone),
+            ..
+        } => {
+            if tzid.as_deref() != Some(expected_timezone.as_str()) || raw_value.ends_with('Z') {
+                return Err(IcalRecurrenceError::TemporalKindMismatch {
+                    property: "RECURRENCE-ID",
+                    expected: base.kind_name(),
+                    actual: "non-source-local date-time",
+                });
+            }
+        }
+        TimeSpec::Instant {
+            source_timezone: None,
+            ..
+        } => {
+            if tzid.is_some() || !raw_value.ends_with('Z') {
+                return Err(IcalRecurrenceError::TemporalKindMismatch {
+                    property: "RECURRENCE-ID",
+                    expected: base.kind_name(),
+                    actual: "non-UTC date-time",
+                });
+            }
+        }
+        _ => {}
+    }
+
+    parse_recurrence_date_value(
+        "RECURRENCE-ID",
+        raw_value.trim(),
+        value_type,
+        tzid.as_deref(),
+        base,
+    )
+}
+
+/// Serialize one canonical original recurrence slot as RFC 5545 RECURRENCE-ID.
+pub fn format_recurrence_id_property(
+    original: &TimeSpec,
+    base: &TimeSpec,
+) -> Result<String, IcalRecurrenceError> {
+    ensure_supported_exception_base(base)?;
+    ensure_exception_shape("RECURRENCE-ID", original, base)?;
+
+    match (base, original) {
+        (TimeSpec::DateOnly { .. } | TimeSpec::AllDay { .. }, _) => Ok(format!(
+            "RECURRENCE-ID;VALUE=DATE:{}",
+            format_recurrence_date_value("RECURRENCE-ID", original)?
+        )),
+        (TimeSpec::Floating { .. }, _) => Ok(format!(
+            "RECURRENCE-ID:{}",
+            format_recurrence_date_value("RECURRENCE-ID", original)?
+        )),
+        (
+            TimeSpec::Instant {
+                source_timezone: Some(source_timezone),
+                ..
+            },
+            TimeSpec::Instant { start_utc, .. },
+        ) => {
+            reject_fractional_seconds("RECURRENCE-ID", start_utc.naive_utc())?;
+            let timezone = source_timezone
+                .parse::<Tz>()
+                .map_err(|_| IcalRecurrenceError::InvalidTimezone(source_timezone.clone()))?;
+            let local = start_utc.with_timezone(&timezone);
+            Ok(format!(
+                "RECURRENCE-ID;TZID={source_timezone}:{}",
+                local.format("%Y%m%dT%H%M%S")
+            ))
+        }
+        (TimeSpec::Instant { .. }, _) => Ok(format!(
+            "RECURRENCE-ID:{}",
+            format_recurrence_date_value("RECURRENCE-ID", original)?
+        )),
+        (TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. }, _) => {
+            Err(IcalRecurrenceError::UnsupportedBaseKind(base.kind_name()))
+        }
+    }
 }
 
 fn parse_recurrence_date_property(
@@ -975,6 +1130,127 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recurrence_id_roundtrips_date_and_preserves_original_slot_shape() {
+        let base = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 1, 10).expect("start"),
+            end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 1, 12).expect("end")),
+        };
+        let original =
+            parse_recurrence_id_property("RECURRENCE-ID;VALUE=DATE:20260310", &base)
+                .expect("RECURRENCE-ID");
+
+        assert_eq!(
+            original,
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 3, 10).expect("original"),
+                end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 3, 12).expect("original end")),
+            }
+        );
+        assert_eq!(
+            format_recurrence_id_property(&original, &base).expect("format"),
+            "RECURRENCE-ID;VALUE=DATE:20260310"
+        );
+    }
+
+    #[test]
+    fn recurrence_id_roundtrips_source_timezone_local_identity() {
+        let base_start = DateTime::parse_from_rfc3339("2026-01-05T14:00:00Z")
+            .expect("base")
+            .with_timezone(&Utc);
+        let base = TimeSpec::Instant {
+            start_utc: base_start,
+            end_utc: Some(base_start + Duration::hours(1)),
+            source_timezone: Some("America/New_York".to_string()),
+        };
+        let original = parse_recurrence_id_property(
+            "RECURRENCE-ID;TZID=America/New_York:20260706T090000",
+            &base,
+        )
+        .expect("RECURRENCE-ID");
+
+        assert_eq!(
+            format_recurrence_id_property(&original, &base).expect("format"),
+            "RECURRENCE-ID;TZID=America/New_York:20260706T090000"
+        );
+    }
+
+    #[test]
+    fn recurrence_id_rejects_range_multiple_values_and_wrong_time_form() {
+        let floating = TimeSpec::Floating {
+            start: NaiveDate::from_ymd_opt(2026, 1, 5)
+                .expect("day")
+                .and_hms_opt(9, 0, 0)
+                .expect("time"),
+            end: None,
+            source_timezone: None,
+        };
+        assert_eq!(
+            parse_recurrence_id_property(
+                "RECURRENCE-ID;RANGE=THISANDFUTURE:20260112T090000",
+                &floating
+            ),
+            Err(IcalRecurrenceError::UnsupportedRecurrenceRange(
+                "THISANDFUTURE".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_recurrence_id_property(
+                "RECURRENCE-ID:20260112T090000,20260119T090000",
+                &floating
+            ),
+            Err(IcalRecurrenceError::RecurrenceIdRequiresSingleValue)
+        );
+
+        let base_start = DateTime::parse_from_rfc3339("2026-01-05T14:00:00Z")
+            .expect("base")
+            .with_timezone(&Utc);
+        let zoned = TimeSpec::Instant {
+            start_utc: base_start,
+            end_utc: None,
+            source_timezone: Some("America/New_York".to_string()),
+        };
+        assert!(matches!(
+            parse_recurrence_id_property("RECURRENCE-ID:20260112T140000Z", &zoned),
+            Err(IcalRecurrenceError::TemporalKindMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn recurrence_id_roundtrips_utc_and_floating_forms() {
+        let utc_start = DateTime::parse_from_rfc3339("2026-01-05T14:00:00Z")
+            .expect("base")
+            .with_timezone(&Utc);
+        let utc_base = TimeSpec::Instant {
+            start_utc: utc_start,
+            end_utc: None,
+            source_timezone: None,
+        };
+        let utc =
+            parse_recurrence_id_property("RECURRENCE-ID:20260112T140000Z", &utc_base)
+                .expect("UTC RECURRENCE-ID");
+        assert_eq!(
+            format_recurrence_id_property(&utc, &utc_base).expect("format UTC"),
+            "RECURRENCE-ID:20260112T140000Z"
+        );
+
+        let floating_base = TimeSpec::Floating {
+            start: NaiveDate::from_ymd_opt(2026, 1, 5)
+                .expect("day")
+                .and_hms_opt(9, 30, 0)
+                .expect("time"),
+            end: None,
+            source_timezone: None,
+        };
+        let floating =
+            parse_recurrence_id_property("RECURRENCE-ID:20260112T093000", &floating_base)
+                .expect("floating RECURRENCE-ID");
+        assert_eq!(
+            format_recurrence_id_property(&floating, &floating_base).expect("format floating"),
+            "RECURRENCE-ID:20260112T093000"
+        );
+    }
 
     #[test]
     fn parses_date_rdate_and_preserves_date_only_duration() {
