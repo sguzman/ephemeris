@@ -203,7 +203,7 @@ local .ics/.ical file
     -> normal query/view rendering
 ```
 
-The RFC transport layer is bidirectional for the supported subset, so canonical events can also be projected back into VEVENT/VCALENDAR. User-facing stored-source export-to-file is the next integration step.
+The RFC transport layer is bidirectional for the supported subset. Stored ICS sources can now be projected back into VEVENT/VCALENDAR and written atomically through both CLI and GUI surfaces. Explicit local-source refresh controls are the next integration step.
 
 Unsupported RFC semantics are rejected at the adapter boundary rather than leaking partial interpretations into the domain model.
 
