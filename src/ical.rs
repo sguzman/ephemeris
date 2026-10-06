@@ -503,10 +503,7 @@ pub fn parse_vevent(raw: &str) -> Result<IcalVevent, IcalRecurrenceError> {
 
     let dtstart_line = dtstart.ok_or(IcalRecurrenceError::MissingProperty("DTSTART"))?;
     let dtstart_raw = format_ical_content_line(&dtstart_line)?;
-    let dtend_raw = dtend
-        .as_ref()
-        .map(format_ical_content_line)
-        .transpose()?;
+    let dtend_raw = dtend.as_ref().map(format_ical_content_line).transpose()?;
     let time = parse_vevent_time_properties(&dtstart_raw, dtend_raw.as_deref())?;
 
     let summary = summary.map(parse_text_property).transpose()?;
@@ -517,11 +514,17 @@ pub fn parse_vevent(raw: &str) -> Result<IcalVevent, IcalRecurrenceError> {
 
     let mut rdates = Vec::new();
     for line in rdate_lines {
-        rdates.extend(parse_rdate_property(&format_ical_content_line(&line)?, &time)?);
+        rdates.extend(parse_rdate_property(
+            &format_ical_content_line(&line)?,
+            &time,
+        )?);
     }
     let mut exdates = Vec::new();
     for line in exdate_lines {
-        exdates.extend(parse_exdate_property(&format_ical_content_line(&line)?, &time)?);
+        exdates.extend(parse_exdate_property(
+            &format_ical_content_line(&line)?,
+            &time,
+        )?);
     }
 
     Ok(IcalVevent {
@@ -629,9 +632,7 @@ fn set_unique_content_line(
     Ok(())
 }
 
-fn parse_text_property(
-    line: IcalContentLine,
-) -> Result<IcalProperty<String>, IcalRecurrenceError> {
+fn parse_text_property(line: IcalContentLine) -> Result<IcalProperty<String>, IcalRecurrenceError> {
     Ok(IcalProperty {
         value: unescape_ical_text(&line.value)?,
         parameters: line.parameters,
