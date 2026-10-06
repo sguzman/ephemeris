@@ -17,6 +17,7 @@ use crate::domain::{
     EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday,
     RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
 };
+use crate::ics::import_ics_file;
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
@@ -36,6 +37,12 @@ use crate::taria_workspace::{
 };
 
 const TARIA_STALE_AFTER_HOURS: i64 = 7 * 24;
+
+fn is_ics_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("ics") || value.eq_ignore_ascii_case("ical"))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TariaRefreshHealth {
@@ -1400,6 +1407,41 @@ impl EphemerisApp {
         };
         app.reload()?;
         Ok(app)
+    }
+
+    fn import_dropped_path(&mut self, path: &std::path::Path) {
+        if is_ics_path(path) {
+            self.import_ics_path(path);
+        } else {
+            self.import_taria_path(path);
+        }
+    }
+
+    fn import_ics_path(&mut self, path: &std::path::Path) {
+        match import_ics_file(&self.store, path) {
+            Ok(report) => {
+                self.selected_source_id = Some(report.source_id);
+                self.state.show_sources = true;
+                self.last_message = Some(format!(
+                    "Imported {}: {} created, {} updated, {} unchanged, {} retained missing",
+                    report.source_name,
+                    report.created,
+                    report.updated,
+                    report.unchanged,
+                    report.retained_missing
+                ));
+                self.last_error = None;
+                self.mark_state_dirty();
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!(
+                    "Failed to import iCalendar {}: {error:#}",
+                    path.display()
+                ));
+            }
+        }
     }
 
     fn import_taria_path(&mut self, path: &std::path::Path) {
@@ -3960,7 +4002,7 @@ impl eframe::App for EphemerisApp {
                 .collect::<Vec<_>>()
         });
         for path in dropped_paths {
-            self.import_taria_path(&path);
+            self.import_dropped_path(&path);
         }
 
         self.toolbar(ui);
@@ -7583,6 +7625,14 @@ fn status_color(status: EventStatus) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropped_import_routing_recognizes_ics_case_insensitively() {
+        assert!(is_ics_path(std::path::Path::new("/tmp/calendar.ics")));
+        assert!(is_ics_path(std::path::Path::new("/tmp/CALENDAR.ICAL")));
+        assert!(!is_ics_path(std::path::Path::new("/tmp/events.json")));
+        assert!(!is_ics_path(std::path::Path::new("/tmp/no-extension")));
+    }
 
     fn refresh_attempt(
         id: Uuid,
