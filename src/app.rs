@@ -138,6 +138,37 @@ impl RecurrenceOverrideEditRow {
     }
 }
 
+fn recurrence_exception_edit_rows(values: &[TimeSpec]) -> Vec<String> {
+    values.iter().map(format_exception_start_value).collect()
+}
+
+fn format_recurrence_exception_edit_rows(rows: &[String]) -> String {
+    rows.iter()
+        .map(|value| value.trim())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_recurrence_exception_edit_rows(
+    raw: &str,
+    base_time: &TimeSpec,
+    label: &str,
+) -> Result<Vec<String>, String> {
+    parse_exception_start_values(raw, base_time, label)
+        .map(|values| recurrence_exception_edit_rows(&values))
+}
+
+fn validate_recurrence_exception_edit_rows(
+    rows: &[String],
+    label: &str,
+) -> Result<(), String> {
+    if rows.iter().any(|value| value.trim().is_empty()) {
+        Err(format!("{label} rows must contain an occurrence start or be removed."))
+    } else {
+        Ok(())
+    }
+}
+
 fn recurrence_override_edit_rows(values: &[RecurrenceOverride]) -> Vec<RecurrenceOverrideEditRow> {
     values
         .iter()
@@ -177,7 +208,9 @@ struct RecurrenceEditDraft {
     second_text: String,
     set_pos_text: String,
     rdate_text: String,
+    rdate_rows: Vec<String>,
     exdate_text: String,
+    exdate_rows: Vec<String>,
     override_text: String,
     override_rows: Vec<RecurrenceOverrideEditRow>,
     base_time: TimeSpec,
@@ -190,6 +223,10 @@ impl RecurrenceEditDraft {
             .recurrence
             .clone()
             .unwrap_or_else(|| RecurrenceRule::new(RecurrenceFrequency::Daily));
+        let rdate_text = format_exception_start_values(&rule.rdates);
+        let rdate_rows = recurrence_exception_edit_rows(&rule.rdates);
+        let exdate_text = format_exception_start_values(&rule.exdates);
+        let exdate_rows = recurrence_exception_edit_rows(&rule.exdates);
         let override_text = format_recurrence_override_values(&rule.overrides);
         let override_rows = recurrence_override_edit_rows(&rule.overrides);
         Self {
@@ -210,8 +247,10 @@ impl RecurrenceEditDraft {
             minute_text: format_selector_values(&rule.by_minute),
             second_text: format_selector_values(&rule.by_second),
             set_pos_text: format_selector_values(&rule.by_set_pos),
-            rdate_text: format_exception_start_values(&rule.rdates),
-            exdate_text: format_exception_start_values(&rule.exdates),
+            rdate_text,
+            rdate_rows,
+            exdate_text,
+            exdate_rows,
             override_text,
             override_rows,
             base_time: event.time.clone(),
@@ -253,13 +292,38 @@ impl RecurrenceEditDraft {
         rule.by_second = parse_u8_selector_values(&self.second_text, "BYSECOND")?;
         rule.by_set_pos = parse_i16_selector_values(&self.set_pos_text, "BYSETPOS")?;
 
-        if self.rdate_text != format_exception_start_values(&self.rule.rdates) {
+        let canonical_rdate_text = format_exception_start_values(&self.rule.rdates);
+        let structured_rdate_text = format_recurrence_exception_edit_rows(&self.rdate_rows);
+        let rdate_raw_override = self.rdate_text != canonical_rdate_text
+            && self.rdate_text != structured_rdate_text;
+        if rdate_raw_override {
             rule.rdates = parse_exception_start_values(&self.rdate_text, &self.base_time, "RDATE")?;
+        } else {
+            validate_recurrence_exception_edit_rows(&self.rdate_rows, "RDATE")?;
+            if structured_rdate_text != canonical_rdate_text {
+                rule.rdates =
+                    parse_exception_start_values(&structured_rdate_text, &self.base_time, "RDATE")?;
+            }
         }
-        if self.exdate_text != format_exception_start_values(&self.rule.exdates) {
+
+        let canonical_exdate_text = format_exception_start_values(&self.rule.exdates);
+        let structured_exdate_text = format_recurrence_exception_edit_rows(&self.exdate_rows);
+        let exdate_raw_override = self.exdate_text != canonical_exdate_text
+            && self.exdate_text != structured_exdate_text;
+        if exdate_raw_override {
             rule.exdates =
                 parse_exception_start_values(&self.exdate_text, &self.base_time, "EXDATE")?;
+        } else {
+            validate_recurrence_exception_edit_rows(&self.exdate_rows, "EXDATE")?;
+            if structured_exdate_text != canonical_exdate_text {
+                rule.exdates = parse_exception_start_values(
+                    &structured_exdate_text,
+                    &self.base_time,
+                    "EXDATE",
+                )?;
+            }
         }
+
         let canonical_override_text = format_recurrence_override_values(&self.rule.overrides);
         let structured_override_text = format_recurrence_override_edit_rows(&self.override_rows);
         let edited_override_text = if self.override_text != canonical_override_text
