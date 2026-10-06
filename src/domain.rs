@@ -1875,6 +1875,7 @@ fn recurrence_candidates_before_set_pos(
 }
 
 const GREGORIAN_CYCLE_DAYS: u64 = 146_097;
+const GREGORIAN_CYCLE_HOURS: u64 = GREGORIAN_CYCLE_DAYS * 24;
 const GREGORIAN_CYCLE_WEEKS: u64 = 20_871;
 const GREGORIAN_CYCLE_MONTHS: u64 = 4_800;
 
@@ -1903,28 +1904,109 @@ fn hourly_rule_has_reachable_candidate(
     if !set_positions_select_any(candidate_count, &rule.by_set_pos) {
         return Ok(false);
     }
-    if rule.by_hour.is_empty() {
-        return Ok(true);
-    }
 
-    let start_hour = u64::from(recurrence_rule_hour(base)?);
-    let step = u64::from(rule.interval % 24);
-    let mut hour = start_hour;
-    let mut seen = [false; 24];
-
-    loop {
-        let index = usize::try_from(hour).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
-        if seen[index] {
-            return Ok(false);
-        }
-        if rule.by_hour.contains(
-            &u8::try_from(hour).map_err(|_| RecurrenceError::ArithmeticOverflow)?,
-        ) {
+    let has_date_limiter = !rule.by_month.is_empty()
+        || !rule.by_year_day.is_empty()
+        || !rule.by_month_day.is_empty()
+        || !rule.by_weekday.is_empty();
+    if !has_date_limiter {
+        if rule.by_hour.is_empty() {
             return Ok(true);
         }
-        seen[index] = true;
-        hour = (hour + step) % 24;
+
+        let start_hour = u64::from(recurrence_rule_hour(base)?);
+        let step = u64::from(rule.interval % 24);
+        let mut hour = start_hour;
+        let mut seen = [false; 24];
+
+        loop {
+            let index = usize::try_from(hour).map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+            if seen[index] {
+                return Ok(false);
+            }
+            if rule.by_hour.contains(
+                &u8::try_from(hour).map_err(|_| RecurrenceError::ArithmeticOverflow)?,
+            ) {
+                return Ok(true);
+            }
+            seen[index] = true;
+            hour = (hour + step) % 24;
+        }
     }
+
+    let base_local = recurrence_rule_local_datetime(base)?;
+    let cycle_year = 2000_i32
+        .checked_add(base_local.year().rem_euclid(400))
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let cycle_start = NaiveDate::from_ymd_opt(2000, 1, 1)
+        .and_then(|date| date.and_hms_opt(0, 0, 0))
+        .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let equivalent_base = NaiveDate::from_ymd_opt(
+        cycle_year,
+        base_local.month(),
+        base_local.day(),
+    )
+    .and_then(|date| date.and_hms_opt(base_local.hour(), 0, 0))
+    .ok_or(RecurrenceError::ArithmeticOverflow)?;
+    let mut hour_offset = u64::try_from((equivalent_base - cycle_start).num_hours())
+        .map_err(|_| RecurrenceError::ArithmeticOverflow)?;
+    let step = u64::from(rule.interval) % GREGORIAN_CYCLE_HOURS;
+    let cycle_len =
+        GREGORIAN_CYCLE_HOURS / greatest_common_divisor(GREGORIAN_CYCLE_HOURS, step);
+
+    for _ in 0..cycle_len {
+        let candidate = cycle_start
+            .checked_add_signed(Duration::hours(
+                i64::try_from(hour_offset).map_err(|_| RecurrenceError::ArithmeticOverflow)?,
+            ))
+            .ok_or(RecurrenceError::ArithmeticOverflow)?;
+        let candidate_date = candidate.date();
+
+        let month_matches = rule.by_month.is_empty()
+            || u8::try_from(candidate_date.month())
+                .ok()
+                .is_some_and(|month| rule.by_month.contains(&month));
+        let year_day_matches = rule.by_year_day.is_empty()
+            || rule
+                .by_year_day
+                .iter()
+                .filter_map(|selector| resolve_year_day(candidate_date.year(), *selector))
+                .any(|date| date == candidate_date);
+        let month_day_matches = if rule.by_month_day.is_empty() {
+            true
+        } else {
+            let month_start =
+                NaiveDate::from_ymd_opt(candidate_date.year(), candidate_date.month(), 1)
+                    .ok_or(RecurrenceError::ArithmeticOverflow)?;
+            rule.by_month_day
+                .iter()
+                .filter_map(|selector| resolve_month_day(month_start, *selector))
+                .any(|date| date == candidate_date)
+        };
+        let weekday_matches = rule.by_weekday.is_empty()
+            || rule.by_weekday.iter().any(|weekday| {
+                weekday.offset_from_monday()
+                    == u64::from(candidate_date.weekday().num_days_from_monday())
+            });
+        let hour_matches = rule.by_hour.is_empty()
+            || rule.by_hour.contains(
+                &u8::try_from(candidate.hour())
+                    .map_err(|_| RecurrenceError::ArithmeticOverflow)?,
+            );
+
+        if month_matches
+            && year_day_matches
+            && month_day_matches
+            && weekday_matches
+            && hour_matches
+        {
+            return Ok(true);
+        }
+
+        hour_offset = (hour_offset + step) % GREGORIAN_CYCLE_HOURS;
+    }
+
+    Ok(false)
 }
 
 const GREGORIAN_CYCLE_YEARS: u64 = 400;
@@ -11612,6 +11694,40 @@ mod tests {
             week_no.validate(),
             Err(RecurrenceError::ByWeekNoRequiresYearly)
         ));
+    }
+
+
+    #[test]
+    fn hourly_reachability_detects_unreachable_calendar_limiter_cycle() {
+        let start = NaiveDateTime::parse_from_str("2026-10-05T08:30:20", "%Y-%m-%dT%H:%M:%S")
+            .expect("start");
+        let base = TimeSpec::Floating {
+            start,
+            end: None,
+            source_timezone: None,
+        };
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Hourly);
+        rule.interval = u32::try_from(GREGORIAN_CYCLE_HOURS).expect("cycle hours fit u32");
+        rule.count = Some(1);
+        rule.by_month = vec![11];
+
+        assert!(
+            !hourly_rule_has_reachable_candidate(&base, &rule).expect("reachability"),
+            "a 400-year cadence pinned to October can never satisfy BYMONTH=11"
+        );
+
+        let mut event = TemporalEvent::new("Never November hourly", base);
+        event.recurrence = Some(rule);
+        assert!(
+            event
+                .occurrences_in_window(
+                    NaiveDate::from_ymd_opt(2026, 10, 1).expect("window start"),
+                    NaiveDate::from_ymd_opt(2026, 12, 1).expect("window end"),
+                    chrono_tz::UTC,
+                )
+                .expect("expand")
+                .is_empty()
+        );
     }
 
 }
