@@ -322,7 +322,7 @@ pub enum QueryPredicate {
         values: Vec<EventIdentityState>,
     },
     AnnotationKind {
-        kind: String,
+        annotation_kind: String,
     },
 }
 
@@ -439,9 +439,8 @@ impl QueryPredicate {
                     .iter()
                     .any(|state| membership.has_identity_state(*state))
             }),
-            Self::AnnotationKind { kind } => {
-                membership.is_some_and(|membership| membership.has_annotation_kind(kind))
-            }
+            Self::AnnotationKind { annotation_kind } => membership
+                .is_some_and(|membership| membership.has_annotation_kind(annotation_kind))
         }
     }
 }
@@ -2108,13 +2107,13 @@ mod tests {
 
         let note_query = EventQuery {
             expression: Some(QueryExpr::Predicate(QueryPredicate::AnnotationKind {
-                kind: "note".to_string(),
+                annotation_kind: "note".to_string(),
             })),
             ..EventQuery::default()
         };
         let missing_query = EventQuery {
             expression: Some(QueryExpr::Predicate(QueryPredicate::AnnotationKind {
-                kind: "rating".to_string(),
+                annotation_kind: "rating".to_string(),
             })),
             ..EventQuery::default()
         };
