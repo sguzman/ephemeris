@@ -1311,6 +1311,124 @@ impl fmt::Display for EventProvenanceRecordError {
 
 impl std::error::Error for EventProvenanceRecordError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NotificationTarget {
+    Event { event_id: Uuid },
+    SavedView { saved_view_id: Uuid },
+}
+
+impl NotificationTarget {
+    pub const fn kind_name(self) -> &'static str {
+        match self {
+            Self::Event { .. } => "event",
+            Self::SavedView { .. } => "saved_view",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NotificationTrigger {
+    BeforeStart { minutes: u32 },
+}
+
+impl NotificationTrigger {
+    pub const fn kind_name(self) -> &'static str {
+        match self {
+            Self::BeforeStart { .. } => "before_start",
+        }
+    }
+
+    pub const fn lead_minutes(self) -> u32 {
+        match self {
+            Self::BeforeStart { minutes } => minutes,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NotificationRule {
+    pub id: Uuid,
+    pub name: String,
+    pub enabled: bool,
+    pub target: NotificationTarget,
+    pub trigger: NotificationTrigger,
+    pub properties: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl NotificationRule {
+    pub fn for_event(
+        event_id: Uuid,
+        name: impl Into<String>,
+        lead_minutes: u32,
+    ) -> Self {
+        Self::new(
+            NotificationTarget::Event { event_id },
+            name,
+            NotificationTrigger::BeforeStart {
+                minutes: lead_minutes,
+            },
+        )
+    }
+
+    pub fn for_saved_view(
+        saved_view_id: Uuid,
+        name: impl Into<String>,
+        lead_minutes: u32,
+    ) -> Self {
+        Self::new(
+            NotificationTarget::SavedView { saved_view_id },
+            name,
+            NotificationTrigger::BeforeStart {
+                minutes: lead_minutes,
+            },
+        )
+    }
+
+    fn new(
+        target: NotificationTarget,
+        name: impl Into<String>,
+        trigger: NotificationTrigger,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            enabled: true,
+            target,
+            trigger,
+            properties: Value::Object(Default::default()),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), NotificationRuleError> {
+        if self.name.trim().is_empty() {
+            return Err(NotificationRuleError::EmptyName);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotificationRuleError {
+    EmptyName,
+}
+
+impl fmt::Display for NotificationRuleError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyName => formatter.write_str("notification rule name cannot be empty"),
+        }
+    }
+}
+
+impl std::error::Error for NotificationRuleError {}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventAnnotation {
     pub id: Uuid,
