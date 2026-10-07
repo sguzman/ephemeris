@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::{
     EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
-    EventRelation, TemporalEvent, TemporalSource,
+    EventProvenanceRecord, EventRelation, TemporalEvent, TemporalSource,
 };
 use crate::store::{CanonicalSnapshotMergeInput, CanonicalSnapshotMergeResult, TemporalStore};
 
 pub const CANONICAL_SNAPSHOT_FORMAT: &str = "ephemeris.canonical_snapshot";
-pub const CANONICAL_SNAPSHOT_VERSION: u32 = 4;
+pub const CANONICAL_SNAPSHOT_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalJsonSnapshot {
@@ -29,6 +29,8 @@ pub struct CanonicalJsonSnapshot {
     pub identity_assessments: Vec<EventIdentityAssessment>,
     #[serde(default)]
     pub annotations: Vec<EventAnnotation>,
+    #[serde(default)]
+    pub provenance_records: Vec<EventProvenanceRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +42,7 @@ pub struct CanonicalJsonExportReport {
     pub collection_member_count: usize,
     pub identity_assessment_count: usize,
     pub annotation_count: usize,
+    pub provenance_record_count: usize,
     pub output_path: PathBuf,
 }
 
@@ -52,6 +55,7 @@ impl CanonicalJsonSnapshot {
         let mut collection_members = store.list_event_collection_members()?;
         let mut identity_assessments = store.list_event_identity_assessments()?;
         let mut annotations = store.list_event_annotations()?;
+        let mut provenance_records = store.list_event_provenance_records()?;
         sources.sort_by_key(|source| source.id);
         events.sort_by_key(|event| event.id);
         relations.sort_by_key(|relation| relation.id);
@@ -60,6 +64,7 @@ impl CanonicalJsonSnapshot {
             .sort_by_key(|member| (member.collection_id, member.position, member.event_id));
         identity_assessments.sort_by_key(|assessment| assessment.id);
         annotations.sort_by_key(|annotation| annotation.id);
+        provenance_records.sort_by_key(|record| record.id);
 
         let snapshot = Self {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
@@ -71,6 +76,7 @@ impl CanonicalJsonSnapshot {
             collection_members,
             identity_assessments,
             annotations,
+            provenance_records,
         };
         snapshot.validate()?;
         Ok(snapshot)
@@ -111,6 +117,11 @@ impl CanonicalJsonSnapshot {
         if self.version == 3 && !self.annotations.is_empty() {
             return Err(anyhow!(
                 "canonical snapshot version 3 cannot contain annotation records"
+            ));
+        }
+        if self.version < 5 && !self.provenance_records.is_empty() {
+            return Err(anyhow!(
+                "canonical snapshot versions before 5 cannot contain structured provenance records"
             ));
         }
 
@@ -322,6 +333,50 @@ impl CanonicalJsonSnapshot {
             }
         }
 
+        if self.version >= 5 {
+            let mut provenance_ids = HashSet::new();
+            let mut provenance_semantics = BTreeSet::new();
+            for record in &self.provenance_records {
+                record
+                    .validate()
+                    .with_context(|| format!("provenance record {} is invalid", record.id))?;
+                if !provenance_ids.insert(record.id) {
+                    return Err(anyhow!(
+                        "duplicate event provenance record UUID {}",
+                        record.id
+                    ));
+                }
+                if !event_ids.contains(&record.event_id) {
+                    return Err(anyhow!(
+                        "provenance record {} references event {} that is not present in the snapshot",
+                        record.id,
+                        record.event_id
+                    ));
+                }
+                if let Some(source_id) = record.source_id
+                    && !source_ids.contains(&source_id)
+                {
+                    return Err(anyhow!(
+                        "provenance record {} references source {} that is not present in the snapshot",
+                        record.id,
+                        source_id
+                    ));
+                }
+                if !provenance_semantics.insert((
+                    record.event_id,
+                    record.role.as_str(),
+                    record.reference.as_str(),
+                )) {
+                    return Err(anyhow!(
+                        "duplicate structured provenance {} / {} / {:?}",
+                        record.event_id,
+                        record.role.as_str(),
+                        record.reference
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -369,6 +424,7 @@ pub fn import_canonical_json_snapshot(
             collection_members: &snapshot.collection_members,
             identity_assessments: &snapshot.identity_assessments,
             annotations: &snapshot.annotations,
+            provenance_records: &snapshot.provenance_records,
         }),
     }
 }
@@ -401,6 +457,7 @@ pub fn export_canonical_json_file(
         collection_member_count: snapshot.collection_members.len(),
         identity_assessment_count: snapshot.identity_assessments.len(),
         annotation_count: snapshot.annotations.len(),
+        provenance_record_count: snapshot.provenance_records.len(),
         output_path,
     })
 }
