@@ -6882,6 +6882,130 @@ mod tests {
     }
 
     #[test]
+    fn canonical_entity_merge_reassigns_bindings_and_preserves_old_references() {
+        let store = TemporalStore::open_in_memory().expect("store");
+
+        let mut target = CanonicalEntity::new("Ada Lovelace");
+        target.entity_type = Some("person".to_string());
+        target.aliases = vec!["A. Lovelace".to_string()];
+        target.external_refs = vec!["wikidata:Q7259".to_string()];
+        store.upsert_canonical_entity(&target).expect("target");
+
+        let mut source = CanonicalEntity::new("Augusta Ada King");
+        source.entity_type = Some("Person".to_string());
+        source.aliases = vec!["Ada King".to_string()];
+        source.external_refs = vec!["source:ada-king".to_string()];
+        store.upsert_canonical_entity(&source).expect("source");
+
+        let mut event = TemporalEvent::new(
+            "Entity merge",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        event
+            .participants
+            .push(EventParticipant::new("Augusta Ada King"));
+        store.upsert_event(&event).expect("event");
+        store
+            .bind_event_participant_entity(event.id, 0, source.id)
+            .expect("binding");
+
+        let source_local_ref = source.local_reference();
+        let merged = store
+            .merge_canonical_entities(target.id, source.id)
+            .expect("merge entities");
+
+        assert_eq!(merged.id, target.id);
+        assert!(merged.aliases.contains(&"Augusta Ada King".to_string()));
+        assert!(merged.aliases.contains(&"Ada King".to_string()));
+        assert!(merged.external_refs.contains(&"source:ada-king".to_string()));
+        assert!(merged.external_refs.contains(&source_local_ref));
+        assert!(
+            store
+                .canonical_entity_by_id(source.id)
+                .expect("source query")
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .canonical_entity_by_reference("source:ada-king")
+                .expect("source ref lookup"),
+            Some(merged.clone())
+        );
+        assert_eq!(
+            store
+                .canonical_entity_by_reference(&source_local_ref)
+                .expect("old local ref lookup"),
+            Some(merged.clone())
+        );
+        assert!(matches!(
+            store
+                .resolve_event_participant_entity(event.id, 0)
+                .expect("binding resolution"),
+            ParticipantEntityResolution::Manual { entity, .. } if entity == merged
+        ));
+    }
+
+    #[test]
+    fn canonical_entity_merge_rejects_type_and_property_conflicts_without_mutation() {
+        let store = TemporalStore::open_in_memory().expect("store");
+
+        let mut person = CanonicalEntity::new("Ada");
+        person.entity_type = Some("person".to_string());
+        person.properties = serde_json::json!({"source": "person"});
+        store.upsert_canonical_entity(&person).expect("person");
+
+        let mut organization = CanonicalEntity::new("Ada Org");
+        organization.entity_type = Some("organization".to_string());
+        store
+            .upsert_canonical_entity(&organization)
+            .expect("organization");
+
+        assert!(
+            store
+                .merge_canonical_entities(person.id, organization.id)
+                .expect_err("type conflict")
+                .to_string()
+                .contains("conflicting types")
+        );
+        assert!(store
+            .canonical_entity_by_id(organization.id)
+            .expect("organization after rejected merge")
+            .is_some());
+
+        let mut compatible = CanonicalEntity::new("Ada Person Two");
+        compatible.entity_type = Some("person".to_string());
+        compatible.properties = serde_json::json!({"source": "different"});
+        store
+            .upsert_canonical_entity(&compatible)
+            .expect("compatible entity");
+
+        assert!(
+            store
+                .merge_canonical_entities(person.id, compatible.id)
+                .expect_err("property conflict")
+                .to_string()
+                .contains("conflicting opaque properties")
+        );
+        assert_eq!(
+            store
+                .canonical_entity_by_id(person.id)
+                .expect("person query")
+                .expect("person"),
+            person
+        );
+        assert_eq!(
+            store
+                .canonical_entity_by_id(compatible.id)
+                .expect("compatible query")
+                .expect("compatible"),
+            compatible
+        );
+    }
+
+    #[test]
     fn participant_entity_resolution_uses_source_refs_exact_labels_and_manual_bindings() {
         let store = TemporalStore::open_in_memory().expect("store");
 
