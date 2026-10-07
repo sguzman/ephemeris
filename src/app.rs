@@ -119,6 +119,7 @@ fn parse_slot_search(
     step_minutes: &str,
     day_start: &str,
     day_end: &str,
+    workdays: [bool; 7],
 ) -> anyhow::Result<SlotSearch> {
     let duration_minutes = duration_minutes
         .trim()
@@ -138,6 +139,7 @@ fn parse_slot_search(
         step_minutes,
         day_start,
         day_end,
+        workdays,
     }
     .validate()
 }
@@ -1781,10 +1783,6 @@ pub struct EphemerisApp {
     notification_event_lead_minutes: String,
     notification_saved_view_id: Option<Uuid>,
     notification_saved_view_lead_minutes: String,
-    availability_duration_minutes: String,
-    availability_step_minutes: String,
-    availability_day_start: String,
-    availability_day_end: String,
     dirty_state: bool,
     saved_view_name: String,
     saved_views: Vec<SavedView>,
@@ -1901,10 +1899,6 @@ impl EphemerisApp {
             notification_event_lead_minutes: "15".to_string(),
             notification_saved_view_id: None,
             notification_saved_view_lead_minutes: "15".to_string(),
-            availability_duration_minutes: "60".to_string(),
-            availability_step_minutes: "30".to_string(),
-            availability_day_start: "09:00".to_string(),
-            availability_day_end: "17:00".to_string(),
             dirty_state: false,
             saved_view_name: String::new(),
             saved_views,
@@ -3694,6 +3688,7 @@ impl EphemerisApp {
         let visible_events = self.visible_events();
         let mut selected_free_interval = None;
         let mut selected_suggested_slot = None;
+        let mut availability_preferences_changed = false;
 
         ui.collapsing(
             format!("Availability · {}", self.state.calendar_view.label()),
@@ -3731,32 +3726,64 @@ impl EphemerisApp {
                         ui.strong("Find a slot");
                         ui.horizontal_wrapped(|ui| {
                             ui.small("duration");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.availability_duration_minutes)
+                            availability_preferences_changed |= ui
+                                .add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.state.availability_duration_minutes,
+                                    )
                                     .desired_width(55.0),
-                            );
+                                )
+                                .changed();
                             ui.small("min · step");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.availability_step_minutes)
+                            availability_preferences_changed |= ui
+                                .add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.state.availability_step_minutes,
+                                    )
                                     .desired_width(55.0),
-                            );
+                                )
+                                .changed();
                             ui.small("min · hours");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.availability_day_start)
+                            availability_preferences_changed |= ui
+                                .add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.state.availability_day_start,
+                                    )
                                     .desired_width(60.0),
-                            );
+                                )
+                                .changed();
                             ui.small("to");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.availability_day_end)
+                            availability_preferences_changed |= ui
+                                .add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.state.availability_day_end,
+                                    )
                                     .desired_width(60.0),
-                            );
+                                )
+                                .changed();
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.small("days");
+                            for (index, label) in
+                                ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                                    .into_iter()
+                                    .enumerate()
+                            {
+                                availability_preferences_changed |= ui
+                                    .checkbox(
+                                        &mut self.state.availability_workdays[index],
+                                        label,
+                                    )
+                                    .changed();
+                            }
                         });
 
                         match parse_slot_search(
-                            &self.availability_duration_minutes,
-                            &self.availability_step_minutes,
-                            &self.availability_day_start,
-                            &self.availability_day_end,
+                            &self.state.availability_duration_minutes,
+                            &self.state.availability_step_minutes,
+                            &self.state.availability_day_start,
+                            &self.state.availability_day_end,
+                            self.state.availability_workdays,
                         )
                         .and_then(|search| {
                             suggest_slots(
@@ -3882,6 +3909,10 @@ impl EphemerisApp {
                 }
             },
         );
+
+        if availability_preferences_changed {
+            self.mark_state_dirty();
+        }
 
         let draft_result = if let Some(interval) = selected_suggested_slot {
             new_event_draft_for_suggested_slot(&interval, timezone)
@@ -13146,7 +13177,9 @@ mod tests {
 
     #[test]
     fn slot_search_parser_accepts_clock_and_minute_constraints() {
-        let search = parse_slot_search("90", "15", "08:30", "18:00").expect("search");
+        let workdays = [true, true, true, true, true, false, false];
+        let search =
+            parse_slot_search("90", "15", "08:30", "18:00", workdays).expect("search");
         assert_eq!(search.duration_minutes, 90);
         assert_eq!(search.step_minutes, 15);
         assert_eq!(
@@ -13157,6 +13190,7 @@ mod tests {
             search.day_end,
             NaiveTime::from_hms_opt(18, 0, 0).expect("end")
         );
+        assert_eq!(search.workdays, workdays);
     }
 
     #[test]
