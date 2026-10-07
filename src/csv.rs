@@ -531,7 +531,7 @@ mod tests {
     use chrono::{Duration, TimeZone};
 
     use super::*;
-    use crate::domain::{RecurrenceFrequency, RecurrenceRule};
+    use crate::domain::{RecurrenceFrequency, RecurrenceRule, TimeUncertainty};
 
     fn simple_event(title: &str, record_key: &str, time: TimeSpec) -> TemporalEvent {
         let mut event = TemporalEvent::new(title, time);
@@ -683,6 +683,27 @@ mod tests {
 
     #[test]
     fn csv_export_rejects_nonrepresentable_semantics() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut uncertain = simple_event(
+            "Uncertain",
+            "uncertain",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        uncertain.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: day - Duration::days(1),
+            latest: day + Duration::days(1),
+        });
+        let uncertainty_error =
+            format_csv_events(&[uncertain]).expect_err("uncertainty must be rejected");
+        assert!(
+            uncertainty_error
+                .to_string()
+                .contains("temporal uncertainty")
+        );
+
         let mut recurrence = simple_event(
             "Recurring",
             "recurring",
