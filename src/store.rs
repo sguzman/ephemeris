@@ -5475,6 +5475,166 @@ mod tests {
     }
 
     #[test]
+    fn event_provenance_records_roundtrip_enforce_semantic_uniqueness_and_fk_behavior() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let source = TemporalSource::new("Archive", SourceKind::Json, SourceAuthority::Official);
+        store.upsert_source(&source).expect("source");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let event = TemporalEvent::new(
+            "Provenance target",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        store.upsert_event(&event).expect("event");
+
+        let mut record = EventProvenanceRecord::new(
+            event.id,
+            EventProvenanceRole::Source,
+            "https://example.org/archive/item-42",
+        );
+        record.source_id = Some(source.id);
+        record.note = Some("Primary archival source".to_string());
+        record.properties = serde_json::json!({"page": 17});
+        store
+            .upsert_event_provenance_record(&record)
+            .expect("provenance");
+
+        assert_eq!(
+            store
+                .event_provenance_record_by_id(record.id)
+                .expect("query")
+                .expect("record"),
+            record
+        );
+        assert_eq!(
+            store
+                .event_provenance_records_for_event(event.id)
+                .expect("event provenance"),
+            vec![record.clone()]
+        );
+        assert_eq!(
+            store
+                .event_provenance_records_for_source(source.id)
+                .expect("source provenance"),
+            vec![record.clone()]
+        );
+        assert_eq!(
+            store
+                .list_event_provenance_records()
+                .expect("all provenance"),
+            vec![record.clone()]
+        );
+
+        let duplicate = EventProvenanceRecord::new(
+            event.id,
+            EventProvenanceRole::Source,
+            "https://example.org/archive/item-42",
+        );
+        assert!(
+            store
+                .upsert_event_provenance_record(&duplicate)
+                .expect_err("duplicate semantic provenance must fail")
+                .to_string()
+                .contains("failed to upsert event provenance record")
+        );
+
+        let invalid = EventProvenanceRecord::new(
+            event.id,
+            EventProvenanceRole::Assertion,
+            "   ",
+        );
+        assert!(
+            store
+                .upsert_event_provenance_record(&invalid)
+                .expect_err("empty provenance reference must fail")
+                .to_string()
+                .contains("invalid event provenance record")
+        );
+
+        store
+            .conn
+            .execute(
+                "DELETE FROM temporal_sources WHERE id = ?1",
+                params![source.id.to_string()],
+            )
+            .expect("delete source");
+        let after_source_delete = store
+            .event_provenance_record_by_id(record.id)
+            .expect("query after source delete")
+            .expect("record after source delete");
+        assert!(after_source_delete.source_id.is_none());
+
+        store
+            .conn
+            .execute(
+                "DELETE FROM temporal_events WHERE id = ?1",
+                params![event.id.to_string()],
+            )
+            .expect("delete event");
+        assert!(
+            store
+                .event_provenance_record_by_id(record.id)
+                .expect("query after event cascade")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn v18_migration_adds_structured_provenance_without_rewriting_events() {
+        let mut conn = Connection::open_in_memory().expect("connection");
+        configure_connection(&conn).expect("configure");
+
+        let tx = conn.transaction().expect("schema transaction");
+        create_schema_v2(&tx).expect("base schema");
+        add_event_recurrence_column(&tx).expect("recurrence column");
+        create_saved_views_schema_current(&tx).expect("saved views");
+        create_taria_release_schema_current(&tx).expect("taria schema");
+        create_refresh_history_schema_current(&tx).expect("refresh schema");
+        create_event_relation_collection_schema_current(&tx).expect("topology schema");
+        add_event_uncertainty_column(&tx).expect("uncertainty column");
+        create_event_identity_schema_current(&tx).expect("identity schema");
+        create_event_annotation_schema_current(&tx).expect("annotation schema");
+        tx.pragma_update(None, "user_version", 18).expect("set v18");
+        tx.commit().expect("commit v18 schema");
+
+        let event_id = Uuid::new_v4();
+        conn.execute(
+            r#"
+            INSERT INTO temporal_events (
+                id,
+                assertion_refs_json, source_refs_json, provenance_refs_json,
+                normalized_title, status,
+                time_kind, start_date,
+                tags_json, properties_json,
+                created_at, updated_at
+            ) VALUES (?1, '[]', '[]', '[]', ?2, 'scheduled', 'date_only', ?3, '[]', '{}', ?4, ?4)
+            "#,
+            params![
+                event_id.to_string(),
+                "Pre-v19 event",
+                "2026-10-07",
+                "2026-10-07T00:00:00Z",
+            ],
+        )
+        .expect("insert v18 event");
+
+        migrate(&mut conn).expect("migrate to current");
+        let store = TemporalStore { conn, path: None };
+        assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+
+        let loaded = store.event_by_id(event_id).expect("query").expect("event");
+        assert_eq!(loaded.normalized_title, "Pre-v19 event");
+        assert!(
+            store
+                .event_provenance_records_for_event(event_id)
+                .expect("provenance")
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn event_annotations_roundtrip_survive_source_refresh_and_cascade_on_event_delete() {
         let store = TemporalStore::open_in_memory().expect("store");
         let source = TemporalSource::new("Feed", SourceKind::Ics, SourceAuthority::Official);
