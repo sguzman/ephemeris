@@ -460,6 +460,68 @@ impl TemporalStore {
         Ok(())
     }
 
+    pub fn event_relation_collection_memberships(
+        &self,
+    ) -> anyhow::Result<HashMap<Uuid, EventMembership>> {
+        let mut memberships = HashMap::<Uuid, EventMembership>::new();
+
+        let mut collection_stmt = self.conn.prepare(
+            r#"
+            SELECT collection_id, event_id
+            FROM event_collection_members
+            ORDER BY collection_id, event_id
+            "#,
+        )?;
+        let mut collection_rows = collection_stmt.query([])?;
+        while let Some(row) = collection_rows.next()? {
+            let raw_collection_id: String = row.get(0)?;
+            let raw_event_id: String = row.get(1)?;
+            let collection_id = Uuid::parse_str(&raw_collection_id).with_context(|| {
+                format!("invalid event collection id in membership index: {raw_collection_id}")
+            })?;
+            let event_id = Uuid::parse_str(&raw_event_id).with_context(|| {
+                format!("invalid event id in collection membership index: {raw_event_id}")
+            })?;
+            memberships
+                .entry(event_id)
+                .or_default()
+                .collection_ids
+                .insert(collection_id);
+        }
+
+        let mut relation_stmt = self.conn.prepare(
+            r#"
+            SELECT from_event_id, to_event_id, relation_type
+            FROM event_relations
+            ORDER BY id
+            "#,
+        )?;
+        let mut relation_rows = relation_stmt.query([])?;
+        while let Some(row) = relation_rows.next()? {
+            let raw_from_event_id: String = row.get(0)?;
+            let raw_to_event_id: String = row.get(1)?;
+            let relation_type: String = row.get(2)?;
+            let from_event_id = Uuid::parse_str(&raw_from_event_id).with_context(|| {
+                format!("invalid relation source event id: {raw_from_event_id}")
+            })?;
+            let to_event_id = Uuid::parse_str(&raw_to_event_id).with_context(|| {
+                format!("invalid relation target event id: {raw_to_event_id}")
+            })?;
+            memberships
+                .entry(from_event_id)
+                .or_default()
+                .outgoing_relation_types
+                .insert(relation_type.clone());
+            memberships
+                .entry(to_event_id)
+                .or_default()
+                .incoming_relation_types
+                .insert(relation_type);
+        }
+
+        Ok(memberships)
+    }
+
     pub fn source_refresh_attempts(
         &self,
         limit: usize,
@@ -4622,6 +4684,62 @@ mod tests {
                 .expect("members after collection delete")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn relation_collection_membership_index_preserves_direction_and_collection_ids() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let first = TemporalEvent::new(
+            "First",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let second = TemporalEvent::new(
+            "Second",
+            TimeSpec::DateOnly {
+                start: day.succ_opt().expect("next day"),
+                end_exclusive: None,
+            },
+        );
+        store.upsert_event(&first).expect("first");
+        store.upsert_event(&second).expect("second");
+
+        let relation = EventRelation::new(first.id, second.id, "precedes");
+        store
+            .upsert_event_relation(&relation)
+            .expect("relation");
+
+        let collection = EventCollection::new("Pair", false);
+        store
+            .upsert_event_collection(&collection)
+            .expect("collection");
+        store
+            .replace_event_collection_members(collection.id, &[first.id, second.id])
+            .expect("members");
+
+        let index = store
+            .event_relation_collection_memberships()
+            .expect("membership index");
+        let first_membership = index.get(&first.id).expect("first membership");
+        assert!(first_membership.collection_ids.contains(&collection.id));
+        assert!(
+            first_membership
+                .outgoing_relation_types
+                .contains("precedes")
+        );
+        assert!(first_membership.incoming_relation_types.is_empty());
+
+        let second_membership = index.get(&second.id).expect("second membership");
+        assert!(second_membership.collection_ids.contains(&collection.id));
+        assert!(
+            second_membership
+                .incoming_relation_types
+                .contains("precedes")
+        );
+        assert!(second_membership.outgoing_relation_types.is_empty());
     }
 
     #[test]
