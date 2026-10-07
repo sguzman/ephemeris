@@ -59,6 +59,10 @@ fn main() -> anyhow::Result<()> {
             report.sources_created, report.sources_updated, report.sources_unchanged
         );
         println!(
+            "Entities: {} created  {} updated  {} unchanged",
+            report.entities_created, report.entities_updated, report.entities_unchanged
+        );
+        println!(
             "Events: {} created  {} updated  {} unchanged",
             report.events_created, report.events_updated, report.events_unchanged
         );
