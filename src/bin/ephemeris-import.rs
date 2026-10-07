@@ -2,13 +2,14 @@ use std::path::PathBuf;
 
 use anyhow::{Context, anyhow};
 use ephemeris::ics::{import_ics_file, import_remote_ics};
+use ephemeris::interchange::import_canonical_json_file;
 use ephemeris::store::TemporalStore;
 use ephemeris::taria::import_reconciled_event_set_file;
 
 fn main() -> anyhow::Result<()> {
     let input = std::env::args_os().nth(1).ok_or_else(|| {
         anyhow!(
-            "usage: ephemeris-import <calendar.ics|calendar-url|taria-reconciled-event-set.json>"
+            "usage: ephemeris-import <calendar.ics|calendar-url|snapshot.ephemeris.json|taria-reconciled-event-set.json>"
         )
     })?;
 
@@ -49,6 +50,20 @@ fn main() -> anyhow::Result<()> {
         .and_then(|value| value.to_str())
         .map(str::to_ascii_lowercase);
 
+    if is_canonical_json_path(&path) {
+        let report = import_canonical_json_file(&store, &path)?;
+        println!("Imported Ephemeris canonical JSON snapshot");
+        println!(
+            "Sources: {} created  {} updated  {} unchanged",
+            report.sources_created, report.sources_updated, report.sources_unchanged
+        );
+        println!(
+            "Events: {} created  {} updated  {} unchanged",
+            report.events_created, report.events_updated, report.events_unchanged
+        );
+        return Ok(());
+    }
+
     if matches!(extension.as_deref(), Some("ics" | "ical")) {
         let report = import_ics_file(&store, &path)?;
         println!("Imported iCalendar source: {}", report.source_name);
@@ -79,4 +94,28 @@ fn main() -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+fn is_canonical_json_path(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.ends_with(".ephemeris.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_canonical_json_path;
+
+    #[test]
+    fn canonical_snapshot_suffix_is_explicit() {
+        assert!(is_canonical_json_path(std::path::Path::new(
+            "/tmp/snapshot.ephemeris.json"
+        )));
+        assert!(!is_canonical_json_path(std::path::Path::new(
+            "/tmp/reconciled-event-set.json"
+        )));
+        assert!(!is_canonical_json_path(std::path::Path::new(
+            "/tmp/calendar.ics"
+        )));
+    }
 }
