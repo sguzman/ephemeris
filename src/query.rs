@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::calendar::{CalendarLayout, CalendarView};
-use crate::domain::{EventStatus, TemporalEvent, TimeSpec, TimeUncertainty};
+use crate::domain::{EventIdentityState, EventStatus, TemporalEvent, TimeSpec, TimeUncertainty};
 
 #[derive(Debug, Clone, Copy)]
 pub struct QueryContext {
@@ -37,6 +37,7 @@ pub struct EventMembership {
     pub collection_ids: BTreeSet<Uuid>,
     pub outgoing_relation_types: BTreeSet<String>,
     pub incoming_relation_types: BTreeSet<String>,
+    pub identity_states: BTreeSet<String>,
 }
 
 impl EventMembership {
@@ -61,6 +62,10 @@ impl EventMembership {
                     || self.incoming_relation_types.contains(relation_type)
             }
         }
+    }
+
+    pub fn has_identity_state(&self, state: EventIdentityState) -> bool {
+        self.identity_states.contains(state.as_str())
     }
 }
 
@@ -308,6 +313,9 @@ pub enum QueryPredicate {
         #[serde(default)]
         direction: RelationDirection,
     },
+    IdentityStateAnyOf {
+        values: Vec<EventIdentityState>,
+    },
 }
 
 impl QueryPredicate {
@@ -418,6 +426,11 @@ impl QueryPredicate {
                 direction,
             } => membership
                 .is_some_and(|membership| membership.has_relation_type(relation_type, *direction)),
+            Self::IdentityStateAnyOf { values } => membership.is_some_and(|membership| {
+                values
+                    .iter()
+                    .any(|state| membership.has_identity_state(*state))
+            }),
         }
     }
 }
@@ -2069,6 +2082,54 @@ mod tests {
             Some(&membership)
         ));
         assert!(either_relation_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+    }
+
+    #[test]
+    fn identity_state_predicate_uses_external_assessment_context() {
+        let event = event();
+        let mut membership = EventMembership::default();
+        membership
+            .identity_states
+            .insert(EventIdentityState::Candidate.as_str().to_string());
+        membership
+            .identity_states
+            .insert(EventIdentityState::Distinct.as_str().to_string());
+
+        let candidate_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::IdentityStateAnyOf {
+                values: vec![EventIdentityState::Candidate],
+            })),
+            ..EventQuery::default()
+        };
+        let resolved_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::IdentityStateAnyOf {
+                values: vec![EventIdentityState::SameEvent],
+            })),
+            ..EventQuery::default()
+        };
+        let either_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::IdentityStateAnyOf {
+                values: vec![EventIdentityState::SameEvent, EventIdentityState::Distinct],
+            })),
+            ..EventQuery::default()
+        };
+
+        assert!(!candidate_query.matches(&event, &test_context()));
+        assert!(candidate_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+        assert!(!resolved_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+        assert!(either_query.matches_with_membership(
             &event,
             &test_context(),
             Some(&membership)
