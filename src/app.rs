@@ -16,9 +16,9 @@ use crate::calendar::{
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
     EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
-    EventIdentityState, EventRelation, EventStatus, RecurrenceFrequency,
-    RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule,
-    RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
+    EventIdentityState, EventProvenanceRecord, EventProvenanceRole, EventRelation, EventStatus,
+    RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride,
+    RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
@@ -1413,6 +1413,8 @@ enum TopologyInspectorAction {
     AddIdentityAssessment,
     AddAnnotation,
     DeleteAnnotation(Uuid),
+    AddProvenance,
+    DeleteProvenance(Uuid),
 }
 
 pub struct EphemerisApp {
@@ -1443,6 +1445,10 @@ pub struct EphemerisApp {
     event_annotation_kinds: Vec<String>,
     annotation_new_kind: String,
     annotation_new_value: String,
+    event_provenance_records: Vec<EventProvenanceRecord>,
+    provenance_new_role: EventProvenanceRole,
+    provenance_new_reference: String,
+    provenance_new_note: String,
     identity_search: String,
     identity_candidates: Vec<(Uuid, String)>,
     identity_target_id: Option<Uuid>,
@@ -1526,6 +1532,10 @@ impl EphemerisApp {
             event_annotation_kinds: Vec::new(),
             annotation_new_kind: "note".to_string(),
             annotation_new_value: String::new(),
+            event_provenance_records: Vec::new(),
+            provenance_new_role: EventProvenanceRole::Provenance,
+            provenance_new_reference: String::new(),
+            provenance_new_note: String::new(),
             identity_search: String::new(),
             identity_candidates: Vec::new(),
             identity_target_id: None,
@@ -2641,6 +2651,16 @@ impl EphemerisApp {
                 .or_default()
                 .annotation_kinds
                 .insert(annotation.kind.clone());
+        }
+        self.event_provenance_records = self.store.list_event_provenance_records()?;
+        for record in &self.event_provenance_records {
+            let membership = self.event_memberships.entry(record.event_id).or_default();
+            membership
+                .provenance_roles
+                .insert(record.role.as_str().to_string());
+            membership
+                .provenance_references
+                .insert(record.reference.clone());
         }
         self.event_collections = self.store.list_event_collections()?;
         self.event_collection_members = self.store.list_event_collection_members()?;
@@ -4334,6 +4354,13 @@ impl EphemerisApp {
                 .store
                 .delete_event_annotation(annotation_id)
                 .map(|_| ()),
+            TopologyInspectorAction::AddProvenance => {
+                self.create_provenance_for_event(event_id)
+            }
+            TopologyInspectorAction::DeleteProvenance(record_id) => self
+                .store
+                .delete_event_provenance_record(record_id)
+                .map(|_| ()),
         };
 
         match result {
@@ -4346,6 +4373,27 @@ impl EphemerisApp {
                 self.last_error = Some(format!("Inspector edit failed: {error:#}"));
             }
         }
+    }
+
+    fn create_provenance_for_event(&mut self, event_id: Uuid) -> anyhow::Result<()> {
+        let reference = self.provenance_new_reference.trim();
+        if reference.is_empty() {
+            anyhow::bail!("provenance reference is empty");
+        }
+
+        let mut record =
+            EventProvenanceRecord::new(event_id, self.provenance_new_role, reference);
+        record.note = if self.provenance_new_note.trim().is_empty() {
+            None
+        } else {
+            Some(self.provenance_new_note.trim().to_string())
+        };
+        self.store.upsert_event_provenance_record(&record)?;
+
+        self.provenance_new_reference.clear();
+        self.provenance_new_note.clear();
+        self.last_message = Some("Created structured provenance record.".to_string());
+        Ok(())
     }
 
     fn create_annotation_for_event(&mut self, event_id: Uuid) -> anyhow::Result<()> {
