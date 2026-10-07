@@ -308,6 +308,12 @@ fn row_into_event(row: CsvEventRow) -> anyhow::Result<TemporalEvent> {
 }
 
 fn event_into_row(event: &TemporalEvent) -> anyhow::Result<CsvEventRow> {
+    if event.time_uncertainty.is_some() {
+        return Err(anyhow!(
+            "event {} has temporal uncertainty, which Ephemeris CSV v1 cannot represent",
+            event.id
+        ));
+    }
     if event.recurrence.is_some() {
         return Err(anyhow!(
             "event {} has recurrence, which Ephemeris CSV v1 cannot represent",
