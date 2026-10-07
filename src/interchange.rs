@@ -667,7 +667,9 @@ mod tests {
         let mut entity = CanonicalEntity::new("Ada Lovelace");
         entity.entity_type = Some("person".to_string());
         let mut event = fixture_event(&source);
-        event.participants.push(EventParticipant::new("Ada Lovelace"));
+        event
+            .participants
+            .push(EventParticipant::new("Ada Lovelace"));
 
         let store = TemporalStore::open_in_memory().expect("store");
         store.upsert_source(&source).expect("source");
@@ -702,7 +704,9 @@ mod tests {
         let mut entity = CanonicalEntity::new("Ada Lovelace");
         entity.entity_type = Some("person".to_string());
         let mut event = fixture_event(&source);
-        event.participants.push(EventParticipant::new("Ada Lovelace"));
+        event
+            .participants
+            .push(EventParticipant::new("Ada Lovelace"));
         let key = participant_entity_binding_key(&event.participants[0]);
         let now = Utc::now();
 
