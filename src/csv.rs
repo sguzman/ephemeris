@@ -308,6 +308,12 @@ fn row_into_event(row: CsvEventRow) -> anyhow::Result<TemporalEvent> {
 }
 
 fn event_into_row(event: &TemporalEvent) -> anyhow::Result<CsvEventRow> {
+    if event.availability != crate::domain::AvailabilityBehavior::Busy {
+        return Err(anyhow!(
+            "event {} has non-default availability behavior, which Ephemeris CSV v1 cannot represent",
+            event.id
+        ));
+    }
     if event.location.is_some() {
         return Err(anyhow!(
             "event {} has structured location, which Ephemeris CSV v1 cannot represent",
@@ -691,6 +697,20 @@ mod tests {
 
         let wrong_version = duplicate.replacen("1,a,Alpha", "2,a,Alpha", 1);
         assert!(parse_csv_events(&wrong_version).is_err());
+    }
+
+    #[test]
+    fn csv_export_rejects_free_availability_behavior() {
+        let mut event = simple_event(
+            "Non-blocking",
+            "free",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        event.availability = crate::domain::AvailabilityBehavior::Free;
+        assert!(format_csv_events(&[event]).is_err());
     }
 
     #[test]
