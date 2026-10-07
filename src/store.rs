@@ -4412,6 +4412,257 @@ mod tests {
     }
 
     #[test]
+    fn event_relations_roundtrip_query_and_enforce_identity_rules() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let first = TemporalEvent::new(
+            "Cause",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let second = TemporalEvent::new(
+            "Effect",
+            TimeSpec::DateOnly {
+                start: day.succ_opt().expect("next day"),
+                end_exclusive: None,
+            },
+        );
+        store.upsert_event(&first).expect("first event");
+        store.upsert_event(&second).expect("second event");
+
+        let mut relation = EventRelation::new(first.id, second.id, "causes");
+        relation.properties = serde_json::json!({"confidence": 0.8});
+        store
+            .upsert_event_relation(&relation)
+            .expect("persist relation");
+
+        assert_eq!(
+            store
+                .event_relation_by_id(relation.id)
+                .expect("relation query")
+                .expect("relation"),
+            relation
+        );
+        assert_eq!(store.list_event_relations().expect("relations"), vec![relation.clone()]);
+        assert_eq!(
+            store
+                .event_relations_for_event(first.id)
+                .expect("first relations"),
+            vec![relation.clone()]
+        );
+        assert_eq!(
+            store
+                .event_relations_for_event(second.id)
+                .expect("second relations"),
+            vec![relation.clone()]
+        );
+
+        let duplicate = EventRelation::new(first.id, second.id, "causes");
+        assert!(
+            store
+                .upsert_event_relation(&duplicate)
+                .expect_err("duplicate semantic relation must fail")
+                .to_string()
+                .contains("failed to upsert event relation")
+        );
+
+        let self_relation = EventRelation::new(first.id, first.id, "references");
+        assert!(
+            store
+                .upsert_event_relation(&self_relation)
+                .expect_err("self relation must fail")
+                .to_string()
+                .contains("invalid event relation")
+        );
+
+        store
+            .conn
+            .execute(
+                "DELETE FROM temporal_events WHERE id = ?1",
+                params![first.id.to_string()],
+            )
+            .expect("delete event");
+        assert!(
+            store
+                .event_relation_by_id(relation.id)
+                .expect("relation query after cascade")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn ordered_event_collection_preserves_sequence_and_reverse_lookup() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let alpha = TemporalEvent::new(
+            "Alpha",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let beta = TemporalEvent::new(
+            "Beta",
+            TimeSpec::DateOnly {
+                start: day.succ_opt().expect("next day"),
+                end_exclusive: None,
+            },
+        );
+        let gamma = TemporalEvent::new(
+            "Gamma",
+            TimeSpec::DateOnly {
+                start: day.succ_opt().and_then(NaiveDate::succ_opt).expect("third day"),
+                end_exclusive: None,
+            },
+        );
+        for event in [&alpha, &beta, &gamma] {
+            store.upsert_event(event).expect("event");
+        }
+
+        let mut collection = EventCollection::new("Sequence", true);
+        collection.description = Some("Intentional narrative order".to_string());
+        collection.properties = serde_json::json!({"kind": "sequence"});
+        store
+            .upsert_event_collection(&collection)
+            .expect("collection");
+        store
+            .replace_event_collection_members(collection.id, &[gamma.id, alpha.id, beta.id])
+            .expect("members");
+
+        assert_eq!(
+            store
+                .event_collection_by_id(collection.id)
+                .expect("collection query")
+                .expect("collection"),
+            collection
+        );
+        let members = store
+            .event_collection_members(collection.id)
+            .expect("members");
+        assert_eq!(
+            members,
+            vec![
+                EventCollectionMember {
+                    collection_id: collection.id,
+                    event_id: gamma.id,
+                    position: Some(0),
+                },
+                EventCollectionMember {
+                    collection_id: collection.id,
+                    event_id: alpha.id,
+                    position: Some(1),
+                },
+                EventCollectionMember {
+                    collection_id: collection.id,
+                    event_id: beta.id,
+                    position: Some(2),
+                },
+            ]
+        );
+
+        let events = store
+            .events_for_collection(collection.id)
+            .expect("collection events");
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.normalized_title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Gamma", "Alpha", "Beta"]
+        );
+        assert_eq!(
+            store.collections_for_event(alpha.id).expect("reverse lookup"),
+            vec![collection.clone()]
+        );
+
+        let before = members;
+        let missing = Uuid::new_v4();
+        assert!(
+            store
+                .replace_event_collection_members(collection.id, &[alpha.id, missing])
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .event_collection_members(collection.id)
+                .expect("members after rollback"),
+            before
+        );
+
+        assert!(store
+            .replace_event_collection_members(collection.id, &[alpha.id, alpha.id])
+            .is_err());
+        assert_eq!(
+            store
+                .event_collection_members(collection.id)
+                .expect("members after duplicate rejection"),
+            before
+        );
+
+        assert!(
+            store
+                .delete_event_collection(collection.id)
+                .expect("delete collection")
+        );
+        assert!(store
+            .event_collection_by_id(collection.id)
+            .expect("collection query")
+            .is_none());
+        assert!(store
+            .event_collection_members(collection.id)
+            .expect("members after collection delete")
+            .is_empty());
+    }
+
+    #[test]
+    fn unordered_event_collection_omits_positions_and_uses_stable_event_order() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let beta = TemporalEvent::new(
+            "Beta",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let alpha = TemporalEvent::new(
+            "Alpha",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        store.upsert_event(&beta).expect("beta");
+        store.upsert_event(&alpha).expect("alpha");
+
+        let collection = EventCollection::new("Set", false);
+        store
+            .upsert_event_collection(&collection)
+            .expect("collection");
+        store
+            .replace_event_collection_members(collection.id, &[beta.id, alpha.id])
+            .expect("members");
+
+        let members = store
+            .event_collection_members(collection.id)
+            .expect("members");
+        assert!(members.iter().all(|member| member.position.is_none()));
+
+        let events = store
+            .events_for_collection(collection.id)
+            .expect("collection events");
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.normalized_title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Alpha", "Beta"]
+        );
+    }
+
+    #[test]
     fn store_rejects_invalid_recurrence_definition() {
         use crate::domain::{RecurrenceFrequency, RecurrenceRule};
 
