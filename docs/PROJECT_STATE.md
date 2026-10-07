@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`775b79e288d2ae6dad53620d072878780be8f6c9`
+`ab516b76aae5c1f8efd9b8ac7d1950ded5b77885`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **484 library tests** pass
+- **485 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -118,9 +118,11 @@ The core Phase 9 interoperability boundary is now strong enough to stop driving 
 
 Event relations and collections/sequences now have a canonical external topology layer. Directed relations and ordered/unordered collections have domain types, schema-v15 persistence, validation, semantic uniqueness, FK cascades, atomic collection membership replacement, reverse lookups, and programmable-view predicates. Collection membership and incoming/outgoing relation-type context remain external to `TemporalEvent`, so topology does not contaminate event ownership or fields.
 
-The next canonical-model slice is **user-facing topology inspection and editing**: selected events should visibly expose their collections and incoming/outgoing relations, followed by local creation/editing of relations, collections, and sequence order.
+User-facing topology inspection and core editing are now implemented. The event inspector resolves recurrence occurrences back to their canonical event, shows collection/sequence membership and incoming/outgoing relation edges with counterpart titles, and allows local collection membership changes, collection/sequence creation, bounded relation-target search, typed incoming/outgoing relation creation, and relation deletion. These edits remain Ephemeris-local even when the underlying event source is read-only.
 
-After that, the long-horizon domain roadmap returns to uncertainty, duplicate/entity resolution, richer provenance records, and annotations.
+The remaining collection/sequence ergonomics boundary is **ordered membership reordering and broader collection management**; after that the canonical JSON interchange format should grow a topology-aware version so first-class relations/collections are not omitted from canonical exports.
+
+The long-horizon domain roadmap then returns to uncertainty, duplicate/entity resolution, richer provenance records, and annotations.
 
 ## Documentation roles
 
