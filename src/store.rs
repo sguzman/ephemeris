@@ -5915,8 +5915,8 @@ fn decode_notification_delivery(row: &Row<'_>) -> rusqlite::Result<NotificationD
         Uuid::parse_str(&row.get::<_, String>("event_id")?).map_err(to_sql_decode_error)?;
     let occurrence_id =
         Uuid::parse_str(&row.get::<_, String>("occurrence_id")?).map_err(to_sql_decode_error)?;
-    let lead_minutes = u32::try_from(row.get::<_, i64>("lead_minutes")?)
-        .map_err(to_sql_decode_error)?;
+    let lead_minutes =
+        u32::try_from(row.get::<_, i64>("lead_minutes")?).map_err(to_sql_decode_error)?;
     let dismissed_at = row
         .get::<_, Option<String>>("dismissed_at")?
         .map(|value| parse_datetime(&value))
@@ -7336,10 +7336,12 @@ mod tests {
                 .dismiss_notification_delivery(delivery.id, trigger + chrono::Duration::minutes(1))
                 .expect("dismiss")
         );
-        assert!(store
-            .active_notification_deliveries()
-            .expect("active deliveries")
-            .is_empty());
+        assert!(
+            store
+                .active_notification_deliveries()
+                .expect("active deliveries")
+                .is_empty()
+        );
         assert!(
             !store
                 .notification_delivery_by_id(delivery.id)
@@ -7379,21 +7381,31 @@ mod tests {
             starts_at_utc: start,
             lead_minutes: 15,
         };
-        let delivery =
-            NotificationDelivery::from_occurrence(&occurrence, start - chrono::Duration::minutes(14));
+        let delivery = NotificationDelivery::from_occurrence(
+            &occurrence,
+            start - chrono::Duration::minutes(14),
+        );
         store
             .record_notification_delivery(&delivery)
             .expect("delivery");
 
-        assert!(store
-            .notification_delivery_by_id(delivery.id)
-            .expect("delivery query")
-            .is_some());
-        assert!(store.delete_notification_rule(rule.id).expect("delete rule"));
-        assert!(store
-            .notification_delivery_by_id(delivery.id)
-            .expect("delivery after rule cascade")
-            .is_none());
+        assert!(
+            store
+                .notification_delivery_by_id(delivery.id)
+                .expect("delivery query")
+                .is_some()
+        );
+        assert!(
+            store
+                .delete_notification_rule(rule.id)
+                .expect("delete rule")
+        );
+        assert!(
+            store
+                .notification_delivery_by_id(delivery.id)
+                .expect("delivery after rule cascade")
+                .is_none()
+        );
 
         let second_rule = NotificationRule::for_event(event.id, "Second reminder", 30);
         store
@@ -7420,10 +7432,12 @@ mod tests {
                 params![event.id.to_string()],
             )
             .expect("delete event");
-        assert!(store
-            .notification_delivery_by_id(second_delivery.id)
-            .expect("delivery after event cascade")
-            .is_none());
+        assert!(
+            store
+                .notification_delivery_by_id(second_delivery.id)
+                .expect("delivery after event cascade")
+                .is_none()
+        );
     }
 
     #[test]
