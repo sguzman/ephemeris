@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow};
+use ::csv as csv_crate;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, SecondsFormat, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
@@ -57,7 +58,7 @@ struct CsvEventRow {
     time_kind: String,
     start: String,
     end: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(default)]
     source_timezone: Option<String>,
 }
 
@@ -167,9 +168,9 @@ pub fn export_source_csv_by_id(
 }
 
 pub fn parse_csv_events(raw: &str) -> anyhow::Result<Vec<TemporalEvent>> {
-    let mut reader = csv::ReaderBuilder::new()
+    let mut reader = csv_crate::ReaderBuilder::new()
         .flexible(false)
-        .trim(csv::Trim::All)
+        .trim(csv_crate::Trim::All)
         .from_reader(raw.as_bytes());
 
     let headers = reader
@@ -216,7 +217,7 @@ pub fn parse_csv_events(raw: &str) -> anyhow::Result<Vec<TemporalEvent>> {
 pub fn format_csv_events(events: &[TemporalEvent]) -> anyhow::Result<String> {
     let mut encoded = Vec::new();
     {
-        let mut writer = csv::WriterBuilder::new()
+        let mut writer = csv_crate::WriterBuilder::new()
             .has_headers(true)
             .from_writer(&mut encoded);
         for event in events {
