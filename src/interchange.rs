@@ -5,8 +5,8 @@ use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
-    EventProvenanceRecord, EventRelation, TemporalEvent, TemporalSource,
+    CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
+    EventIdentityAssessment, EventProvenanceRecord, EventRelation, TemporalEvent, TemporalSource,
 };
 use crate::store::{CanonicalSnapshotMergeInput, CanonicalSnapshotMergeResult, TemporalStore};
 
@@ -545,8 +545,9 @@ mod tests {
     use super::*;
     use crate::domain::{
         CanonicalEntity, EventAnnotation, EventIdentityAssessment, EventIdentityState,
-        EventLocation, EventParticipant, EventProvenanceRecord, EventProvenanceRole, RecurrenceFrequency,
-        RecurrenceRule, SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
+        EventLocation, EventParticipant, EventProvenanceRecord, EventProvenanceRole,
+        RecurrenceFrequency, RecurrenceRule, SourceAuthority, SourceKind, TimeSpec,
+        TimeUncertainty,
     };
 
     fn fixture_source() -> TemporalSource {
