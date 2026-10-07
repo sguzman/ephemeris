@@ -1538,6 +1538,8 @@ impl EphemerisApp {
                 self.reload_or_report();
             }
             Err(error) => {
+                self.source_refresh_attempts =
+                    self.store.source_refresh_attempts(20).unwrap_or_default();
                 self.last_message = None;
                 self.last_error = Some(format!(
                     "Failed to import CSV {}: {error:#}",
