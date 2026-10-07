@@ -1479,6 +1479,122 @@ impl fmt::Display for TimeUncertaintyError {
 
 impl std::error::Error for TimeUncertaintyError {}
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct EventLocation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locality: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub postal_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latitude: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub longitude: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub virtual_url: Option<String>,
+}
+
+impl EventLocation {
+    pub fn validate(&self) -> Result<(), EventLocationError> {
+        for (field, value) in [
+            ("name", self.name.as_deref()),
+            ("address", self.address.as_deref()),
+            ("locality", self.locality.as_deref()),
+            ("region", self.region.as_deref()),
+            ("postal_code", self.postal_code.as_deref()),
+            ("country", self.country.as_deref()),
+            ("virtual_url", self.virtual_url.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.trim().is_empty()) {
+                return Err(EventLocationError::EmptyTextField(field));
+            }
+        }
+
+        match (self.latitude, self.longitude) {
+            (Some(latitude), Some(longitude)) => {
+                if !latitude.is_finite() || !(-90.0..=90.0).contains(&latitude) {
+                    return Err(EventLocationError::InvalidLatitude);
+                }
+                if !longitude.is_finite() || !(-180.0..=180.0).contains(&longitude) {
+                    return Err(EventLocationError::InvalidLongitude);
+                }
+            }
+            (None, None) => {}
+            _ => return Err(EventLocationError::IncompleteCoordinates),
+        }
+
+        let has_text = [
+            self.name.as_deref(),
+            self.address.as_deref(),
+            self.locality.as_deref(),
+            self.region.as_deref(),
+            self.postal_code.as_deref(),
+            self.country.as_deref(),
+            self.virtual_url.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|value| !value.trim().is_empty());
+        if !has_text && self.latitude.is_none() {
+            return Err(EventLocationError::Empty);
+        }
+
+        Ok(())
+    }
+
+    pub fn text_values(&self) -> impl Iterator<Item = &str> {
+        [
+            self.name.as_deref(),
+            self.address.as_deref(),
+            self.locality.as_deref(),
+            self.region.as_deref(),
+            self.postal_code.as_deref(),
+            self.country.as_deref(),
+            self.virtual_url.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventLocationError {
+    Empty,
+    EmptyTextField(&'static str),
+    IncompleteCoordinates,
+    InvalidLatitude,
+    InvalidLongitude,
+}
+
+impl fmt::Display for EventLocationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("event location cannot be empty"),
+            Self::EmptyTextField(field) => {
+                write!(formatter, "event location field {field} cannot be blank")
+            }
+            Self::IncompleteCoordinates => {
+                formatter.write_str("event location coordinates require both latitude and longitude")
+            }
+            Self::InvalidLatitude => {
+                formatter.write_str("event location latitude must be finite and within -90..=90")
+            }
+            Self::InvalidLongitude => {
+                formatter.write_str("event location longitude must be finite and within -180..=180")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EventLocationError {}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TemporalEvent {
     pub id: Uuid,
@@ -1499,6 +1615,8 @@ pub struct TemporalEvent {
     pub domain: Option<String>,
     pub jurisdiction: Option<String>,
     pub institution: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<EventLocation>,
     pub status: EventStatus,
     pub confidence: Option<f32>,
     pub importance: Option<i32>,
@@ -1534,6 +1652,7 @@ impl TemporalEvent {
             domain: None,
             jurisdiction: None,
             institution: None,
+            location: None,
             status: EventStatus::Scheduled,
             confidence: None,
             importance: None,
@@ -1554,6 +1673,12 @@ impl TemporalEvent {
 
     pub fn display_time_label(&self, timezone: Tz) -> String {
         self.time.display_time_label(timezone)
+    }
+
+    pub fn validate_location(&self) -> Result<(), EventLocationError> {
+        self.location
+            .as_ref()
+            .map_or(Ok(()), EventLocation::validate)
     }
 
     pub fn validate_time_uncertainty(&self) -> Result<(), TimeUncertaintyError> {
@@ -4794,6 +4919,45 @@ mod tests {
                 left: high,
                 right: low,
             })
+        );
+    }
+
+    #[test]
+    fn event_location_validates_text_coordinates_and_nonempty_semantics() {
+        let mut location = EventLocation {
+            name: Some("Palacio de Bellas Artes".to_string()),
+            locality: Some("Ciudad de México".to_string()),
+            country: Some("MX".to_string()),
+            latitude: Some(19.4352),
+            longitude: Some(-99.1412),
+            ..EventLocation::default()
+        };
+        assert_eq!(location.validate(), Ok(()));
+
+        location.longitude = None;
+        assert_eq!(
+            location.validate(),
+            Err(EventLocationError::IncompleteCoordinates)
+        );
+
+        location.longitude = Some(-181.0);
+        assert_eq!(
+            location.validate(),
+            Err(EventLocationError::InvalidLongitude)
+        );
+
+        assert_eq!(
+            EventLocation::default().validate(),
+            Err(EventLocationError::Empty)
+        );
+
+        let blank = EventLocation {
+            name: Some("   ".to_string()),
+            ..EventLocation::default()
+        };
+        assert_eq!(
+            blank.validate(),
+            Err(EventLocationError::EmptyTextField("name"))
         );
     }
 
