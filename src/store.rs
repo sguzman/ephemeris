@@ -4462,7 +4462,7 @@ fn migrate_v1_to_v2(conn: &mut Connection) -> anyhow::Result<()> {
         SELECT
             id, source_id, source_record_key,
             normalized_title, raw_title, description,
-            event_type, domain, jurisdiction, institution,
+            event_type, domain, jurisdiction, institution, location_json,
             status, confidence, importance, personal_relevance,
             time_kind, start_utc, end_utc, source_timezone,
             start_date, end_date_exclusive,
