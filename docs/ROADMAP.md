@@ -424,6 +424,7 @@ Implemented recurrence foundation:
 
 Next Phase 8 work:
 
+- event relations and collections/sequences over canonical event identity
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
 - richer structured recurrence editing ergonomics beyond presets, structured exceptions, contextual selector visibility, and the fully structured advanced BY-selector set, especially higher-level controls for cadence/bounds and explanations for uncommon combinations
 - recurrence-exception source-adapter interoperability for external calendar payloads is bidirectional for the supported RFC subset: RRULE, strict RDATE/EXDATE parse/format, strict RECURRENCE-ID original-slot parse/format, DTSTART/DTEND transport, RFC content-line and VEVENT/VCALENDAR envelopes, typed VEVENT binding, master/detached temporal-exception assembly, canonical TemporalEvent projection, strict VCALENDAR grouping/ingestion, canonical VEVENT/VCALENDAR export, transactional local-ICS source/store import, CLI import, and GUI drag/drop import are implemented; `RANGE=THISANDFUTURE`, occurrence-specific non-temporal overrides, DURATION transport, RDATE-only recurrence, VTIMEZONE, and VALARM remain deliberately unsupported until their canonical/preservation semantics exist; stored-source ICS export and explicit local-source refresh are implemented; non-Taria refresh history/diagnostics are next
@@ -435,7 +436,7 @@ Next Phase 8 work:
 
 ## Phase 9 - External interoperability
 
-Status: **active — bidirectional RFC 5545 transport, local and remote ICS/Webcal import, CLI/GUI import/export, explicit refresh, durable diagnostics, conditional HTTP refresh, versioned canonical JSON interchange, and strict representable CSV import/export are implemented; CSV refresh diagnostics are next**
+Status: **substantially complete at the current core scope — bidirectional RFC 5545, local/remote ICS/Webcal, durable refresh diagnostics, conditional HTTP refresh, canonical JSON, and strict CSV are implemented; JSCalendar/jCal and CalDAV are deferred until concrete ecosystem value justifies them**
 
 Goals:
 
@@ -443,7 +444,7 @@ Goals:
 - webcal/remote ICS ingestion — implemented for HTTP/HTTPS/webcal feeds with persisted ETag/Last-Modified conditional refresh and explicit HTTP 304 reporting
 - CalDAV where valuable
 - versioned native JSON import/export — implemented for canonical sources/events with transactional merge-only import
-- CSV import/export for representable tabular subsets — implemented as strict CSV v1; durable refresh-attempt history next
+- CSV import/export for representable tabular subsets — implemented as strict CSV v1 with durable refresh-attempt history
 - JSCalendar/jCal
 - optional mobile/cloud bridges
 
