@@ -15,7 +15,7 @@ use crate::calendar::{
 };
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
-    EventCollection, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
+    EventCollection, EventRelation, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
     RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
     TemporalSource, TimeSpec,
 };
@@ -1414,6 +1414,8 @@ pub struct EphemerisApp {
     taria_current_source_ids: BTreeSet<Uuid>,
     event_memberships: HashMap<Uuid, EventMembership>,
     event_collections: Vec<EventCollection>,
+    event_relations: Vec<EventRelation>,
+    event_relation_titles: HashMap<Uuid, String>,
     event_relation_types: Vec<String>,
     taria_release_status: Option<TariaReleaseStatusRecord>,
     taria_release_history: Vec<TariaReleaseHistoryEntry>,
@@ -1469,6 +1471,8 @@ impl EphemerisApp {
             taria_current_source_ids: BTreeSet::new(),
             event_memberships: HashMap::new(),
             event_collections: Vec::new(),
+            event_relations: Vec::new(),
+            event_relation_titles: HashMap::new(),
             event_relation_types: Vec::new(),
             taria_release_status: None,
             taria_release_history: Vec::new(),
@@ -2526,14 +2530,26 @@ impl EphemerisApp {
                 .extend(topology.incoming_relation_types);
         }
         self.event_collections = self.store.list_event_collections()?;
+        self.event_relations = self.store.list_event_relations()?;
         self.event_relation_types = self
-            .store
-            .list_event_relations()?
-            .into_iter()
-            .map(|relation| relation.relation_type)
+            .event_relations
+            .iter()
+            .map(|relation| relation.relation_type.clone())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
+        self.event_relation_titles.clear();
+        let relation_event_ids = self
+            .event_relations
+            .iter()
+            .flat_map(|relation| [relation.from_event_id, relation.to_event_id])
+            .collect::<BTreeSet<_>>();
+        for event_id in relation_event_ids {
+            if let Some(related) = self.store.event_by_id(event_id)? {
+                self.event_relation_titles
+                    .insert(event_id, related.normalized_title);
+            }
+        }
         self.taria_release_status = self
             .store
             .taria_release_status(self.state.taria_last_release_id.as_deref())?;
@@ -4105,6 +4121,7 @@ impl EphemerisApp {
             ui.label("The selected event is not in the current view.");
             return;
         };
+        let canonical_id = self.canonical_event_id(event.id);
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.heading(&event.normalized_title);
@@ -4353,6 +4370,56 @@ impl EphemerisApp {
                 inspector_row(ui, "Provenance", &event.provenance_refs.join(", "));
             }
 
+            let collection_memberships = self
+                .event_memberships
+                .get(&canonical_id)
+                .map(|membership| &membership.collection_ids);
+            let related_edges = self
+                .event_relations
+                .iter()
+                .filter(|relation| {
+                    relation.from_event_id == canonical_id || relation.to_event_id == canonical_id
+                })
+                .collect::<Vec<_>>();
+            let has_collections =
+                collection_memberships.is_some_and(|collection_ids| !collection_ids.is_empty());
+            if has_collections || !related_edges.is_empty() {
+                ui.separator();
+                ui.strong("Topology");
+
+                if let Some(collection_ids) = collection_memberships {
+                    for collection in self
+                        .event_collections
+                        .iter()
+                        .filter(|collection| collection_ids.contains(&collection.id))
+                    {
+                        let kind = if collection.ordered {
+                            "Sequence"
+                        } else {
+                            "Collection"
+                        };
+                        inspector_row(ui, kind, &collection.name);
+                    }
+                }
+
+                for relation in related_edges {
+                    let (direction, counterpart_id) = if relation.from_event_id == canonical_id {
+                        ("Outgoing", relation.to_event_id)
+                    } else {
+                        ("Incoming", relation.from_event_id)
+                    };
+                    let counterpart = self
+                        .event_relation_titles
+                        .get(&counterpart_id)
+                        .map_or_else(|| counterpart_id.to_string(), Clone::clone);
+                    inspector_row(
+                        ui,
+                        direction,
+                        &format!("{} · {}", relation.relation_type, counterpart),
+                    );
+                }
+            }
+
             render_time_spec(ui, &event.time, self.timezone());
 
             if !event.tags.is_empty() {
@@ -4384,7 +4451,6 @@ impl EphemerisApp {
             }
 
             ui.separator();
-            let canonical_id = self.canonical_event_id(event.id);
             if let Some(occurrence) = self.occurrence_contexts.get(&event.id) {
                 let occurrence_label = match occurrence.origin {
                     RecurrenceOccurrenceOrigin::Rule => occurrence.recurrence_index.map_or_else(
