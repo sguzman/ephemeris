@@ -21,7 +21,7 @@ The baseline is no longer speculative:
 - filesystem-first Taria release/channel resolution
 - one-click local Taria source update
 
-Current SQLite schema version: **9**.
+Current SQLite schema version: **22**.
 
 ## Architectural goals
 
@@ -98,6 +98,8 @@ The core owns:
 - recurrence definitions
 - relations
 - collections/sequences
+- structured locations
+- structured participants
 - snapshots
 - annotations
 - extensible properties
@@ -133,6 +135,10 @@ The current database owns:
 - immutable CalendarSets;
 - release-to-CalendarSet associations;
 - projected calendars and event memberships;
+- event relations and collections/sequences;
+- duplicate/entity assessments, annotations, and structured provenance;
+- immutable canonical event revisions;
+- structured event location and participants;
 - durable saved views.
 
 Saved views currently embed their query/presentation state, including ordered composition layers, overlays, and ordered color rules.
@@ -149,7 +155,7 @@ SQLite was selected because Ephemeris requires:
 - durable saved-view state;
 - portable native packaging.
 
-Future schema work will add richer provenance/history, annotations, relations, occurrences, release-diff state, and coverage presentation without changing the storage-engine decision.
+The schema now includes provenance/history, annotations, relations/collections, identity assessments, structured location, and structured participants. Future schema work can add reusable canonical entities and further indexed ontology without changing the storage-engine decision.
 
 ## Query/view engine
 

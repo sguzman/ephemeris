@@ -62,9 +62,12 @@ Implemented:
 
 Still required:
 
-- richer indexed ontology — structured location is the next canonical slice
+- canonical entity registry/resolution for reusable person/organization/team/etc. identity behind participant `entity_ref`
 
 Implemented canonical extensions:
+
+- structured event participants — schema v22 persistence/migration, validation, aggregate and field-specific query predicates, inspector display/editing for editable events, canonical JSON v7, and explicit CSV/VEVENT loss guards
+- structured event location — schema v21 persistence/migration, validation/query/inspector support, canonical JSON v6, and explicit CSV/VEVENT loss guards
 
 - immutable canonical event revision history — schema v20, atomic append-on-change semantics, persistence after live-event deletion, inspector history
 - dedicated structured provenance records/tables — schema v19, queries, inspector authoring, canonical JSON v5

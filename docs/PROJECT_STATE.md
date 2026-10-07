@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`5ad335047ea5826621f870f901fc26218005e1e9`
+`f0a03a051bbd786c38855a00c62ab64703916ed0`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **529 library tests** pass
+- **534 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -106,11 +106,11 @@ The application can detect a local Resourcearium checkout and run **Update Taria
 
 ## Immediate frontier
 
-The versioned native JSON interchange boundary is implemented and verified. Current **v2** snapshots preserve canonical `TemporalSource`, `TemporalEvent`, `EventRelation`, `EventCollection`, and ordered/unordered collection-membership records with stable UUIDs, timestamps, recurrence, time semantics, and arbitrary properties. Version 1 sources/events-only snapshots remain readable. Validation rejects duplicate identities, dangling topology references, duplicate semantic relations, malformed sequence positions, unsupported versions, and invalid recurrence. Import is transactional and merge-only at the corpus level; membership lists are authoritative only for collections explicitly present in the imported v2 snapshot. CLI import/export and GUI drag/drop use the explicit `.ephemeris.json` suffix. Saved views, refresh history, Taria release tables, and auxiliary alias tables remain outside this snapshot boundary.
+The versioned native JSON interchange boundary is implemented and verified. Current **v7** snapshots preserve canonical sources/events, relations, collections/sequences and memberships, identity assessments, user annotations, structured provenance, structured event location, and structured participants. Versions 1–6 remain readable under their historical capability gates. Validation rejects duplicate/dangling identities, malformed topology, invalid recurrence/uncertainty/location/participants, and records that claim semantics unavailable in their declared snapshot version. Import remains transactional and merge-only; collection memberships are authoritative only for collections explicitly present in the imported snapshot. CLI import/export and GUI drag/drop use the explicit `.ephemeris.json` suffix. Saved views, refresh history, Taria release tables, and auxiliary alias tables remain outside this snapshot boundary.
 
 Strict CSV v1 projection/import is now implemented and verified. CSV files become first-class `SourceKind::Csv` sources with stable file/source identity and required per-row `record_key` identity. The schema supports non-recurring exact instants, floating date-times, explicit all-day values, date-only values, and scalar event metadata. Refresh updates matching rows in place and retains rows absent from later snapshots. Source-scoped export is available from the CLI and GUI, and empty exports retain a valid schema header.
 
-CSV v1 deliberately rejects recurrence, month/year/unknown precision, list-valued tags/reference metadata, and arbitrary event properties rather than flattening them into lossy cells.
+CSV v1 deliberately rejects recurrence, temporal uncertainty, structured location, structured participants, month/year/unknown precision, list-valued tags/reference metadata, and arbitrary event properties rather than flattening them into lossy cells.
 
 CSV refresh attempts now participate in the same durable external-source history as ICS/Webcal, including persisted success/failure state and immediate GUI visibility.
 
@@ -128,7 +128,9 @@ Duplicate/entity assessments, user-owned annotations, and structured provenance 
 
 General-purpose canonical event history is now implemented as immutable schema-v20 event revisions. A first revision is captured on creation; later revisions are appended only for real canonical changes, not timestamp-only touches. Live-event writes and revision appends are atomic, revisions survive deletion of the current event, import refreshes inherit the same history boundary, and the inspector exposes a read-only canonical history panel. Existing pre-v20 events are intentionally not backfilled.
 
-The next Phase-2 frontier is richer indexed ontology, beginning with typed structured event location and then participants.
+Structured event location and participants are now implemented canonical fields. Location is persisted in schema v21 with structured venue/address/locality/region/country/coordinates/virtual-URL semantics. Participants are persisted in schema v22 as ordered structured rows with required name plus optional role, participant type, stable entity reference, and extensible properties. Both are queryable and inspector-visible; canonical JSON v7 preserves both losslessly. Editable/local events can add or remove participants through the inspector, while read-only source-backed events remain source-owned. CSV v1 and VEVENT export reject participant-bearing events rather than silently dropping them.
+
+The next Phase-2 frontier is **canonical entity resolution**: participant `entity_ref` should be able to resolve to durable person/organization/team/etc. identities without collapsing source-supplied participant labels into the entity registry itself.
 
 ## Documentation roles
 

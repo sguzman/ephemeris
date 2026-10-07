@@ -343,6 +343,26 @@ Location should support structure beyond a single string:
 - virtual URL
 - conferencing information
 
+The implemented first slice is `EventLocation`, persisted directly on `TemporalEvent` with validated optional venue/address/locality/region/postal-code/country/coordinate/virtual-URL fields. Coordinate pairs must be complete and in range. Location is queryable as structured text/presence and preserved by canonical JSON; adapters that cannot round-trip it must reject rather than flatten it.
+
+## Participants
+
+Participants describe source- or user-asserted involvement in an event without forcing every named actor to become a canonical entity.
+
+The implemented `EventParticipant` first slice carries:
+
+- required nonblank `name`;
+- optional `role`;
+- optional `participant_type` such as person, organization, or team;
+- optional stable `entity_ref`;
+- extensible `properties{}`.
+
+Participants remain ordered on the event because source order can itself be useful evidence. Programmable views can query aggregate participant text or specifically name, role, type, entity reference, and presence.
+
+A participant label is **not** itself a canonical entity. `entity_ref` is the bridge to a later entity-resolution layer, allowing multiple source spellings/roles to resolve to one durable person/organization/team while preserving what each source actually asserted.
+
+Local/editable events may author participant rows directly. Source-backed read-only events remain source-owned so refresh cannot silently overwrite local canonical-field edits. Canonical JSON v7 preserves participants losslessly; CSV v1 and current VEVENT export reject them until those transports have an explicit round-trip mapping.
+
 ## Custom fields
 
 Custom properties require:
