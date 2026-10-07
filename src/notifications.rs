@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::domain::{
-    EventOccurrence, EventStatus, NotificationRule, NotificationTarget, NotificationTrigger,
+    EventStatus, NotificationRule, NotificationTarget, NotificationTrigger,
     TemporalEvent, TimeSpec,
 };
 use crate::query::{
@@ -297,8 +297,8 @@ mod tests {
         );
         let rule = NotificationRule::for_event(event.id, "15 minutes before", 15);
         let evaluation = evaluate_notification_rules(
-            &[rule.clone()],
-            &[event.clone()],
+            std::slice::from_ref(&rule),
+            std::slice::from_ref(&event),
             &[],
             &HashMap::new(),
             &context(),
