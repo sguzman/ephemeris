@@ -55,6 +55,7 @@ pub enum IcalRecurrenceError {
     DuplicateMaster(String),
     UnsupportedCanonicalStatus(String),
     UnsupportedTemporalUncertainty(&'static str),
+    UnsupportedCanonicalLocation,
     InvalidTimezone(String),
     TemporalKindMismatch {
         property: &'static str,
@@ -171,6 +172,9 @@ impl fmt::Display for IcalRecurrenceError {
             Self::UnsupportedTemporalUncertainty(kind) => write!(
                 formatter,
                 "VEVENT transport cannot losslessly represent {kind} temporal uncertainty"
+            ),
+            Self::UnsupportedCanonicalLocation => formatter.write_str(
+                "VEVENT transport cannot losslessly represent canonical structured location",
             ),
             Self::InvalidTimezone(value) => {
                 write!(formatter, "unsupported or invalid iCalendar TZID {value}")
@@ -457,6 +461,9 @@ pub fn export_temporal_event(
         return Err(IcalRecurrenceError::UnsupportedTemporalUncertainty(
             uncertainty.kind_name(),
         ));
+    }
+    if event.location.is_some() {
+        return Err(IcalRecurrenceError::UnsupportedCanonicalLocation);
     }
 
     let template = stored_ical_master(event)?;
@@ -3277,6 +3284,28 @@ and continues here\r\nSUMMARY:Example\r\n";
             Err(IcalRecurrenceError::UnsupportedTemporalUncertainty(
                 "date_window"
             ))
+        );
+    }
+
+    #[test]
+    fn canonical_export_rejects_structured_location_until_lossless_mapping_exists() {
+        let mut event = TemporalEvent::new(
+            "Located",
+            TimeSpec::AllDay {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        event.location = Some(crate::domain::EventLocation {
+            name: Some("Venue".to_string()),
+            locality: Some("Ameca".to_string()),
+            country: Some("MX".to_string()),
+            ..crate::domain::EventLocation::default()
+        });
+
+        assert_eq!(
+            export_temporal_event(&event),
+            Err(IcalRecurrenceError::UnsupportedCanonicalLocation)
         );
     }
 
