@@ -5027,6 +5027,40 @@ impl EphemerisApp {
             if let Some(value) = event.institution.as_deref() {
                 inspector_row(ui, "Institution", value);
             }
+            if let Some(location) = event.location.as_ref() {
+                ui.separator();
+                ui.strong("Location");
+                if let Some(value) = location.name.as_deref() {
+                    inspector_row(ui, "Venue", value);
+                }
+                if let Some(value) = location.address.as_deref() {
+                    inspector_row(ui, "Address", value);
+                }
+                if let Some(value) = location.locality.as_deref() {
+                    inspector_row(ui, "Locality", value);
+                }
+                if let Some(value) = location.region.as_deref() {
+                    inspector_row(ui, "Region", value);
+                }
+                if let Some(value) = location.postal_code.as_deref() {
+                    inspector_row(ui, "Postal code", value);
+                }
+                if let Some(value) = location.country.as_deref() {
+                    inspector_row(ui, "Country", value);
+                }
+                if let (Some(latitude), Some(longitude)) =
+                    (location.latitude, location.longitude)
+                {
+                    inspector_row(
+                        ui,
+                        "Coordinates",
+                        &format!("{latitude:.6}, {longitude:.6}"),
+                    );
+                }
+                if let Some(value) = location.virtual_url.as_deref() {
+                    inspector_row(ui, "Virtual URL", value);
+                }
+            }
             if let Some(value) = event.confidence {
                 inspector_row(ui, "Confidence", &format!("{value:.3}"));
             }
@@ -9610,6 +9644,9 @@ fn event_revision_change_summary(
     {
         changes.push("classification");
     }
+    if previous.location != current.location {
+        changes.push("location");
+    }
     if previous.confidence != current.confidence
         || previous.importance != current.importance
         || previous.personal_relevance != current.personal_relevance
@@ -10169,10 +10206,14 @@ mod tests {
         let mut changed = touched.clone();
         changed.normalized_title = "Changed".to_string();
         changed.status = EventStatus::Cancelled;
+        changed.location = Some(crate::domain::EventLocation {
+            name: Some("Test venue".to_string()),
+            ..crate::domain::EventLocation::default()
+        });
         changed.tags.push("important".to_string());
         assert_eq!(
             event_revision_change_summary(Some(&original), &changed),
-            "title, status, tags"
+            "title, status, location, tags"
         );
     }
 
