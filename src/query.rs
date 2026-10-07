@@ -34,6 +34,9 @@ impl QueryContext {
 pub struct EventMembership {
     pub bundle_refs: BTreeSet<String>,
     pub calendar_refs: BTreeSet<String>,
+    pub collection_ids: BTreeSet<Uuid>,
+    pub outgoing_relation_types: BTreeSet<String>,
+    pub incoming_relation_types: BTreeSet<String>,
 }
 
 impl EventMembership {
@@ -43,6 +46,42 @@ impl EventMembership {
 
     pub fn belongs_to_calendar(&self, calendar_id: &str) -> bool {
         self.calendar_refs.contains(calendar_id)
+    }
+
+    pub fn belongs_to_collection(&self, collection_id: Uuid) -> bool {
+        self.collection_ids.contains(&collection_id)
+    }
+
+    pub fn has_relation_type(&self, relation_type: &str, direction: RelationDirection) -> bool {
+        match direction {
+            RelationDirection::Outgoing => self.outgoing_relation_types.contains(relation_type),
+            RelationDirection::Incoming => self.incoming_relation_types.contains(relation_type),
+            RelationDirection::Either => {
+                self.outgoing_relation_types.contains(relation_type)
+                    || self.incoming_relation_types.contains(relation_type)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationDirection {
+    Outgoing,
+    Incoming,
+    #[default]
+    Either,
+}
+
+impl RelationDirection {
+    pub const ALL: [Self; 3] = [Self::Outgoing, Self::Incoming, Self::Either];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Outgoing => "Outgoing",
+            Self::Incoming => "Incoming",
+            Self::Either => "Either direction",
+        }
     }
 }
 
@@ -257,6 +296,14 @@ pub enum QueryPredicate {
     ProjectedCalendarMembership {
         calendar_id: String,
     },
+    CollectionMembership {
+        collection_id: Uuid,
+    },
+    RelationType {
+        relation_type: String,
+        #[serde(default)]
+        direction: RelationDirection,
+    },
 }
 
 impl QueryPredicate {
@@ -345,6 +392,14 @@ impl QueryPredicate {
             Self::ProjectedCalendarMembership { calendar_id } => {
                 membership.is_some_and(|membership| membership.belongs_to_calendar(calendar_id))
             }
+            Self::CollectionMembership { collection_id } => membership
+                .is_some_and(|membership| membership.belongs_to_collection(*collection_id)),
+            Self::RelationType {
+                relation_type,
+                direction,
+            } => membership.is_some_and(|membership| {
+                membership.has_relation_type(relation_type, *direction)
+            }),
         }
     }
 }
@@ -1819,6 +1874,14 @@ mod tests {
         membership
             .calendar_refs
             .insert("projected-calendar:us-politics".to_string());
+        let collection_id = Uuid::new_v4();
+        membership.collection_ids.insert(collection_id);
+        membership
+            .outgoing_relation_types
+            .insert("causes".to_string());
+        membership
+            .incoming_relation_types
+            .insert("follows".to_string());
 
         let bundle_query = EventQuery {
             expression: Some(QueryExpr::Predicate(QueryPredicate::BundleMembership {
@@ -1835,9 +1898,55 @@ mod tests {
             ..EventQuery::default()
         };
 
+        let collection_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(
+                QueryPredicate::CollectionMembership { collection_id },
+            )),
+            ..EventQuery::default()
+        };
+        let outgoing_relation_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::RelationType {
+                relation_type: "causes".to_string(),
+                direction: RelationDirection::Outgoing,
+            })),
+            ..EventQuery::default()
+        };
+        let incoming_relation_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::RelationType {
+                relation_type: "follows".to_string(),
+                direction: RelationDirection::Incoming,
+            })),
+            ..EventQuery::default()
+        };
+        let either_relation_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::RelationType {
+                relation_type: "causes".to_string(),
+                direction: RelationDirection::Either,
+            })),
+            ..EventQuery::default()
+        };
+
         assert!(!bundle_query.matches(&event, &test_context()));
         assert!(bundle_query.matches_with_membership(&event, &test_context(), Some(&membership)));
         assert!(calendar_query.matches_with_membership(&event, &test_context(), Some(&membership)));
+        assert!(
+            collection_query.matches_with_membership(&event, &test_context(), Some(&membership))
+        );
+        assert!(outgoing_relation_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+        assert!(incoming_relation_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+        assert!(either_relation_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
     }
 
     #[test]
