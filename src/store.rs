@@ -6934,7 +6934,6 @@ mod tests {
         };
 
         let store = TemporalStore::open_in_memory().expect("store");
-        let day = NaiveDate::from_ymd_opt(2026, 10, 8).expect("day");
         let event = TemporalEvent::new(
             "Reminder target",
             TimeSpec::Instant {
