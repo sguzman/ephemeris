@@ -1655,7 +1655,7 @@ impl EphemerisApp {
         match import_canonical_json_file(&self.store, path) {
             Ok(report) => {
                 self.last_message = Some(format!(
-                    "Merged canonical snapshot: sources {} created/{} updated/{} unchanged; entities {} created/{} updated/{} unchanged; events {} created/{} updated/{} unchanged; relations {} created/{} updated/{} unchanged; collections {} created/{} updated/{} unchanged; memberships {} replaced/{} unchanged; identity {} created/{} updated/{} unchanged; annotations {} created/{} updated/{} unchanged; provenance {} created/{} updated/{} unchanged",
+                    "Merged canonical snapshot: sources {} created/{} updated/{} unchanged; entities {} created/{} updated/{} unchanged; events {} created/{} updated/{} unchanged; relations {} created/{} updated/{} unchanged; collections {} created/{} updated/{} unchanged; memberships {} replaced/{} unchanged; identity {} created/{} updated/{} unchanged; annotations {} created/{} updated/{} unchanged; provenance {} created/{} updated/{} unchanged; entity bindings {} created/{} updated/{} unchanged",
                     report.sources_created,
                     report.sources_updated,
                     report.sources_unchanged,
@@ -1681,7 +1681,10 @@ impl EphemerisApp {
                     report.annotations_unchanged,
                     report.provenance_records_created,
                     report.provenance_records_updated,
-                    report.provenance_records_unchanged
+                    report.provenance_records_unchanged,
+                    report.participant_entity_bindings_created,
+                    report.participant_entity_bindings_updated,
+                    report.participant_entity_bindings_unchanged
                 ));
                 self.last_error = None;
                 self.reload_or_report();
