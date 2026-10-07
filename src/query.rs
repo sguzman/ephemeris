@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::calendar::{CalendarLayout, CalendarView};
-use crate::domain::{EventStatus, TemporalEvent, TimeSpec};
+use crate::domain::{EventStatus, TemporalEvent, TimeSpec, TimeUncertainty};
 
 #[derive(Debug, Clone, Copy)]
 pub struct QueryContext {
@@ -290,6 +290,10 @@ pub enum QueryPredicate {
         #[serde(default)]
         include_imprecise: bool,
     },
+    UncertainStartOverlaps {
+        start: Option<NaiveDate>,
+        end_exclusive: Option<NaiveDate>,
+    },
     BundleMembership {
         bundle_ref: String,
     },
@@ -386,6 +390,20 @@ impl QueryPredicate {
                     _ => false,
                 }
             }
+            Self::UncertainStartOverlaps {
+                start,
+                end_exclusive,
+            } => event
+                .time_uncertainty
+                .as_ref()
+                .and_then(|uncertainty| {
+                    uncertainty_start_date_window(uncertainty, context.display_timezone)
+                })
+                .is_some_and(|(uncertain_earliest, uncertain_latest)| {
+                    start.is_none_or(|query_start| uncertain_latest >= query_start)
+                        && end_exclusive
+                            .is_none_or(|query_end_exclusive| uncertain_earliest < query_end_exclusive)
+                }),
             Self::BundleMembership { bundle_ref } => {
                 membership.is_some_and(|membership| membership.belongs_to_bundle(bundle_ref))
             }
@@ -734,6 +752,25 @@ fn integer_matches(candidate: i32, expected: i32, operator: IntegerOperator) -> 
         IntegerOperator::LessThanOrEqual => candidate <= expected,
         IntegerOperator::GreaterThan => candidate > expected,
         IntegerOperator::GreaterThanOrEqual => candidate >= expected,
+    }
+}
+
+fn uncertainty_start_date_window(
+    uncertainty: &TimeUncertainty,
+    display_timezone: Tz,
+) -> Option<(NaiveDate, NaiveDate)> {
+    match uncertainty {
+        TimeUncertainty::DateWindow { earliest, latest } => Some((*earliest, *latest)),
+        TimeUncertainty::FloatingWindow { earliest, latest } => {
+            Some((earliest.date(), latest.date()))
+        }
+        TimeUncertainty::InstantWindow {
+            earliest_utc,
+            latest_utc,
+        } => Some((
+            earliest_utc.with_timezone(&display_timezone).date_naive(),
+            latest_utc.with_timezone(&display_timezone).date_naive(),
+        )),
     }
 }
 
@@ -1466,7 +1503,7 @@ mod tests {
     use chrono::NaiveDate;
 
     use super::*;
-    use crate::domain::{TemporalEvent, TimeSpec};
+    use crate::domain::{TemporalEvent, TimeSpec, TimeUncertainty};
 
     fn test_context() -> QueryContext {
         QueryContext::new(
@@ -1655,6 +1692,64 @@ mod tests {
         });
         assert!(predicate.matches(&event, &context));
         assert_eq!(event.time.kind_name(), "date_only");
+    }
+
+    #[test]
+    fn uncertain_start_overlap_matches_possible_start_window_not_anchor_only() {
+        let canonical_day = NaiveDate::from_ymd_opt(2026, 10, 10).expect("canonical");
+        let mut uncertain = event_with_time(TimeSpec::DateOnly {
+            start: canonical_day,
+            end_exclusive: None,
+        });
+        uncertain.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: NaiveDate::from_ymd_opt(2026, 10, 5).expect("earliest"),
+            latest: NaiveDate::from_ymd_opt(2026, 10, 12).expect("latest"),
+        });
+
+        let uncertainty_query = QueryPredicate::UncertainStartOverlaps {
+            start: Some(NaiveDate::from_ymd_opt(2026, 10, 5).expect("start")),
+            end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 7).expect("end")),
+        };
+        assert!(uncertainty_query.matches(&uncertain, &test_context()));
+
+        let ordinary_overlap = QueryPredicate::DateOverlaps {
+            start: Some(NaiveDate::from_ymd_opt(2026, 10, 5).expect("start")),
+            end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 7).expect("end")),
+            include_imprecise: false,
+        };
+        assert!(!ordinary_overlap.matches(&uncertain, &test_context()));
+    }
+
+    #[test]
+    fn uncertain_instant_start_overlap_uses_display_timezone() {
+        let anchor = chrono::DateTime::parse_from_rfc3339("2026-10-05T01:00:00Z")
+            .expect("anchor")
+            .with_timezone(&Utc);
+        let mut uncertain = event_with_time(TimeSpec::Instant {
+            start_utc: anchor,
+            end_utc: None,
+            source_timezone: Some("UTC".to_string()),
+        });
+        uncertain.time_uncertainty = Some(TimeUncertainty::InstantWindow {
+            earliest_utc: chrono::DateTime::parse_from_rfc3339("2026-10-05T00:30:00Z")
+                .expect("earliest")
+                .with_timezone(&Utc),
+            latest_utc: chrono::DateTime::parse_from_rfc3339("2026-10-05T02:00:00Z")
+                .expect("latest")
+                .with_timezone(&Utc),
+        });
+        let predicate = QueryPredicate::UncertainStartOverlaps {
+            start: Some(NaiveDate::from_ymd_opt(2026, 10, 4).expect("start")),
+            end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 5).expect("end")),
+        };
+
+        assert!(predicate.matches(&uncertain, &test_context()));
+
+        let tokyo = QueryContext::new(
+            chrono_tz::Asia::Tokyo,
+            NaiveDate::from_ymd_opt(2026, 10, 4).expect("today"),
+        );
+        assert!(!predicate.matches(&uncertain, &tokyo));
     }
 
     #[test]
