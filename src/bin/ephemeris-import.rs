@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, anyhow};
+use ephemeris::csv::import_csv_file;
 use ephemeris::ics::{import_ics_file, import_remote_ics};
 use ephemeris::interchange::import_canonical_json_file;
 use ephemeris::store::TemporalStore;
@@ -9,7 +10,7 @@ use ephemeris::taria::import_reconciled_event_set_file;
 fn main() -> anyhow::Result<()> {
     let input = std::env::args_os().nth(1).ok_or_else(|| {
         anyhow!(
-            "usage: ephemeris-import <calendar.ics|calendar-url|snapshot.ephemeris.json|taria-reconciled-event-set.json>"
+            "usage: ephemeris-import <calendar.ics|calendar-url|events.csv|snapshot.ephemeris.json|taria-reconciled-event-set.json>"
         )
     })?;
 
@@ -61,6 +62,19 @@ fn main() -> anyhow::Result<()> {
             "Events: {} created  {} updated  {} unchanged",
             report.events_created, report.events_updated, report.events_unchanged
         );
+        return Ok(());
+    }
+
+    if extension.as_deref() == Some("csv") {
+        let report = import_csv_file(&store, &path)?;
+        println!("Imported CSV source: {}", report.source_name);
+        println!("Source: {}", report.source_external_ref);
+        println!("Events in CSV: {}", report.total_events);
+        println!(
+            "Created: {}  Updated: {}  Unchanged: {}",
+            report.created, report.updated, report.unchanged
+        );
+        println!("Prior missing retained: {}", report.retained_missing);
         return Ok(());
     }
 
