@@ -602,6 +602,103 @@ mod tests {
     }
 
     #[test]
+    fn canonical_snapshot_v2_rejects_dangling_and_malformed_topology() {
+        let source = fixture_source();
+        let event = fixture_event(&source);
+        let dangling_relation = EventRelation::new(event.id, Uuid::new_v4(), "references");
+        let dangling = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: CANONICAL_SNAPSHOT_VERSION,
+            sources: vec![source.clone()],
+            events: vec![event.clone()],
+            relations: vec![dangling_relation],
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+        };
+        assert!(dangling.validate().is_err());
+
+        let collection = EventCollection::new("Broken sequence", true);
+        let malformed = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: CANONICAL_SNAPSHOT_VERSION,
+            sources: vec![source],
+            events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: vec![collection.clone()],
+            collection_members: vec![EventCollectionMember {
+                collection_id: collection.id,
+                event_id: event.id,
+                position: None,
+            }],
+        };
+        assert!(malformed.validate().is_err());
+    }
+
+    #[test]
+    fn canonical_snapshot_v2_collection_membership_is_authoritative_per_imported_collection() {
+        let source = fixture_source();
+        let first = fixture_event(&source);
+        let mut second = fixture_event(&source);
+        second.id = Uuid::new_v4();
+        second.source_record_key = Some("snapshot-event-2".to_string());
+        second.normalized_title = "Second snapshot event".to_string();
+        let mut local_extra = fixture_event(&source);
+        local_extra.id = Uuid::new_v4();
+        local_extra.source_record_key = Some("local-extra".to_string());
+        local_extra.normalized_title = "Local extra".to_string();
+
+        let collection = EventCollection::new("Authoritative sequence", true);
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: CANONICAL_SNAPSHOT_VERSION,
+            sources: vec![source.clone()],
+            events: vec![first.clone(), second.clone()],
+            relations: Vec::new(),
+            collections: vec![collection.clone()],
+            collection_members: vec![
+                EventCollectionMember {
+                    collection_id: collection.id,
+                    event_id: first.id,
+                    position: Some(0),
+                },
+                EventCollectionMember {
+                    collection_id: collection.id,
+                    event_id: second.id,
+                    position: Some(1),
+                },
+            ],
+        };
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        import_canonical_json_snapshot(&store, &snapshot).expect("initial merge");
+        store.upsert_event(&local_extra).expect("local event");
+        store
+            .replace_event_collection_members(
+                collection.id,
+                &[first.id, second.id, local_extra.id],
+            )
+            .expect("local membership extension");
+
+        import_canonical_json_snapshot(&store, &snapshot).expect("repeat merge");
+        let members = store
+            .event_collection_members(collection.id)
+            .expect("members after authoritative merge");
+        assert_eq!(
+            members
+                .iter()
+                .map(|member| member.event_id)
+                .collect::<Vec<_>>(),
+            vec![first.id, second.id]
+        );
+        assert!(
+            store
+                .event_by_id(local_extra.id)
+                .expect("local event query")
+                .is_some()
+        );
+    }
+
+    #[test]
     fn canonical_snapshot_file_export_is_atomic_and_reparseable() {
         let source = fixture_source();
         let event = fixture_event(&source);
