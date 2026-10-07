@@ -45,6 +45,9 @@ pub struct CanonicalSnapshotMergeResult {
     pub identity_assessments_created: usize,
     pub identity_assessments_updated: usize,
     pub identity_assessments_unchanged: usize,
+    pub annotations_created: usize,
+    pub annotations_updated: usize,
+    pub annotations_unchanged: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2551,7 +2554,15 @@ impl TemporalStore {
         sources: &[TemporalSource],
         events: &[TemporalEvent],
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
-        self.merge_canonical_snapshot_with_identity(sources, events, &[], &[], &[], &[])
+        self.merge_canonical_snapshot_with_annotations(
+            sources,
+            events,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )
     }
 
     pub fn merge_canonical_snapshot_with_topology(
@@ -2562,12 +2573,13 @@ impl TemporalStore {
         collections: &[EventCollection],
         collection_members: &[EventCollectionMember],
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
-        self.merge_canonical_snapshot_with_identity(
+        self.merge_canonical_snapshot_with_annotations(
             sources,
             events,
             relations,
             collections,
             collection_members,
+            &[],
             &[],
         )
     }
@@ -2580,6 +2592,27 @@ impl TemporalStore {
         collections: &[EventCollection],
         collection_members: &[EventCollectionMember],
         identity_assessments: &[EventIdentityAssessment],
+    ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
+        self.merge_canonical_snapshot_with_annotations(
+            sources,
+            events,
+            relations,
+            collections,
+            collection_members,
+            identity_assessments,
+            &[],
+        )
+    }
+
+    pub fn merge_canonical_snapshot_with_annotations(
+        &self,
+        sources: &[TemporalSource],
+        events: &[TemporalEvent],
+        relations: &[EventRelation],
+        collections: &[EventCollection],
+        collection_members: &[EventCollectionMember],
+        identity_assessments: &[EventIdentityAssessment],
+        annotations: &[EventAnnotation],
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
         let tx = self
             .conn
@@ -2685,6 +2718,25 @@ impl TemporalStore {
                 }
             }
 
+            let mut annotations_created = 0;
+            let mut annotations_updated = 0;
+            let mut annotations_unchanged = 0;
+            for annotation in annotations {
+                match self.event_annotation_by_id(annotation.id)? {
+                    None => {
+                        self.upsert_event_annotation(annotation)?;
+                        annotations_created += 1;
+                    }
+                    Some(existing) if existing == *annotation => {
+                        annotations_unchanged += 1;
+                    }
+                    Some(_) => {
+                        self.upsert_event_annotation(annotation)?;
+                        annotations_updated += 1;
+                    }
+                }
+            }
+
             let mut collection_memberships_replaced = 0;
             let mut collection_memberships_unchanged = 0;
             for collection in collections {
@@ -2731,6 +2783,9 @@ impl TemporalStore {
                 identity_assessments_created,
                 identity_assessments_updated,
                 identity_assessments_unchanged,
+                annotations_created,
+                annotations_updated,
+                annotations_unchanged,
             })
         })();
 
