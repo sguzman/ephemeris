@@ -728,13 +728,26 @@ mod tests {
 
         let attempts = store.source_refresh_attempts(10).expect("refresh attempts");
         assert_eq!(attempts.len(), 2);
-        assert!(attempts.iter().all(|attempt| attempt.refresh_kind == "csv_file"));
+        assert!(
+            attempts
+                .iter()
+                .all(|attempt| attempt.refresh_kind == "csv_file")
+        );
         assert!(attempts.iter().any(|attempt| attempt.success == Some(true)));
-        assert!(attempts.iter().any(|attempt| attempt.success == Some(false)));
-        assert!(attempts
-            .iter()
-            .filter(|attempt| attempt.success == Some(true))
-            .all(|attempt| attempt.summary.as_deref().is_some_and(|summary| summary.contains("1 events"))));
+        assert!(
+            attempts
+                .iter()
+                .any(|attempt| attempt.success == Some(false))
+        );
+        assert!(
+            attempts
+                .iter()
+                .filter(|attempt| attempt.success == Some(true))
+                .all(|attempt| attempt
+                    .summary
+                    .as_deref()
+                    .is_some_and(|summary| summary.contains("1 events")))
+        );
     }
 
     #[test]
