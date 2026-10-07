@@ -829,8 +829,9 @@ mod tests {
         );
 
         let exported = CanonicalJsonSnapshot::from_store(&store).expect("snapshot");
-        assert_eq!(exported.version, 3);
+        assert_eq!(exported.version, CANONICAL_SNAPSHOT_VERSION);
         assert_eq!(exported.identity_assessments, vec![assessment]);
+        assert!(exported.annotations.is_empty());
     }
 
     #[test]
