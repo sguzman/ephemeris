@@ -11,11 +11,11 @@ use uuid::Uuid;
 use crate::calendar::CalendarLayout;
 use crate::domain::{
     EventCollection, EventCollectionMember, EventRelation, EventStatus, RecurrenceRule,
-    SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
+    SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 15;
+const SCHEMA_VERSION: i64 = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -1068,10 +1068,19 @@ impl TemporalStore {
         event
             .validate_recurrence()
             .context("invalid event recurrence definition")?;
+        event
+            .validate_time_uncertainty()
+            .context("invalid event temporal uncertainty")?;
         let encoded = EncodedTime::from_time_spec(&event.time)?;
         let assertion_refs_json = encode_string_vec(&event.assertion_refs, "assertion refs")?;
         let source_refs_json = encode_string_vec(&event.source_refs, "source refs")?;
         let provenance_refs_json = encode_string_vec(&event.provenance_refs, "provenance refs")?;
+        let time_uncertainty_json = event
+            .time_uncertainty
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("failed to encode event temporal uncertainty")?;
         let recurrence_json = event
             .recurrence
             .as_ref()
@@ -1095,7 +1104,7 @@ impl TemporalStore {
                     time_kind, start_utc, end_utc, source_timezone,
                     start_date, end_date_exclusive,
                     start_local, end_local, time_original_value,
-                    recurrence_json,
+                    time_uncertainty_json, recurrence_json,
                     tags_json, properties_json,
                     created_at, updated_at
                 ) VALUES (
@@ -1108,7 +1117,7 @@ impl TemporalStore {
                     :time_kind, :start_utc, :end_utc, :source_timezone,
                     :start_date, :end_date_exclusive,
                     :start_local, :end_local, :time_original_value,
-                    :recurrence_json,
+                    :time_uncertainty_json, :recurrence_json,
                     :tags_json, :properties_json,
                     :created_at, :updated_at
                 )
@@ -1141,6 +1150,7 @@ impl TemporalStore {
                     start_local = excluded.start_local,
                     end_local = excluded.end_local,
                     time_original_value = excluded.time_original_value,
+                    time_uncertainty_json = excluded.time_uncertainty_json,
                     recurrence_json = excluded.recurrence_json,
                     tags_json = excluded.tags_json,
                     properties_json = excluded.properties_json,
@@ -1176,6 +1186,7 @@ impl TemporalStore {
                     ":start_local": encoded.start_local,
                     ":end_local": encoded.end_local,
                     ":time_original_value": encoded.original_value,
+                    ":time_uncertainty_json": time_uncertainty_json,
                     ":recurrence_json": recurrence_json,
                     ":tags_json": tags_json,
                     ":properties_json": properties_json,
@@ -2838,6 +2849,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         create_taria_release_schema_current(&tx)?;
         create_refresh_history_schema_current(&tx)?;
         create_event_relation_collection_schema_current(&tx)?;
+        add_event_uncertainty_column(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -2911,6 +2923,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 14 {
         migrate_v14_to_v15(conn)?;
+        current = 15;
+    }
+
+    if current == 15 {
+        migrate_v15_to_v16(conn)?;
     }
 
     Ok(())
@@ -3270,6 +3287,15 @@ fn add_event_recurrence_column(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn add_event_uncertainty_column(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute(
+        "ALTER TABLE temporal_events ADD COLUMN time_uncertainty_json TEXT",
+        [],
+    )
+    .context("failed to add event temporal uncertainty")?;
+    Ok(())
+}
+
 fn create_event_relation_collection_schema_current(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -3317,6 +3343,17 @@ fn create_event_relation_collection_schema_current(conn: &Connection) -> anyhow:
         "#,
     )
     .context("failed to create event relation/collection schema")
+}
+
+fn migrate_v15_to_v16(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v15 to v16 migration")?;
+    add_event_uncertainty_column(&tx)?;
+    tx.pragma_update(None, "user_version", 16)
+        .context("failed to set schema version 16")?;
+    tx.commit()
+        .context("failed to commit v15 to v16 schema migration")
 }
 
 fn migrate_v14_to_v15(conn: &mut Connection) -> anyhow::Result<()> {
@@ -3670,7 +3707,7 @@ fn event_select_sql(suffix: &str) -> String {
             time_kind, start_utc, end_utc, source_timezone,
             start_date, end_date_exclusive,
             start_local, end_local, time_original_value,
-            recurrence_json,
+            time_uncertainty_json, recurrence_json,
             tags_json, properties_json,
             created_at, updated_at
         FROM temporal_events
@@ -3827,6 +3864,11 @@ fn decode_event(row: &Row<'_>) -> rusqlite::Result<TemporalEvent> {
         importance: row.get("importance")?,
         personal_relevance: row.get("personal_relevance")?,
         time,
+        time_uncertainty: row
+            .get::<_, Option<String>>("time_uncertainty_json")?
+            .map(|raw| serde_json::from_str::<TimeUncertainty>(&raw))
+            .transpose()
+            .map_err(to_sql_decode_error)?,
         recurrence: row
             .get::<_, Option<String>>("recurrence_json")?
             .map(|raw| serde_json::from_str::<RecurrenceRule>(&raw))
