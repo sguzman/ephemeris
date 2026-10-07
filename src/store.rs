@@ -4686,10 +4686,7 @@ mod tests {
         });
 
         store.upsert_event(&event).expect("persist uncertainty");
-        let loaded = store
-            .event_by_id(event.id)
-            .expect("query")
-            .expect("event");
+        let loaded = store.event_by_id(event.id).expect("query").expect("event");
         assert_eq!(loaded.time_uncertainty, event.time_uncertainty);
 
         let mut invalid = TemporalEvent::new(
@@ -4731,8 +4728,7 @@ mod tests {
         create_taria_release_schema_current(&tx).expect("taria schema");
         create_refresh_history_schema_current(&tx).expect("refresh schema");
         create_event_relation_collection_schema_current(&tx).expect("topology schema");
-        tx.pragma_update(None, "user_version", 15)
-            .expect("set v15");
+        tx.pragma_update(None, "user_version", 15).expect("set v15");
         tx.commit().expect("commit v15 schema");
 
         let event_id = Uuid::new_v4();
@@ -4760,10 +4756,7 @@ mod tests {
         let store = TemporalStore { conn, path: None };
         assert_eq!(store.schema_version().expect("version"), 16);
 
-        let loaded = store
-            .event_by_id(event_id)
-            .expect("query")
-            .expect("event");
+        let loaded = store.event_by_id(event_id).expect("query").expect("event");
         assert_eq!(loaded.normalized_title, "Pre-v16 event");
         assert!(loaded.time_uncertainty.is_none());
     }
