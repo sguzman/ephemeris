@@ -532,6 +532,10 @@ pub enum TextField {
     Institution,
     Location,
     Participants,
+    ParticipantName,
+    ParticipantRole,
+    ParticipantType,
+    ParticipantEntityRef,
     Renderability,
     UpstreamEventRef,
     UpstreamReconciledKey,
@@ -543,7 +547,7 @@ pub enum TextField {
 }
 
 impl TextField {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 21] = [
         Self::Title,
         Self::RawTitle,
         Self::Description,
@@ -553,6 +557,10 @@ impl TextField {
         Self::Institution,
         Self::Location,
         Self::Participants,
+        Self::ParticipantName,
+        Self::ParticipantRole,
+        Self::ParticipantType,
+        Self::ParticipantEntityRef,
         Self::Renderability,
         Self::UpstreamEventRef,
         Self::UpstreamReconciledKey,
@@ -574,6 +582,10 @@ impl TextField {
             Self::Institution => "Institution",
             Self::Location => "Location",
             Self::Participants => "Participants",
+            Self::ParticipantName => "Participant name",
+            Self::ParticipantRole => "Participant role",
+            Self::ParticipantType => "Participant type",
+            Self::ParticipantEntityRef => "Participant entity ref",
             Self::Renderability => "Renderability",
             Self::UpstreamEventRef => "Upstream event ref",
             Self::UpstreamReconciledKey => "Reconciled key",
@@ -762,6 +774,26 @@ fn text_values(event: &TemporalEvent, field: TextField) -> Vec<&str> {
             .participants
             .iter()
             .flat_map(crate::domain::EventParticipant::text_values)
+            .collect(),
+        TextField::ParticipantName => event
+            .participants
+            .iter()
+            .map(|participant| participant.name.as_str())
+            .collect(),
+        TextField::ParticipantRole => event
+            .participants
+            .iter()
+            .filter_map(|participant| participant.role.as_deref())
+            .collect(),
+        TextField::ParticipantType => event
+            .participants
+            .iter()
+            .filter_map(|participant| participant.participant_type.as_deref())
+            .collect(),
+        TextField::ParticipantEntityRef => event
+            .participants
+            .iter()
+            .filter_map(|participant| participant.entity_ref.as_deref())
             .collect(),
         TextField::Renderability => event.renderability.iter().map(String::as_str).collect(),
         TextField::UpstreamEventRef => event
@@ -1761,9 +1793,21 @@ mod tests {
             case_sensitive: false,
         };
         let role = QueryPredicate::Text {
-            field: TextField::Participants,
+            field: TextField::ParticipantRole,
             operator: TextOperator::Equals,
             value: "speaker".to_string(),
+            case_sensitive: false,
+        };
+        let participant_type = QueryPredicate::Text {
+            field: TextField::ParticipantType,
+            operator: TextOperator::Equals,
+            value: "person".to_string(),
+            case_sensitive: false,
+        };
+        let entity_ref = QueryPredicate::Text {
+            field: TextField::ParticipantEntityRef,
+            operator: TextOperator::Equals,
+            value: "person:ada-lovelace".to_string(),
             case_sensitive: false,
         };
         let present = QueryPredicate::Exists {
@@ -1773,6 +1817,8 @@ mod tests {
 
         assert!(name.matches(&participated, &test_context()));
         assert!(role.matches(&participated, &test_context()));
+        assert!(participant_type.matches(&participated, &test_context()));
+        assert!(entity_ref.matches(&participated, &test_context()));
         assert!(present.matches(&participated, &test_context()));
         assert!(!present.matches(&event(), &test_context()));
     }
