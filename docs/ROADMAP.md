@@ -456,15 +456,24 @@ Goals:
 
 ## Phase 10 - Personal scheduling completeness
 
-Status: **starting — rich local event creation/editing is the current implementation frontier**
+Status: **active — core reminders, Busy/Free availability, free-busy/slot search, persisted workday preferences, richer quick-create, canonical non-recurring time editing, and structured location editing are implemented**
 
-Goals:
+Implemented:
 
-- rich local event editing
-- reminders/query-based notification rules
-- attendees/invitations where justified
-- availability/free-busy
-- personal scheduling workflows
+- richer local event creation with description, event type, domain, lifecycle status, and Busy/Free behavior
+- canonical time editing for writable non-recurring instant/floating/all-day/date-only events, with recurrence/uncertainty guardrails
+- structured writable-event location editing
+- event- and saved-view-targeted before-start reminder rules with durable delivery/dismissal state
+- canonical Busy/Free event availability, query predicates, iCalendar TRANSP interop, recurrence-aware free/busy calculation, and constrained slot search
+- persisted personal availability profile: work hours, duration, step, and workdays
+- creation of local events directly from free intervals and suggested slots
+
+Remaining goals:
+
+- durable reminder follow-up behavior such as snooze
+- attendees/invitations where justified by real scheduling workflows
+- richer scheduling assistance and conflict-aware authoring
+- careful extension of time editing to recurring masters only when exception identity can remain correct
 
 ## Always-on constraints
 
