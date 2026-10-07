@@ -554,6 +554,7 @@ pub enum TextField {
     Domain,
     Jurisdiction,
     Institution,
+    Availability,
     Location,
     Participants,
     ParticipantName,
@@ -571,7 +572,7 @@ pub enum TextField {
 }
 
 impl TextField {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Title,
         Self::RawTitle,
         Self::Description,
@@ -579,6 +580,7 @@ impl TextField {
         Self::Domain,
         Self::Jurisdiction,
         Self::Institution,
+        Self::Availability,
         Self::Location,
         Self::Participants,
         Self::ParticipantName,
@@ -604,6 +606,7 @@ impl TextField {
             Self::Domain => "Domain",
             Self::Jurisdiction => "Jurisdiction",
             Self::Institution => "Institution",
+            Self::Availability => "Availability",
             Self::Location => "Location",
             Self::Participants => "Participants",
             Self::ParticipantName => "Participant name",
@@ -790,6 +793,7 @@ fn text_values(event: &TemporalEvent, field: TextField) -> Vec<&str> {
         TextField::Domain => event.domain.iter().map(String::as_str).collect(),
         TextField::Jurisdiction => event.jurisdiction.iter().map(String::as_str).collect(),
         TextField::Institution => event.institution.iter().map(String::as_str).collect(),
+        TextField::Availability => vec![event.availability.as_str()],
         TextField::Location => event
             .location
             .as_ref()
@@ -1661,6 +1665,29 @@ mod tests {
             start: NaiveDate::from_ymd_opt(2026, 11, 3).expect("date"),
             end_exclusive: None,
         })
+    }
+
+    #[test]
+    fn availability_is_queryable_as_a_text_dimension() {
+        let mut candidate = event();
+        candidate.availability = crate::domain::AvailabilityBehavior::Free;
+        let context = test_context();
+
+        let free = QueryPredicate::Text {
+            field: TextField::Availability,
+            operator: TextOperator::Equals,
+            value: "free".to_string(),
+            case_sensitive: false,
+        };
+        let busy = QueryPredicate::Text {
+            field: TextField::Availability,
+            operator: TextOperator::Equals,
+            value: "busy".to_string(),
+            case_sensitive: false,
+        };
+
+        assert!(free.matches(&candidate, &context));
+        assert!(!busy.matches(&candidate, &context));
     }
 
     #[test]
