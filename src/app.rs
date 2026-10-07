@@ -1623,7 +1623,7 @@ impl ConflictConfirmation {
     }
 }
 
-#[derive(Debug, Clone)
+#[derive(Debug, Clone)]
 struct NewLocalEventDraft {
     title: String,
     description: String,
