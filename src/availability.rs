@@ -663,14 +663,8 @@ mod tests {
         .expect("slots");
 
         assert_eq!(slots.len(), 3);
-        assert_eq!(
-            slots[0].start_utc.date_naive(),
-            friday
-        );
-        assert_eq!(
-            slots[1].start_utc.date_naive(),
-            monday
-        );
+        assert_eq!(slots[0].start_utc.date_naive(), friday);
+        assert_eq!(slots[1].start_utc.date_naive(), monday);
         assert_eq!(
             slots[2].start_utc.date_naive(),
             monday.checked_add_days(Days::new(1)).expect("Tuesday")
