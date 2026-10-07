@@ -20,10 +20,11 @@ use crate::calendar::{
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
     AvailabilityBehavior, CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
-    EventIdentityAssessment, EventIdentityState, EventLocation, EventParticipant, EventProvenanceRecord,
-    EventProvenanceRole, EventRelation, EventStatus, NotificationRule, NotificationTarget,
-    RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride,
-    RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
+    EventIdentityAssessment, EventIdentityState, EventLocation, EventParticipant,
+    EventProvenanceRecord, EventProvenanceRole, EventRelation, EventStatus, NotificationRule,
+    NotificationTarget, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday,
+    RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
+    TimeUncertainty,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
@@ -12717,10 +12718,7 @@ mod tests {
         let draft = EventLocationEditDraft::from_event(&event);
         assert_eq!(draft.name, "Library");
         assert_eq!(draft.locality, "Ameca");
-        assert_eq!(
-            draft.parsed_location().expect("location"),
-            event.location
-        );
+        assert_eq!(draft.parsed_location().expect("location"), event.location);
 
         let empty = EventLocationEditDraft {
             event_id: event.id,
