@@ -4325,8 +4325,7 @@ impl EphemerisApp {
             .ok_or_else(|| anyhow::anyhow!("event collection {collection_id} does not exist"))?;
         self.topology_manage_collection_id = Some(collection.id);
         self.topology_manage_collection_name = collection.name;
-        self.topology_manage_collection_description =
-            collection.description.unwrap_or_default();
+        self.topology_manage_collection_description = collection.description.unwrap_or_default();
         self.topology_manage_collection_ordered = collection.ordered;
         Ok(())
     }
@@ -4353,10 +4352,18 @@ impl EphemerisApp {
         };
 
         collection.name = name.to_string();
-        collection.description = if self.topology_manage_collection_description.trim().is_empty() {
+        collection.description = if self
+            .topology_manage_collection_description
+            .trim()
+            .is_empty()
+        {
             None
         } else {
-            Some(self.topology_manage_collection_description.trim().to_string())
+            Some(
+                self.topology_manage_collection_description
+                    .trim()
+                    .to_string(),
+            )
         };
         collection.ordered = self.topology_manage_collection_ordered;
         collection.updated_at = Utc::now();
