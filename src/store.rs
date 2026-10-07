@@ -1452,10 +1452,9 @@ impl TemporalStore {
             let typed = candidates
                 .iter()
                 .filter(|entity| {
-                    entity
-                        .entity_type
-                        .as_deref()
-                        .is_some_and(|entity_type| entity_type.eq_ignore_ascii_case(participant_type))
+                    entity.entity_type.as_deref().is_some_and(|entity_type| {
+                        entity_type.eq_ignore_ascii_case(participant_type)
+                    })
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -5311,9 +5310,7 @@ fn normalize_entity_alias(value: &str) -> String {
     value.trim().to_lowercase()
 }
 
-fn decode_participant_entity_binding(
-    row: &Row<'_>,
-) -> rusqlite::Result<ParticipantEntityBinding> {
+fn decode_participant_entity_binding(row: &Row<'_>) -> rusqlite::Result<ParticipantEntityBinding> {
     Ok(ParticipantEntityBinding {
         event_id: Uuid::parse_str(&row.get::<_, String>("event_id")?)
             .map_err(to_sql_decode_error)?,
@@ -6725,9 +6722,7 @@ mod tests {
             store
                 .resolve_event_participant_entity(event.id, 0)
                 .expect("resolution"),
-            ParticipantEntityResolution::UnresolvedReference(
-                "source:missing-ada".to_string()
-            )
+            ParticipantEntityResolution::UnresolvedReference("source:missing-ada".to_string())
         );
     }
 
@@ -6792,7 +6787,9 @@ mod tests {
                 end_exclusive: None,
             },
         );
-        event.participants.push(EventParticipant::new("Ada Lovelace"));
+        event
+            .participants
+            .push(EventParticipant::new("Ada Lovelace"));
         store.upsert_event(&event).expect("persist pre-v24 event");
 
         let mut conn = store.conn;
