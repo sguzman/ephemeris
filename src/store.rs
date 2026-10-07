@@ -42,6 +42,9 @@ pub struct CanonicalSnapshotMergeResult {
     pub collections_unchanged: usize,
     pub collection_memberships_replaced: usize,
     pub collection_memberships_unchanged: usize,
+    pub identity_assessments_created: usize,
+    pub identity_assessments_updated: usize,
+    pub identity_assessments_unchanged: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2459,7 +2462,14 @@ impl TemporalStore {
         sources: &[TemporalSource],
         events: &[TemporalEvent],
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
-        self.merge_canonical_snapshot_with_topology(sources, events, &[], &[], &[])
+        self.merge_canonical_snapshot_with_identity(
+            sources,
+            events,
+            &[],
+            &[],
+            &[],
+            &[],
+        )
     }
 
     pub fn merge_canonical_snapshot_with_topology(
@@ -2469,6 +2479,25 @@ impl TemporalStore {
         relations: &[EventRelation],
         collections: &[EventCollection],
         collection_members: &[EventCollectionMember],
+    ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
+        self.merge_canonical_snapshot_with_identity(
+            sources,
+            events,
+            relations,
+            collections,
+            collection_members,
+            &[],
+        )
+    }
+
+    pub fn merge_canonical_snapshot_with_identity(
+        &self,
+        sources: &[TemporalSource],
+        events: &[TemporalEvent],
+        relations: &[EventRelation],
+        collections: &[EventCollection],
+        collection_members: &[EventCollectionMember],
+        identity_assessments: &[EventIdentityAssessment],
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
         let tx = self
             .conn
@@ -2555,6 +2584,25 @@ impl TemporalStore {
                 }
             }
 
+            let mut identity_assessments_created = 0;
+            let mut identity_assessments_updated = 0;
+            let mut identity_assessments_unchanged = 0;
+            for assessment in identity_assessments {
+                match self.event_identity_assessment_by_id(assessment.id)? {
+                    None => {
+                        self.upsert_event_identity_assessment(assessment)?;
+                        identity_assessments_created += 1;
+                    }
+                    Some(existing) if existing == *assessment => {
+                        identity_assessments_unchanged += 1;
+                    }
+                    Some(_) => {
+                        self.upsert_event_identity_assessment(assessment)?;
+                        identity_assessments_updated += 1;
+                    }
+                }
+            }
+
             let mut collection_memberships_replaced = 0;
             let mut collection_memberships_unchanged = 0;
             for collection in collections {
@@ -2598,6 +2646,9 @@ impl TemporalStore {
                 collections_unchanged,
                 collection_memberships_replaced,
                 collection_memberships_unchanged,
+                identity_assessments_created,
+                identity_assessments_updated,
+                identity_assessments_unchanged,
             })
         })();
 
