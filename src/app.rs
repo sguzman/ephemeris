@@ -1658,7 +1658,9 @@ impl EventTimeEditDraft {
             anyhow::bail!("recurring event master time editing is not supported yet");
         }
         if event.time_uncertainty.is_some() {
-            anyhow::bail!("uncertain event placement must be edited with uncertainty-aware controls");
+            anyhow::bail!(
+                "uncertain event placement must be edited with uncertainty-aware controls"
+            );
         }
 
         match &event.time {
@@ -1700,9 +1702,8 @@ impl EventTimeEditDraft {
                 },
                 date: start.date().to_string(),
                 start_time: start.format("%H:%M").to_string(),
-                duration_minutes: end.map_or_else(String::new, |end| {
-                    (end - *start).num_minutes().to_string()
-                }),
+                duration_minutes: end
+                    .map_or_else(String::new, |end| (end - *start).num_minutes().to_string()),
                 end_date: String::new(),
             }),
             TimeSpec::AllDay {
@@ -1776,11 +1777,8 @@ impl EventTimeEditDraft {
                 let start_time = NaiveTime::parse_from_str(self.start_time.trim(), "%H:%M")
                     .map_err(|_| anyhow::anyhow!("start time must use 24-hour HH:MM"))?;
                 let start = date.and_time(start_time);
-                let end = parse_optional_positive_duration(
-                    &self.duration_minutes,
-                    start,
-                    "duration",
-                )?;
+                let end =
+                    parse_optional_positive_duration(&self.duration_minutes, start, "duration")?;
                 Ok(TimeSpec::Floating {
                     start,
                     end,
@@ -12368,8 +12366,7 @@ mod tests {
             },
         );
 
-        let mut draft =
-            EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("time draft");
+        let mut draft = EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("time draft");
         assert_eq!(draft.date, "2026-10-07");
         assert_eq!(draft.start_time, "09:30");
         assert_eq!(draft.duration_minutes, "90");
@@ -12407,8 +12404,7 @@ mod tests {
                 end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 9).expect("end")),
             },
         );
-        let mut draft =
-            EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("time draft");
+        let mut draft = EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("time draft");
         assert_eq!(draft.end_date, "2026-10-09");
         draft.date = "2026-10-08".to_string();
         draft.end_date = "2026-10-10".to_string();
