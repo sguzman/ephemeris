@@ -341,6 +341,7 @@ mod tests {
     use super::*;
     use crate::domain::{
         RecurrenceFrequency, RecurrenceRule, SourceAuthority, SourceKind, TimeSpec,
+        TimeUncertainty,
     };
 
     fn fixture_source() -> TemporalSource {
@@ -390,6 +391,47 @@ mod tests {
         let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
         let decoded = parse_canonical_json_snapshot(&encoded).expect("decode");
         assert_eq!(decoded, snapshot);
+    }
+
+    #[test]
+    fn canonical_snapshot_preserves_temporal_uncertainty_losslessly() {
+        let source = fixture_source();
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let mut event = TemporalEvent::new(
+            "Uncertain snapshot event",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.source_id = Some(source.id);
+        event.source_record_key = Some("uncertain-event".to_string());
+        event.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: day - Duration::days(2),
+            latest: day + Duration::days(4),
+        });
+
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: CANONICAL_SNAPSHOT_VERSION,
+            sources: vec![source],
+            events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+        };
+
+        let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
+        let decoded = parse_canonical_json_snapshot(&encoded).expect("decode");
+        assert_eq!(decoded.events[0].time_uncertainty, event.time_uncertainty);
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        import_canonical_json_snapshot(&store, &decoded).expect("merge");
+        let stored = store
+            .event_by_id(event.id)
+            .expect("query")
+            .expect("stored event");
+        assert_eq!(stored.time_uncertainty, event.time_uncertainty);
     }
 
     #[test]
