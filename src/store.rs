@@ -11,13 +11,13 @@ use uuid::Uuid;
 use crate::calendar::CalendarLayout;
 use crate::domain::{
     EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
-    EventIdentityState, EventLocation, EventProvenanceRecord, EventProvenanceRole, EventRelation,
-    EventStatus, RecurrenceRule, SourceAuthority, SourceKind, TemporalEvent, TemporalSource,
-    TimeSpec, TimeUncertainty,
+    EventIdentityState, EventLocation, EventParticipant, EventProvenanceRecord,
+    EventProvenanceRole, EventRelation, EventStatus, RecurrenceRule, SourceAuthority, SourceKind,
+    TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 21;
+const SCHEMA_VERSION: i64 = 22;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -1493,6 +1493,9 @@ impl TemporalStore {
         event
             .validate_location()
             .context("invalid event location")?;
+        event
+            .validate_participants()
+            .context("invalid event participants")?;
         let encoded = EncodedTime::from_time_spec(&event.time)?;
         let assertion_refs_json = encode_string_vec(&event.assertion_refs, "assertion refs")?;
         let source_refs_json = encode_string_vec(&event.source_refs, "source refs")?;
@@ -1515,6 +1518,8 @@ impl TemporalStore {
             .map(serde_json::to_string)
             .transpose()
             .context("failed to encode event location")?;
+        let participants_json = serde_json::to_string(&event.participants)
+            .context("failed to encode event participants")?;
         let tags_json = encode_string_vec(&event.tags, "event tags")?;
         let properties_json = serde_json::to_string(&event.properties)
             .context("failed to encode event properties")?;
@@ -1527,7 +1532,7 @@ impl TemporalStore {
                     upstream_event_ref, upstream_reconciled_key,
                     assertion_refs_json, source_refs_json, provenance_refs_json, renderability,
                     normalized_title, raw_title, description,
-                    event_type, domain, jurisdiction, institution, location_json,
+                    event_type, domain, jurisdiction, institution, location_json, participants_json,
                     status, confidence, importance, personal_relevance,
                     time_kind, start_utc, end_utc, source_timezone,
                     start_date, end_date_exclusive,
@@ -1540,7 +1545,7 @@ impl TemporalStore {
                     :upstream_event_ref, :upstream_reconciled_key,
                     :assertion_refs_json, :source_refs_json, :provenance_refs_json, :renderability,
                     :normalized_title, :raw_title, :description,
-                    :event_type, :domain, :jurisdiction, :institution, :location_json,
+                    :event_type, :domain, :jurisdiction, :institution, :location_json, :participants_json,
                     :status, :confidence, :importance, :personal_relevance,
                     :time_kind, :start_utc, :end_utc, :source_timezone,
                     :start_date, :end_date_exclusive,
@@ -1566,6 +1571,7 @@ impl TemporalStore {
                     jurisdiction = excluded.jurisdiction,
                     institution = excluded.institution,
                     location_json = excluded.location_json,
+                    participants_json = excluded.participants_json,
                     status = excluded.status,
                     confidence = excluded.confidence,
                     importance = excluded.importance,
@@ -1603,6 +1609,7 @@ impl TemporalStore {
                     ":jurisdiction": event.jurisdiction,
                     ":institution": event.institution,
                     ":location_json": location_json,
+                    ":participants_json": participants_json,
                     ":status": event.status.as_str(),
                     ":confidence": event.confidence,
                     ":importance": event.importance,
@@ -3590,6 +3597,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 20 {
         migrate_v20_to_v21(conn)?;
+        current = 21;
+    }
+
+    if current == 21 {
+        migrate_v21_to_v22(conn)?;
     }
 
     Ok(())
@@ -4037,6 +4049,13 @@ fn create_event_identity_schema_current(conn: &Connection) -> anyhow::Result<()>
     .context("failed to create event identity assessment schema")
 }
 
+fn add_event_participants_column(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE temporal_events ADD COLUMN participants_json TEXT NOT NULL DEFAULT '[]';",
+    )
+    .context("failed to add event participants column")
+}
+
 fn add_event_location_column(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch("ALTER TABLE temporal_events ADD COLUMN location_json TEXT;")
         .context("failed to add event location column")
@@ -4108,6 +4127,17 @@ fn create_event_annotation_schema_current(conn: &Connection) -> anyhow::Result<(
         "#,
     )
     .context("failed to create event annotation schema")
+}
+
+fn migrate_v21_to_v22(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v21 to v22 migration")?;
+    add_event_participants_column(&tx)?;
+    tx.pragma_update(None, "user_version", 22)
+        .context("failed to set schema version 22")?;
+    tx.commit()
+        .context("failed to commit v21 to v22 schema migration")
 }
 
 fn migrate_v20_to_v21(conn: &mut Connection) -> anyhow::Result<()> {
@@ -4451,7 +4481,7 @@ fn migrate_v1_to_v2(conn: &mut Connection) -> anyhow::Result<()> {
         INSERT INTO temporal_events_v2 (
             id, source_id, source_record_key,
             normalized_title, raw_title, description,
-            event_type, domain, jurisdiction, institution, location_json,
+            event_type, domain, jurisdiction, institution, location_json, participants_json,
             status, confidence, importance, personal_relevance,
             time_kind, start_utc, end_utc, source_timezone,
             start_date, end_date_exclusive,
@@ -4773,6 +4803,10 @@ fn decode_event(row: &Row<'_>) -> rusqlite::Result<TemporalEvent> {
             .map(|raw| serde_json::from_str::<EventLocation>(&raw))
             .transpose()
             .map_err(to_sql_decode_error)?,
+        participants: serde_json::from_str::<Vec<EventParticipant>>(
+            &row.get::<_, String>("participants_json")?,
+        )
+        .map_err(to_sql_decode_error)?,
         status,
         confidence: row.get("confidence")?,
         importance: row.get("importance")?,
