@@ -10,12 +10,12 @@ use uuid::Uuid;
 
 use crate::calendar::CalendarLayout;
 use crate::domain::{
-    EventStatus, RecurrenceRule, SourceAuthority, SourceKind, TemporalEvent, TemporalSource,
-    TimeSpec,
+    EventCollection, EventCollectionMember, EventRelation, EventStatus, RecurrenceRule,
+    SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 14;
+const SCHEMA_VERSION: i64 = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -2315,6 +2315,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         create_saved_views_schema_current(&tx)?;
         create_taria_release_schema_current(&tx)?;
         create_refresh_history_schema_current(&tx)?;
+        create_event_relation_collection_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -2383,6 +2384,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 13 {
         migrate_v13_to_v14(conn)?;
+        current = 14;
+    }
+
+    if current == 14 {
+        migrate_v14_to_v15(conn)?;
     }
 
     Ok(())
@@ -2740,6 +2746,66 @@ fn add_event_recurrence_column(conn: &Connection) -> anyhow::Result<()> {
     )
     .context("failed to add event recurrence definition")?;
     Ok(())
+}
+
+fn create_event_relation_collection_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE event_relations (
+            id TEXT PRIMARY KEY,
+            from_event_id TEXT NOT NULL REFERENCES temporal_events(id) ON DELETE CASCADE,
+            to_event_id TEXT NOT NULL REFERENCES temporal_events(id) ON DELETE CASCADE,
+            relation_type TEXT NOT NULL,
+            properties_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (from_event_id <> to_event_id),
+            UNIQUE (from_event_id, to_event_id, relation_type)
+        );
+
+        CREATE INDEX event_relations_from
+            ON event_relations(from_event_id, relation_type);
+        CREATE INDEX event_relations_to
+            ON event_relations(to_event_id, relation_type);
+        CREATE INDEX event_relations_type
+            ON event_relations(relation_type);
+
+        CREATE TABLE event_collections (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            ordered INTEGER NOT NULL DEFAULT 0,
+            properties_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX event_collections_name
+            ON event_collections(name COLLATE NOCASE);
+
+        CREATE TABLE event_collection_members (
+            collection_id TEXT NOT NULL REFERENCES event_collections(id) ON DELETE CASCADE,
+            event_id TEXT NOT NULL REFERENCES temporal_events(id) ON DELETE CASCADE,
+            position INTEGER,
+            PRIMARY KEY (collection_id, event_id)
+        );
+
+        CREATE INDEX event_collection_members_event
+            ON event_collection_members(event_id, collection_id);
+        "#,
+    )
+    .context("failed to create event relation/collection schema")
+}
+
+fn migrate_v14_to_v15(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v14 to v15 migration")?;
+    create_event_relation_collection_schema_current(&tx)?;
+    tx.pragma_update(None, "user_version", 15)
+        .context("failed to set schema version 15")?;
+    tx.commit()
+        .context("failed to commit v14 to v15 schema migration")
 }
 
 fn migrate_v13_to_v14(conn: &mut Connection) -> anyhow::Result<()> {
