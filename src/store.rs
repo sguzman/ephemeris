@@ -6834,6 +6834,68 @@ mod tests {
     }
 
     #[test]
+    fn bulk_participant_entity_resolution_matches_manual_source_and_exact_label_semantics() {
+        let store = TemporalStore::open_in_memory().expect("store");
+
+        let mut person = CanonicalEntity::new("Ada Lovelace");
+        person.entity_type = Some("person".to_string());
+        person.aliases = vec!["Ada".to_string()];
+        person.external_refs = vec!["wikidata:Q7259".to_string()];
+        store.upsert_canonical_entity(&person).expect("person");
+
+        let mut organization = CanonicalEntity::new("Ada Foundation");
+        organization.entity_type = Some("organization".to_string());
+        organization.aliases = vec!["Ada".to_string()];
+        store
+            .upsert_canonical_entity(&organization)
+            .expect("organization");
+
+        let mut first = TemporalEvent::new(
+            "Automatic participant resolution",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        let mut source_ref = EventParticipant::new("Source spelling");
+        source_ref.entity_ref = Some("wikidata:Q7259".to_string());
+        let mut typed_alias = EventParticipant::new("Ada");
+        typed_alias.participant_type = Some("person".to_string());
+        first.participants = vec![source_ref, typed_alias];
+        store.upsert_event(&first).expect("first event");
+
+        let mut second = TemporalEvent::new(
+            "Manual ambiguous resolution",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 8).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        second.participants.push(EventParticipant::new("Ada"));
+        store.upsert_event(&second).expect("second event");
+        store
+            .bind_event_participant_entity(second.id, 0, organization.id)
+            .expect("manual binding");
+
+        let resolved = store
+            .resolved_canonical_entities_by_event()
+            .expect("bulk resolution");
+        assert_eq!(resolved.get(&first.id), Some(&vec![person.clone()]));
+        assert_eq!(
+            resolved.get(&second.id),
+            Some(&vec![organization.clone()])
+        );
+
+        store
+            .unbind_event_participant_entity(second.id, 0)
+            .expect("unbind ambiguous participant");
+        let unresolved = store
+            .resolved_canonical_entities_by_event()
+            .expect("bulk resolution after unbind");
+        assert!(!unresolved.contains_key(&second.id));
+    }
+
+    #[test]
     fn participant_entity_bindings_follow_participant_fingerprint_and_fk_cascades() {
         let store = TemporalStore::open_in_memory().expect("store");
         let entity = CanonicalEntity::new("Ada Lovelace");
