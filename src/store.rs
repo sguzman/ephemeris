@@ -10,14 +10,14 @@ use uuid::Uuid;
 
 use crate::calendar::CalendarLayout;
 use crate::domain::{
-    EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
+    CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
     EventIdentityState, EventLocation, EventParticipant, EventProvenanceRecord,
     EventProvenanceRole, EventRelation, EventStatus, RecurrenceRule, SourceAuthority, SourceKind,
     TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 22;
+const SCHEMA_VERSION: i64 = 23;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -3495,6 +3495,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         create_event_revision_schema_current(&tx)?;
         add_event_location_column(&tx)?;
         add_event_participants_column(&tx)?;
+        create_canonical_entity_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -3603,6 +3604,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 21 {
         migrate_v21_to_v22(conn)?;
+        current = 22;
+    }
+
+    if current == 22 {
+        migrate_v22_to_v23(conn)?;
     }
 
     Ok(())
@@ -4062,6 +4068,46 @@ fn add_event_location_column(conn: &Connection) -> anyhow::Result<()> {
         .context("failed to add event location column")
 }
 
+fn create_canonical_entity_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE canonical_entities (
+            id TEXT PRIMARY KEY,
+            canonical_name TEXT NOT NULL,
+            entity_type TEXT,
+            properties_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX canonical_entities_name
+            ON canonical_entities(canonical_name COLLATE NOCASE);
+
+        CREATE INDEX canonical_entities_type
+            ON canonical_entities(entity_type COLLATE NOCASE);
+
+        CREATE TABLE canonical_entity_aliases (
+            entity_id TEXT NOT NULL REFERENCES canonical_entities(id) ON DELETE CASCADE,
+            alias TEXT NOT NULL,
+            alias_key TEXT NOT NULL,
+            PRIMARY KEY (entity_id, alias_key)
+        );
+
+        CREATE INDEX canonical_entity_aliases_key
+            ON canonical_entity_aliases(alias_key);
+
+        CREATE TABLE canonical_entity_external_refs (
+            external_ref TEXT PRIMARY KEY,
+            entity_id TEXT NOT NULL REFERENCES canonical_entities(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX canonical_entity_external_refs_entity
+            ON canonical_entity_external_refs(entity_id);
+        "#,
+    )
+    .context("failed to create canonical entity registry schema")
+}
+
 fn create_event_revision_schema_current(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -4128,6 +4174,17 @@ fn create_event_annotation_schema_current(conn: &Connection) -> anyhow::Result<(
         "#,
     )
     .context("failed to create event annotation schema")
+}
+
+fn migrate_v22_to_v23(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v22 to v23 migration")?;
+    create_canonical_entity_schema_current(&tx)?;
+    tx.pragma_update(None, "user_version", 23)
+        .context("failed to set schema version 23")?;
+    tx.commit()
+        .context("failed to commit v22 to v23 schema migration")
 }
 
 fn migrate_v21_to_v22(conn: &mut Connection) -> anyhow::Result<()> {
