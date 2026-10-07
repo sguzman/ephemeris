@@ -115,9 +115,9 @@ fn parse_notification_lead_minutes(value: &str) -> anyhow::Result<u32> {
     if value.is_empty() {
         anyhow::bail!("reminder lead time is required");
     }
-    value
-        .parse::<u32>()
-        .map_err(|_| anyhow::anyhow!("reminder lead time must be a non-negative whole number of minutes"))
+    value.parse::<u32>().map_err(|_| {
+        anyhow::anyhow!("reminder lead time must be a non-negative whole number of minutes")
+    })
 }
 
 fn parse_optional_confidence(value: &str) -> anyhow::Result<Option<f32>> {
@@ -2914,11 +2914,7 @@ impl EphemerisApp {
         }
     }
 
-    fn create_event_notification_rule(
-        &mut self,
-        event_id: Uuid,
-        event_title: &str,
-    ) {
+    fn create_event_notification_rule(&mut self, event_id: Uuid, event_title: &str) {
         let result = (|| -> anyhow::Result<()> {
             let lead_minutes =
                 parse_notification_lead_minutes(&self.notification_event_lead_minutes)?;
@@ -3743,7 +3739,9 @@ impl EphemerisApp {
             .notification_rules
             .iter()
             .filter_map(|rule| match rule.target {
-                NotificationTarget::SavedView { saved_view_id } => Some((rule.clone(), saved_view_id)),
+                NotificationTarget::SavedView { saved_view_id } => {
+                    Some((rule.clone(), saved_view_id))
+                }
                 NotificationTarget::Event { .. } => None,
             })
             .collect::<Vec<_>>();
