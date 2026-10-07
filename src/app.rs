@@ -4360,9 +4360,7 @@ impl EphemerisApp {
                 .store
                 .delete_event_annotation(annotation_id)
                 .map(|_| ()),
-            TopologyInspectorAction::AddProvenance => {
-                self.create_provenance_for_event(event_id)
-            }
+            TopologyInspectorAction::AddProvenance => self.create_provenance_for_event(event_id),
             TopologyInspectorAction::DeleteProvenance(record_id) => self
                 .store
                 .delete_event_provenance_record(record_id)
@@ -4387,8 +4385,7 @@ impl EphemerisApp {
             anyhow::bail!("provenance reference is empty");
         }
 
-        let mut record =
-            EventProvenanceRecord::new(event_id, self.provenance_new_role, reference);
+        let mut record = EventProvenanceRecord::new(event_id, self.provenance_new_role, reference);
         record.note = if self.provenance_new_note.trim().is_empty() {
             None
         } else {
@@ -7631,7 +7628,9 @@ fn render_query_predicate_editor(
                 .changed();
         }
         QueryPredicate::ProvenanceRoleAnyOf { values } => {
-            ui.small("Matches structured provenance records stored outside canonical event fields.");
+            ui.small(
+                "Matches structured provenance records stored outside canonical event fields.",
+            );
             ui.horizontal_wrapped(|ui| {
                 for role in EventProvenanceRole::ALL {
                     let mut selected = values.contains(&role);
