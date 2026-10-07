@@ -926,16 +926,20 @@ impl TemporalStore {
             ));
         }
 
-        let tx = self
-            .conn
-            .unchecked_transaction()
-            .context("failed to begin event collection membership transaction")?;
+        let owns_transaction = self.conn.is_autocommit();
+        if owns_transaction {
+            self.conn
+                .execute_batch("BEGIN IMMEDIATE")
+                .context("failed to begin event collection membership transaction")?;
+        }
+
         let result = (|| -> anyhow::Result<()> {
-            tx.execute(
-                "DELETE FROM event_collection_members WHERE collection_id = ?1",
-                params![collection_id.to_string()],
-            )
-            .context("failed to clear event collection members")?;
+            self.conn
+                .execute(
+                    "DELETE FROM event_collection_members WHERE collection_id = ?1",
+                    params![collection_id.to_string()],
+                )
+                .context("failed to clear event collection members")?;
 
             for (index, event_id) in event_ids.iter().enumerate() {
                 let position = if collection.ordered {
@@ -943,29 +947,33 @@ impl TemporalStore {
                 } else {
                     None
                 };
-                tx.execute(
-                    r#"
-                    INSERT INTO event_collection_members (
-                        collection_id, event_id, position
-                    ) VALUES (?1, ?2, ?3)
-                    "#,
-                    params![collection_id.to_string(), event_id.to_string(), position,],
-                )
-                .with_context(|| {
-                    format!("failed to add event {event_id} to collection {collection_id}")
-                })?;
+                self.conn
+                    .execute(
+                        r#"
+                        INSERT INTO event_collection_members (
+                            collection_id, event_id, position
+                        ) VALUES (?1, ?2, ?3)
+                        "#,
+                        params![collection_id.to_string(), event_id.to_string(), position,],
+                    )
+                    .with_context(|| {
+                        format!("failed to add event {event_id} to collection {collection_id}")
+                    })?;
             }
             Ok(())
         })();
 
+        if !owns_transaction {
+            return result;
+        }
+
         match result {
-            Ok(()) => {
-                tx.commit()
-                    .context("failed to commit event collection membership transaction")?;
-                Ok(())
-            }
+            Ok(()) => self
+                .conn
+                .execute_batch("COMMIT")
+                .context("failed to commit event collection membership transaction"),
             Err(error) => {
-                let _ = tx.rollback();
+                let _ = self.conn.execute_batch("ROLLBACK");
                 Err(error)
             }
         }
