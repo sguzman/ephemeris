@@ -629,6 +629,162 @@ impl TemporalStore {
         Ok(attempts)
     }
 
+    pub fn upsert_notification_rule(&self, rule: &NotificationRule) -> anyhow::Result<()> {
+        rule.validate().context("invalid notification rule")?;
+        let (target_kind, event_id, saved_view_id) = match rule.target {
+            NotificationTarget::Event { event_id } => (
+                "event",
+                Some(event_id.to_string()),
+                None,
+            ),
+            NotificationTarget::SavedView { saved_view_id } => (
+                "saved_view",
+                None,
+                Some(saved_view_id.to_string()),
+            ),
+        };
+        let (trigger_kind, lead_minutes) = match rule.trigger {
+            NotificationTrigger::BeforeStart { minutes } => {
+                ("before_start", i64::from(minutes))
+            }
+        };
+        let properties_json = serde_json::to_string(&rule.properties)
+            .context("failed to encode notification rule properties")?;
+
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO notification_rules (
+                    id, name, enabled,
+                    target_kind, event_id, saved_view_id,
+                    trigger_kind, lead_minutes,
+                    properties_json, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    enabled = excluded.enabled,
+                    target_kind = excluded.target_kind,
+                    event_id = excluded.event_id,
+                    saved_view_id = excluded.saved_view_id,
+                    trigger_kind = excluded.trigger_kind,
+                    lead_minutes = excluded.lead_minutes,
+                    properties_json = excluded.properties_json,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    rule.id.to_string(),
+                    rule.name,
+                    rule.enabled,
+                    target_kind,
+                    event_id,
+                    saved_view_id,
+                    trigger_kind,
+                    lead_minutes,
+                    properties_json,
+                    rule.created_at.to_rfc3339(),
+                    rule.updated_at.to_rfc3339(),
+                ],
+            )
+            .context("failed to upsert notification rule")?;
+        Ok(())
+    }
+
+    pub fn notification_rule_by_id(&self, id: Uuid) -> anyhow::Result<Option<NotificationRule>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, name, enabled,
+                target_kind, event_id, saved_view_id,
+                trigger_kind, lead_minutes,
+                properties_json, created_at, updated_at
+            FROM notification_rules
+            WHERE id = ?1
+            "#,
+        )?;
+        stmt.query_row(params![id.to_string()], decode_notification_rule)
+            .optional()
+            .context("failed to query notification rule by id")
+    }
+
+    pub fn list_notification_rules(&self) -> anyhow::Result<Vec<NotificationRule>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, name, enabled,
+                target_kind, event_id, saved_view_id,
+                trigger_kind, lead_minutes,
+                properties_json, created_at, updated_at
+            FROM notification_rules
+            ORDER BY enabled DESC, name COLLATE NOCASE, id
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut rules = Vec::new();
+        while let Some(row) = rows.next()? {
+            rules.push(decode_notification_rule(row)?);
+        }
+        Ok(rules)
+    }
+
+    pub fn notification_rules_for_event(
+        &self,
+        event_id: Uuid,
+    ) -> anyhow::Result<Vec<NotificationRule>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, name, enabled,
+                target_kind, event_id, saved_view_id,
+                trigger_kind, lead_minutes,
+                properties_json, created_at, updated_at
+            FROM notification_rules
+            WHERE target_kind = 'event' AND event_id = ?1
+            ORDER BY enabled DESC, lead_minutes, name COLLATE NOCASE, id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![event_id.to_string()])?;
+        let mut rules = Vec::new();
+        while let Some(row) = rows.next()? {
+            rules.push(decode_notification_rule(row)?);
+        }
+        Ok(rules)
+    }
+
+    pub fn notification_rules_for_saved_view(
+        &self,
+        saved_view_id: Uuid,
+    ) -> anyhow::Result<Vec<NotificationRule>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, name, enabled,
+                target_kind, event_id, saved_view_id,
+                trigger_kind, lead_minutes,
+                properties_json, created_at, updated_at
+            FROM notification_rules
+            WHERE target_kind = 'saved_view' AND saved_view_id = ?1
+            ORDER BY enabled DESC, lead_minutes, name COLLATE NOCASE, id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![saved_view_id.to_string()])?;
+        let mut rules = Vec::new();
+        while let Some(row) = rows.next()? {
+            rules.push(decode_notification_rule(row)?);
+        }
+        Ok(rules)
+    }
+
+    pub fn delete_notification_rule(&self, id: Uuid) -> anyhow::Result<bool> {
+        let changed = self
+            .conn
+            .execute(
+                "DELETE FROM notification_rules WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .context("failed to delete notification rule")?;
+        Ok(changed != 0)
+    }
+
     pub fn list_saved_views(&self) -> anyhow::Result<Vec<SavedView>> {
         let mut stmt = self.conn.prepare(
             r#"
@@ -5614,6 +5770,63 @@ fn event_select_sql(suffix: &str) -> String {
         {suffix}
         "#
     )
+}
+
+fn decode_notification_rule(row: &Row<'_>) -> rusqlite::Result<NotificationRule> {
+    let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
+    let target_kind: String = row.get("target_kind")?;
+    let event_id: Option<String> = row.get("event_id")?;
+    let saved_view_id: Option<String> = row.get("saved_view_id")?;
+    let target = match target_kind.as_str() {
+        "event" => NotificationTarget::Event {
+            event_id: Uuid::parse_str(
+                event_id
+                    .as_deref()
+                    .ok_or_else(|| to_sql_decode_error("event notification rule lacks event_id"))?,
+            )
+            .map_err(to_sql_decode_error)?,
+        },
+        "saved_view" => NotificationTarget::SavedView {
+            saved_view_id: Uuid::parse_str(
+                saved_view_id.as_deref().ok_or_else(|| {
+                    to_sql_decode_error("saved-view notification rule lacks saved_view_id")
+                })?,
+            )
+            .map_err(to_sql_decode_error)?,
+        },
+        other => {
+            return Err(to_sql_decode_error(format!(
+                "invalid notification target kind {other:?}"
+            )));
+        }
+    };
+
+    let trigger_kind: String = row.get("trigger_kind")?;
+    let raw_lead_minutes: i64 = row.get("lead_minutes")?;
+    let lead_minutes = u32::try_from(raw_lead_minutes).map_err(to_sql_decode_error)?;
+    let trigger = match trigger_kind.as_str() {
+        "before_start" => NotificationTrigger::BeforeStart {
+            minutes: lead_minutes,
+        },
+        other => {
+            return Err(to_sql_decode_error(format!(
+                "invalid notification trigger kind {other:?}"
+            )));
+        }
+    };
+
+    Ok(NotificationRule {
+        id,
+        name: row.get("name")?,
+        enabled: row.get("enabled")?,
+        target,
+        trigger,
+        properties: decode_json_value(row, "properties_json")?,
+        created_at: parse_datetime(&row.get::<_, String>("created_at")?)
+            .map_err(to_sql_decode_error)?,
+        updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)
+            .map_err(to_sql_decode_error)?,
+    })
 }
 
 fn decode_saved_view(row: &Row<'_>) -> rusqlite::Result<SavedView> {
