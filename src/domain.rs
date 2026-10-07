@@ -1271,11 +1271,7 @@ pub struct EventProvenanceRecord {
 }
 
 impl EventProvenanceRecord {
-    pub fn new(
-        event_id: Uuid,
-        role: EventProvenanceRole,
-        reference: impl Into<String>,
-    ) -> Self {
+    pub fn new(event_id: Uuid, role: EventProvenanceRole, reference: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
@@ -1306,7 +1302,9 @@ pub enum EventProvenanceRecordError {
 impl fmt::Display for EventProvenanceRecordError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyReference => formatter.write_str("event provenance reference cannot be empty"),
+            Self::EmptyReference => {
+                formatter.write_str("event provenance reference cannot be empty")
+            }
         }
     }
 }
