@@ -1228,6 +1228,91 @@ impl fmt::Display for EventIdentityAssessmentError {
 
 impl std::error::Error for EventIdentityAssessmentError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventProvenanceRole {
+    Assertion,
+    Source,
+    Provenance,
+}
+
+impl EventProvenanceRole {
+    pub const ALL: [Self; 3] = [Self::Assertion, Self::Source, Self::Provenance];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Assertion => "assertion",
+            Self::Source => "source",
+            Self::Provenance => "provenance",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "assertion" => Some(Self::Assertion),
+            "source" => Some(Self::Source),
+            "provenance" => Some(Self::Provenance),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventProvenanceRecord {
+    pub id: Uuid,
+    pub event_id: Uuid,
+    pub role: EventProvenanceRole,
+    pub reference: String,
+    pub source_id: Option<Uuid>,
+    pub note: Option<String>,
+    pub properties: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl EventProvenanceRecord {
+    pub fn new(
+        event_id: Uuid,
+        role: EventProvenanceRole,
+        reference: impl Into<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            event_id,
+            role,
+            reference: reference.into(),
+            source_id: None,
+            note: None,
+            properties: Value::Object(Default::default()),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), EventProvenanceRecordError> {
+        if self.reference.trim().is_empty() {
+            return Err(EventProvenanceRecordError::EmptyReference);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventProvenanceRecordError {
+    EmptyReference,
+}
+
+impl fmt::Display for EventProvenanceRecordError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyReference => formatter.write_str("event provenance reference cannot be empty"),
+        }
+    }
+}
+
+impl std::error::Error for EventProvenanceRecordError {}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventAnnotation {
     pub id: Uuid,
