@@ -81,7 +81,7 @@ The v1 schema requires a stable `record_key` per row and represents only non-rec
 
 Source-scoped CSV export is strict. It refuses recurrence, month/year/unknown precision, list-valued references/tags, and arbitrary properties instead of flattening them. Export always writes the v1 header even for an empty source, keeping empty exports re-importable.
 
-CLI import/export and GUI drag/drop/refresh/export are implemented.
+CLI import/export and GUI drag/drop/refresh/export are implemented. CSV file imports/refreshes also write durable `csv_file` success/failure attempts into the generic external-source refresh ledger, and the GUI surfaces those attempts alongside ICS/Webcal history.
 
 ### Native canonical JSON
 
