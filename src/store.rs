@@ -1383,11 +1383,9 @@ impl TemporalStore {
                 binding.entity_id
             ));
         }
-        if !event
-            .participants
-            .iter()
-            .any(|participant| participant_entity_binding_key(participant) == binding.participant_key)
-        {
+        if !event.participants.iter().any(|participant| {
+            participant_entity_binding_key(participant) == binding.participant_key
+        }) {
             return Err(anyhow!(
                 "participant binding key {:?} does not identify a participant on event {}",
                 binding.participant_key,
@@ -3619,10 +3617,9 @@ impl TemporalStore {
             let mut participant_entity_bindings_updated = 0;
             let mut participant_entity_bindings_unchanged = 0;
             for binding in participant_entity_bindings {
-                match self.participant_entity_binding_by_key(
-                    binding.event_id,
-                    &binding.participant_key,
-                )? {
+                match self
+                    .participant_entity_binding_by_key(binding.event_id, &binding.participant_key)?
+                {
                     None => {
                         self.upsert_participant_entity_binding(binding)?;
                         participant_entity_bindings_created += 1;
