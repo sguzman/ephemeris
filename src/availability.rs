@@ -4,6 +4,8 @@ use uuid::Uuid;
 
 use crate::domain::{EventOccurrence, EventStatus, TemporalEvent, TimeSpec};
 
+type UtcInterval = (DateTime<Utc>, DateTime<Utc>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BusyKind {
     Busy,
@@ -186,7 +188,7 @@ fn busy_kind(status: EventStatus) -> Option<BusyKind> {
 fn occurrence_interval_utc(
     occurrence: &EventOccurrence,
     display_timezone: Tz,
-) -> Result<Option<(DateTime<Utc>, DateTime<Utc>)>, String> {
+) -> Result<Option<UtcInterval>, String> {
     if occurrence.cancelled_by_override {
         return Ok(None);
     }
