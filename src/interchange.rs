@@ -5,8 +5,8 @@ use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment, EventRelation,
-    TemporalEvent, TemporalSource,
+    EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
+    EventRelation, TemporalEvent, TemporalSource,
 };
 use crate::store::{CanonicalSnapshotMergeResult, TemporalStore};
 
@@ -702,11 +702,8 @@ mod tests {
     fn canonical_snapshot_v4_preserves_user_annotations() {
         let source = fixture_source();
         let event = fixture_event(&source);
-        let annotation = EventAnnotation::new(
-            event.id,
-            "note",
-            json!({"text": "Keep this local context"}),
-        );
+        let annotation =
+            EventAnnotation::new(event.id, "note", json!({"text": "Keep this local context"}));
         let snapshot = CanonicalJsonSnapshot {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 4,
@@ -767,7 +764,11 @@ mod tests {
             collections: Vec::new(),
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
-            annotations: vec![EventAnnotation::new(Uuid::new_v4(), "note", json!("dangling"))],
+            annotations: vec![EventAnnotation::new(
+                Uuid::new_v4(),
+                "note",
+                json!("dangling"),
+            )],
         };
         assert!(dangling.validate().is_err());
 
