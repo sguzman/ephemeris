@@ -8819,10 +8819,7 @@ fn render_time_spec(ui: &mut egui::Ui, time: &TimeSpec, timezone: Tz) {
     }
 }
 
-fn temporal_uncertainty_labels(
-    uncertainty: &TimeUncertainty,
-    timezone: Tz,
-) -> (String, String) {
+fn temporal_uncertainty_labels(uncertainty: &TimeUncertainty, timezone: Tz) -> (String, String) {
     match uncertainty {
         TimeUncertainty::DateWindow { earliest, latest } => {
             (earliest.to_string(), latest.to_string())
