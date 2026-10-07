@@ -1230,9 +1230,8 @@ impl fmt::Display for TimeUncertaintyError {
             Self::EmptyWindow => formatter.write_str(
                 "temporal placement uncertainty must span more than one possible start value",
             ),
-            Self::AnchorOutsideWindow => formatter.write_str(
-                "canonical event start must lie inside its temporal uncertainty window",
-            ),
+            Self::AnchorOutsideWindow => formatter
+                .write_str("canonical event start must lie inside its temporal uncertainty window"),
         }
     }
 }
@@ -1341,12 +1340,9 @@ impl TemporalEvent {
                     latest_utc,
                 },
             ) => validate_uncertainty_window(*earliest_utc, *latest_utc, *start_utc),
-            (
-                TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. },
-                _,
-            ) => Err(TimeUncertaintyError::UnsupportedTimeKind(
-                self.time.kind_name(),
-            )),
+            (TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. }, _) => Err(
+                TimeUncertaintyError::UnsupportedTimeKind(self.time.kind_name()),
+            ),
             (_, uncertainty) => Err(TimeUncertaintyError::MismatchedTimeKind {
                 uncertainty_kind: uncertainty.kind_name(),
                 time_kind: self.time.kind_name(),
