@@ -3911,6 +3911,24 @@ fn create_event_identity_schema_current(conn: &Connection) -> anyhow::Result<()>
     .context("failed to create event identity assessment schema")
 }
 
+fn create_event_revision_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS event_revisions (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            event_updated_at TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS event_revisions_event_time
+            ON event_revisions(event_id, recorded_at, id);
+        "#,
+    )
+    .context("failed to create event revision history schema")
+}
+
 fn create_event_provenance_schema_current(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -3959,6 +3977,17 @@ fn create_event_annotation_schema_current(conn: &Connection) -> anyhow::Result<(
         "#,
     )
     .context("failed to create event annotation schema")
+}
+
+fn migrate_v19_to_v20(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v19 to v20 migration")?;
+    create_event_revision_schema_current(&tx)?;
+    tx.pragma_update(None, "user_version", 20)
+        .context("failed to set schema version 20")?;
+    tx.commit()
+        .context("failed to commit v19 to v20 schema migration")
 }
 
 fn migrate_v18_to_v19(conn: &mut Connection) -> anyhow::Result<()> {
