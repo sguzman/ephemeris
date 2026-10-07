@@ -439,8 +439,9 @@ impl QueryPredicate {
                     .iter()
                     .any(|state| membership.has_identity_state(*state))
             }),
-            Self::AnnotationKind { annotation_kind } => membership
-                .is_some_and(|membership| membership.has_annotation_kind(annotation_kind))
+            Self::AnnotationKind { annotation_kind } => {
+                membership.is_some_and(|membership| membership.has_annotation_kind(annotation_kind))
+            }
         }
     }
 }
