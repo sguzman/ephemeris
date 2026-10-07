@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`51827c2fae7fc15cac68d15b378e68940f0e1685`
+`479dcd760d1cf4755202f54614b7186ecda4d324`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **518 library tests** pass
+- **523 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -124,7 +124,11 @@ The event-topology milestone is now substantially complete. Ordered sequence reo
 
 Temporal uncertainty now has a canonical first slice. `TemporalEvent.time_uncertainty` is an optional typed bounded **start-placement** window, independent from coarse precision, lifecycle status, and general event `confidence`. Date/all-day, floating, and exact-instant events use date, wall-clock, and UTC uncertainty coordinates respectively; the representative canonical start must lie inside a non-zero window. Schema v16 persists the field losslessly, canonical JSON preserves it, the inspector displays it separately from the representative placement, and programmable views can query both uncertainty presence and overlap against the possible-start window. Recurring events and month/year/unresolved precision deliberately reject this uncertainty form for now, and CSV v1 / iCalendar export reject uncertain events rather than erasing the semantics.
 
-Duplicate/entity assessments, user-owned annotations, and structured provenance are implemented canonical subsystems. Identity assessments remain distinct from ordinary semantic relations; annotations survive source refresh; structured provenance carries typed assertion/source/provenance roles, optional linked sources, notes, and extensible properties. All three are persisted, queryable, inspector-visible, and preserved by canonical JSON. The next unfinished Phase-2 primitive is general-purpose canonical history beyond Taria release snapshots, followed by richer indexed ontology such as structured location and participants.
+Duplicate/entity assessments, user-owned annotations, and structured provenance are implemented canonical subsystems. Identity assessments remain distinct from ordinary semantic relations; annotations survive source refresh; structured provenance carries typed assertion/source/provenance roles, optional linked sources, notes, and extensible properties. All three are persisted, queryable, inspector-visible, and preserved by canonical JSON.
+
+General-purpose canonical event history is now implemented as immutable schema-v20 event revisions. A first revision is captured on creation; later revisions are appended only for real canonical changes, not timestamp-only touches. Live-event writes and revision appends are atomic, revisions survive deletion of the current event, import refreshes inherit the same history boundary, and the inspector exposes a read-only canonical history panel. Existing pre-v20 events are intentionally not backfilled.
+
+The next Phase-2 frontier is richer indexed ontology, beginning with typed structured event location and then participants.
 
 ## Documentation roles
 
