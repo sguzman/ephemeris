@@ -5,19 +5,21 @@ use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
+    CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
     EventProvenanceRecord, EventRelation, TemporalEvent, TemporalSource,
 };
 use crate::store::{CanonicalSnapshotMergeInput, CanonicalSnapshotMergeResult, TemporalStore};
 
 pub const CANONICAL_SNAPSHOT_FORMAT: &str = "ephemeris.canonical_snapshot";
-pub const CANONICAL_SNAPSHOT_VERSION: u32 = 7;
+pub const CANONICAL_SNAPSHOT_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalJsonSnapshot {
     pub format: String,
     pub version: u32,
     pub sources: Vec<TemporalSource>,
+    #[serde(default)]
+    pub entities: Vec<CanonicalEntity>,
     pub events: Vec<TemporalEvent>,
     #[serde(default)]
     pub relations: Vec<EventRelation>,
@@ -36,6 +38,7 @@ pub struct CanonicalJsonSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalJsonExportReport {
     pub source_count: usize,
+    pub entity_count: usize,
     pub event_count: usize,
     pub relation_count: usize,
     pub collection_count: usize,
@@ -49,6 +52,7 @@ pub struct CanonicalJsonExportReport {
 impl CanonicalJsonSnapshot {
     pub fn from_store(store: &TemporalStore) -> anyhow::Result<Self> {
         let mut sources = store.list_sources()?;
+        let mut entities = store.list_canonical_entities()?;
         let mut events = store.list_events()?;
         let mut relations = store.list_event_relations()?;
         let mut collections = store.list_event_collections()?;
@@ -57,6 +61,7 @@ impl CanonicalJsonSnapshot {
         let mut annotations = store.list_event_annotations()?;
         let mut provenance_records = store.list_event_provenance_records()?;
         sources.sort_by_key(|source| source.id);
+        entities.sort_by_key(|entity| entity.id);
         events.sort_by_key(|event| event.id);
         relations.sort_by_key(|relation| relation.id);
         collections.sort_by_key(|collection| collection.id);
@@ -70,6 +75,7 @@ impl CanonicalJsonSnapshot {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION,
             sources,
+            entities,
             events,
             relations,
             collections,
@@ -139,6 +145,11 @@ impl CanonicalJsonSnapshot {
                 "canonical snapshot versions before 7 cannot contain structured event participants"
             ));
         }
+        if self.version < 8 && !self.entities.is_empty() {
+            return Err(anyhow!(
+                "canonical snapshot versions before 8 cannot contain canonical entities"
+            ));
+        }
 
         let mut source_ids = HashSet::new();
         let mut external_refs = HashSet::new();
@@ -152,6 +163,24 @@ impl CanonicalJsonSnapshot {
                 return Err(anyhow!(
                     "duplicate temporal source external_ref {external_ref:?}"
                 ));
+            }
+        }
+
+        let mut entity_ids = HashSet::new();
+        let mut entity_external_refs = HashSet::new();
+        for entity in &self.entities {
+            entity
+                .validate()
+                .with_context(|| format!("canonical entity {} is invalid", entity.id))?;
+            if !entity_ids.insert(entity.id) {
+                return Err(anyhow!("duplicate canonical entity UUID {}", entity.id));
+            }
+            for external_ref in &entity.external_refs {
+                if !entity_external_refs.insert(external_ref.as_str()) {
+                    return Err(anyhow!(
+                        "duplicate canonical entity external reference {external_ref:?}"
+                    ));
+                }
             }
         }
 
@@ -439,6 +468,7 @@ pub fn import_canonical_json_snapshot(
         ),
         _ => store.merge_canonical_snapshot_records(CanonicalSnapshotMergeInput {
             sources: &snapshot.sources,
+            entities: &snapshot.entities,
             events: &snapshot.events,
             relations: &snapshot.relations,
             collections: &snapshot.collections,
@@ -472,6 +502,7 @@ pub fn export_canonical_json_file(
 
     Ok(CanonicalJsonExportReport {
         source_count: snapshot.sources.len(),
+        entity_count: snapshot.entities.len(),
         event_count: snapshot.events.len(),
         relation_count: snapshot.relations.len(),
         collection_count: snapshot.collections.len(),
@@ -513,8 +544,8 @@ mod tests {
 
     use super::*;
     use crate::domain::{
-        EventAnnotation, EventIdentityAssessment, EventIdentityState, EventLocation,
-        EventParticipant, EventProvenanceRecord, EventProvenanceRole, RecurrenceFrequency,
+        CanonicalEntity, EventAnnotation, EventIdentityAssessment, EventIdentityState,
+        EventLocation, EventParticipant, EventProvenanceRecord, EventProvenanceRole, RecurrenceFrequency,
         RecurrenceRule, SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
     };
 
@@ -556,6 +587,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![event],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -568,6 +600,70 @@ mod tests {
         let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
         let decoded = parse_canonical_json_snapshot(&encoded).expect("decode");
         assert_eq!(decoded, snapshot);
+    }
+
+    #[test]
+    fn canonical_snapshot_v8_preserves_canonical_entities_losslessly() {
+        let source = fixture_source();
+        let mut entity = CanonicalEntity::new("Ada Lovelace");
+        entity.entity_type = Some("person".to_string());
+        entity.aliases = vec!["Augusta Ada King".to_string()];
+        entity.external_refs = vec!["wikidata:Q7259".to_string()];
+        entity.properties = json!({"born": 1815});
+
+        let mut event = fixture_event(&source);
+        let mut participant = EventParticipant::new("Ada");
+        participant.role = Some("speaker".to_string());
+        participant.entity_ref = Some(entity.local_reference());
+        event.participants.push(participant);
+
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: CANONICAL_SNAPSHOT_VERSION,
+            sources: vec![source],
+            entities: vec![entity.clone()],
+            events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
+            annotations: Vec::new(),
+            provenance_records: Vec::new(),
+        };
+
+        let encoded = format_canonical_json_snapshot(&snapshot).expect("encode entities");
+        let decoded = parse_canonical_json_snapshot(&encoded).expect("decode entities");
+        assert_eq!(decoded.entities, vec![entity.clone()]);
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let report =
+            import_canonical_json_snapshot(&store, &decoded).expect("merge entity snapshot");
+        assert_eq!(report.entities_created, 1);
+        assert_eq!(
+            store
+                .canonical_entity_by_reference(&entity.local_reference())
+                .expect("resolve local entity")
+                .expect("entity"),
+            entity
+        );
+        assert_eq!(
+            store
+                .event_by_id(event.id)
+                .expect("event query")
+                .expect("event")
+                .participants,
+            event.participants
+        );
+
+        let mut legacy = snapshot;
+        legacy.version = 7;
+        assert!(
+            legacy
+                .validate()
+                .expect_err("v7 must reject canonical entities")
+                .to_string()
+                .contains("before 8")
+        );
     }
 
     #[test]
@@ -585,6 +681,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![event.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -637,6 +734,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![event.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -694,6 +792,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![event.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -724,6 +823,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source.clone()],
+            entities: Vec::new(),
             events: vec![event.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -768,6 +868,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source.clone()],
+            entities: Vec::new(),
             events: vec![event.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -786,6 +887,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![changed_source.clone()],
+            entities: Vec::new(),
             events: vec![changed_event.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -823,6 +925,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source.clone()],
+            entities: Vec::new(),
             events: vec![dangling],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -840,6 +943,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![event, duplicate],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -857,6 +961,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION + 1,
             sources: Vec::new(),
+            entities: Vec::new(),
             events: Vec::new(),
             relations: Vec::new(),
             collections: Vec::new(),
@@ -904,6 +1009,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 5,
             sources: vec![source.clone()],
+            entities: Vec::new(),
             events: vec![event.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -947,6 +1053,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 4,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![event.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -980,6 +1087,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 3,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![event.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -1000,6 +1108,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 4,
             sources: vec![source.clone()],
+            entities: Vec::new(),
             events: vec![event.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -1018,6 +1127,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 4,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![event],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -1047,6 +1157,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 3,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![first.clone(), second.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -1090,6 +1201,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 2,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![first.clone(), second.clone()],
             relations: Vec::new(),
             collections: Vec::new(),
@@ -1128,6 +1240,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 2,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![first.clone(), second.clone()],
             relations: vec![relation.clone()],
             collections: vec![collection.clone()],
@@ -1172,6 +1285,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 2,
             sources: vec![source.clone()],
+            entities: Vec::new(),
             events: vec![event.clone()],
             relations: vec![dangling_relation],
             collections: Vec::new(),
@@ -1187,6 +1301,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 2,
             sources: vec![source],
+            entities: Vec::new(),
             events: vec![event.clone()],
             relations: Vec::new(),
             collections: vec![collection.clone()],
@@ -1220,6 +1335,7 @@ mod tests {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: 2,
             sources: vec![source.clone()],
+            entities: Vec::new(),
             events: vec![first.clone(), second.clone()],
             relations: Vec::new(),
             collections: vec![collection.clone()],
