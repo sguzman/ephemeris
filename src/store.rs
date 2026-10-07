@@ -6078,6 +6078,150 @@ mod tests {
     }
 
     #[test]
+    fn canonical_entity_registry_roundtrips_searches_and_protects_external_refs() {
+        let store = TemporalStore::open_in_memory().expect("store");
+
+        let mut ada = CanonicalEntity::new("Ada Lovelace");
+        ada.entity_type = Some("person".to_string());
+        ada.aliases = vec![
+            "Augusta Ada King".to_string(),
+            "Countess of Lovelace".to_string(),
+        ];
+        ada.external_refs = vec!["wikidata:Q7259".to_string()];
+        ada.properties = serde_json::json!({"born": 1815});
+        store.upsert_canonical_entity(&ada).expect("persist Ada");
+
+        assert_eq!(
+            store
+                .canonical_entity_by_id(ada.id)
+                .expect("entity query")
+                .expect("Ada"),
+            ada
+        );
+        assert_eq!(
+            store
+                .canonical_entity_by_reference(&ada.local_reference())
+                .expect("local ref")
+                .expect("Ada by local ref"),
+            ada
+        );
+        assert_eq!(
+            store
+                .canonical_entity_by_reference("wikidata:Q7259")
+                .expect("external ref")
+                .expect("Ada by external ref"),
+            ada
+        );
+        assert_eq!(
+            store
+                .search_canonical_entities("augusta", 10)
+                .expect("alias search"),
+            vec![ada.clone()]
+        );
+        assert_eq!(
+            store
+                .search_canonical_entities("person", 10)
+                .expect("type search"),
+            vec![ada.clone()]
+        );
+
+        let mut duplicate_ref = CanonicalEntity::new("Different Ada");
+        duplicate_ref.external_refs = vec!["wikidata:Q7259".to_string()];
+        assert!(
+            store
+                .upsert_canonical_entity(&duplicate_ref)
+                .expect_err("duplicate external ref must fail")
+                .to_string()
+                .contains("failed to claim canonical entity external reference")
+        );
+        assert!(
+            store
+                .canonical_entity_by_id(duplicate_ref.id)
+                .expect("duplicate entity query")
+                .is_none()
+        );
+
+        let mut updated = ada.clone();
+        updated.aliases = vec!["Ada King".to_string()];
+        updated.external_refs = vec!["example:ada".to_string()];
+        updated.updated_at = Utc::now();
+        store
+            .upsert_canonical_entity(&updated)
+            .expect("update Ada references");
+        assert!(
+            store
+                .canonical_entity_by_reference("wikidata:Q7259")
+                .expect("old external ref")
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .canonical_entity_by_reference("example:ada")
+                .expect("new external ref")
+                .expect("updated Ada"),
+            updated
+        );
+
+        let mut event = TemporalEvent::new(
+            "Participant assertion",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        let mut participant = EventParticipant::new("Ada");
+        participant.entity_ref = Some(updated.local_reference());
+        event.participants.push(participant);
+        store.upsert_event(&event).expect("participant event");
+
+        assert!(store.delete_canonical_entity(updated.id).expect("delete entity"));
+        let reloaded = store
+            .event_by_id(event.id)
+            .expect("event query")
+            .expect("event");
+        assert_eq!(
+            reloaded.participants[0].entity_ref.as_deref(),
+            Some(updated.local_reference().as_str())
+        );
+        assert!(
+            store
+                .canonical_entity_by_reference(
+                    reloaded.participants[0]
+                        .entity_ref
+                        .as_deref()
+                        .expect("entity ref"),
+                )
+                .expect("unresolved local ref")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn canonical_entity_validation_rejects_duplicate_aliases_and_blank_refs() {
+        let store = TemporalStore::open_in_memory().expect("store");
+
+        let mut duplicate_alias = CanonicalEntity::new("Example");
+        duplicate_alias.aliases = vec!["Alias".to_string(), " alias ".to_string()];
+        assert!(
+            store
+                .upsert_canonical_entity(&duplicate_alias)
+                .expect_err("duplicate aliases must fail")
+                .to_string()
+                .contains("invalid canonical entity")
+        );
+
+        let mut blank_ref = CanonicalEntity::new("Example");
+        blank_ref.external_refs = vec!["   ".to_string()];
+        assert!(
+            store
+                .upsert_canonical_entity(&blank_ref)
+                .expect_err("blank external ref must fail")
+                .to_string()
+                .contains("invalid canonical entity")
+        );
+    }
+
+    #[test]
     fn structured_event_participants_roundtrip_and_invalid_rows_are_rejected() {
         let store = TemporalStore::open_in_memory().expect("store");
         let mut event = TemporalEvent::new(
