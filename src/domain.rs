@@ -1479,6 +1479,73 @@ impl fmt::Display for TimeUncertaintyError {
 
 impl std::error::Error for TimeUncertaintyError {}
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventParticipant {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub participant_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_ref: Option<String>,
+    #[serde(default)]
+    pub properties: Value,
+}
+
+impl EventParticipant {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            role: None,
+            participant_type: None,
+            entity_ref: None,
+            properties: Value::Object(Default::default()),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), EventParticipantError> {
+        if self.name.trim().is_empty() {
+            return Err(EventParticipantError::EmptyName);
+        }
+        for (field, value) in [
+            ("role", self.role.as_deref()),
+            ("participant_type", self.participant_type.as_deref()),
+            ("entity_ref", self.entity_ref.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.trim().is_empty()) {
+                return Err(EventParticipantError::EmptyOptionalField(field));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn text_values(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.name.as_str())
+            .chain(self.role.as_deref())
+            .chain(self.participant_type.as_deref())
+            .chain(self.entity_ref.as_deref())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventParticipantError {
+    EmptyName,
+    EmptyOptionalField(&'static str),
+}
+
+impl fmt::Display for EventParticipantError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyName => formatter.write_str("event participant name cannot be blank"),
+            Self::EmptyOptionalField(field) => {
+                write!(formatter, "event participant field {field} cannot be blank")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EventParticipantError {}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct EventLocation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1616,6 +1683,8 @@ pub struct TemporalEvent {
     pub institution: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<EventLocation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub participants: Vec<EventParticipant>,
     pub status: EventStatus,
     pub confidence: Option<f32>,
     pub importance: Option<i32>,
@@ -1652,6 +1721,7 @@ impl TemporalEvent {
             jurisdiction: None,
             institution: None,
             location: None,
+            participants: Vec::new(),
             status: EventStatus::Scheduled,
             confidence: None,
             importance: None,
@@ -1678,6 +1748,13 @@ impl TemporalEvent {
         self.location
             .as_ref()
             .map_or(Ok(()), EventLocation::validate)
+    }
+
+    pub fn validate_participants(&self) -> Result<(), EventParticipantError> {
+        for participant in &self.participants {
+            participant.validate()?;
+        }
+        Ok(())
     }
 
     pub fn validate_time_uncertainty(&self) -> Result<(), TimeUncertaintyError> {
