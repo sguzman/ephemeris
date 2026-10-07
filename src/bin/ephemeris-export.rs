@@ -38,6 +38,7 @@ fn main() -> anyhow::Result<()> {
         let report = export_canonical_json_file(&store, &output_path)?;
         println!("Exported Ephemeris canonical JSON snapshot");
         println!("Sources: {}", report.source_count);
+        println!("Entities: {}", report.entity_count);
         println!("Events: {}", report.event_count);
         println!("Relations: {}", report.relation_count);
         println!("Collections: {}", report.collection_count);
