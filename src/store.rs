@@ -7296,7 +7296,37 @@ mod tests {
                 end_exclusive: None,
             },
         );
-        store_v24.upsert_event(&event).expect("event");
+        store_v24
+            .conn
+            .execute(
+                r#"
+                INSERT INTO temporal_events (
+                    id,
+                    assertion_refs_json, source_refs_json, provenance_refs_json,
+                    normalized_title, status,
+                    time_kind, start_date,
+                    participants_json,
+                    tags_json, properties_json,
+                    created_at, updated_at
+                ) VALUES (
+                    ?1, '[]', '[]', '[]',
+                    ?2, ?3,
+                    'date_only', ?4,
+                    '[]',
+                    '[]', '{}',
+                    ?5, ?6
+                )
+                "#,
+                params![
+                    event.id.to_string(),
+                    event.normalized_title,
+                    event.status.as_str(),
+                    "2026-10-08",
+                    event.created_at.to_rfc3339(),
+                    event.updated_at.to_rfc3339(),
+                ],
+            )
+            .expect("insert pre-v25 event");
         let view = SavedView {
             id: Uuid::new_v4(),
             name: "Pre-v25 view".to_string(),
@@ -8315,7 +8345,40 @@ mod tests {
         event
             .participants
             .push(EventParticipant::new("Ada Lovelace"));
-        store.upsert_event(&event).expect("persist pre-v24 event");
+        let participants_json =
+            serde_json::to_string(&event.participants).expect("encode pre-v24 participants");
+        store
+            .conn
+            .execute(
+                r#"
+                INSERT INTO temporal_events (
+                    id,
+                    assertion_refs_json, source_refs_json, provenance_refs_json,
+                    normalized_title, status,
+                    time_kind, start_date,
+                    participants_json,
+                    tags_json, properties_json,
+                    created_at, updated_at
+                ) VALUES (
+                    ?1, '[]', '[]', '[]',
+                    ?2, ?3,
+                    'date_only', ?4,
+                    ?5,
+                    '[]', '{}',
+                    ?6, ?7
+                )
+                "#,
+                params![
+                    event.id.to_string(),
+                    event.normalized_title,
+                    event.status.as_str(),
+                    "2026-10-07",
+                    participants_json,
+                    event.created_at.to_rfc3339(),
+                    event.updated_at.to_rfc3339(),
+                ],
+            )
+            .expect("insert pre-v24 event");
 
         let mut conn = store.conn;
         migrate(&mut conn).expect("migrate to current");
