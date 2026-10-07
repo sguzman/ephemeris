@@ -1235,8 +1235,10 @@ impl TemporalStore {
         &self,
         reference: &str,
     ) -> anyhow::Result<Option<CanonicalEntity>> {
-        if let Some(id) = CanonicalEntity::parse_local_reference(reference) {
-            return self.canonical_entity_by_id(id);
+        if let Some(id) = CanonicalEntity::parse_local_reference(reference)
+            && let Some(entity) = self.canonical_entity_by_id(id)?
+        {
+            return Ok(Some(entity));
         }
 
         let entity_id: Option<String> = self
@@ -1697,6 +1699,141 @@ impl TemporalStore {
             }
         }
         Ok(entities)
+    }
+
+    pub fn merge_canonical_entities(
+        &self,
+        target_id: Uuid,
+        source_id: Uuid,
+    ) -> anyhow::Result<CanonicalEntity> {
+        if target_id == source_id {
+            return Err(anyhow!("cannot merge a canonical entity into itself"));
+        }
+
+        let target = self
+            .canonical_entity_by_id(target_id)?
+            .ok_or_else(|| anyhow!("target canonical entity {target_id} does not exist"))?;
+        let source = self
+            .canonical_entity_by_id(source_id)?
+            .ok_or_else(|| anyhow!("source canonical entity {source_id} does not exist"))?;
+
+        if let (Some(target_type), Some(source_type)) =
+            (target.entity_type.as_deref(), source.entity_type.as_deref())
+            && !target_type.eq_ignore_ascii_case(source_type)
+        {
+            return Err(anyhow!(
+                "cannot merge canonical entities with conflicting types {:?} and {:?}",
+                target_type,
+                source_type
+            ));
+        }
+
+        let target_properties_empty = json_object_is_empty(&target.properties);
+        let source_properties_empty = json_object_is_empty(&source.properties);
+        if !target_properties_empty
+            && !source_properties_empty
+            && target.properties != source.properties
+        {
+            return Err(anyhow!(
+                "cannot merge canonical entities with conflicting opaque properties"
+            ));
+        }
+
+        let mut merged = target.clone();
+        if merged.entity_type.is_none() {
+            merged.entity_type.clone_from(&source.entity_type);
+        }
+        if target_properties_empty && !source_properties_empty {
+            merged.properties.clone_from(&source.properties);
+        }
+
+        let target_name_key = normalize_entity_alias(&merged.canonical_name);
+        let mut alias_keys = BTreeSet::new();
+        let mut aliases = Vec::new();
+        for alias in target
+            .aliases
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(source.canonical_name.as_str()))
+            .chain(source.aliases.iter().map(String::as_str))
+        {
+            let key = normalize_entity_alias(alias);
+            if key == target_name_key || !alias_keys.insert(key) {
+                continue;
+            }
+            aliases.push(alias.trim().to_string());
+        }
+        merged.aliases = aliases;
+
+        let mut external_refs = BTreeSet::new();
+        for reference in target
+            .external_refs
+            .iter()
+            .chain(source.external_refs.iter())
+        {
+            external_refs.insert(reference.trim().to_string());
+        }
+        external_refs.insert(source.local_reference());
+        merged.external_refs = external_refs.into_iter().collect();
+        merged.updated_at = Utc::now();
+        merged.validate().context("merged canonical entity is invalid")?;
+
+        let owns_transaction = self.conn.is_autocommit();
+        if owns_transaction {
+            self.conn
+                .execute_batch("BEGIN IMMEDIATE")
+                .context("failed to begin canonical entity merge transaction")?;
+        }
+
+        let result = (|| -> anyhow::Result<()> {
+            self.conn
+                .execute(
+                    r#"
+                    UPDATE participant_entity_bindings
+                    SET entity_id = ?1, updated_at = ?3
+                    WHERE entity_id = ?2
+                    "#,
+                    params![
+                        target_id.to_string(),
+                        source_id.to_string(),
+                        merged.updated_at.to_rfc3339(),
+                    ],
+                )
+                .context("failed to reassign participant entity bindings during merge")?;
+
+            let deleted = self
+                .conn
+                .execute(
+                    "DELETE FROM canonical_entities WHERE id = ?1",
+                    params![source_id.to_string()],
+                )
+                .context("failed to delete merged source canonical entity")?;
+            if deleted == 0 {
+                return Err(anyhow!(
+                    "source canonical entity {source_id} disappeared during merge"
+                ));
+            }
+
+            self.upsert_canonical_entity(&merged)?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                if owns_transaction {
+                    self.conn
+                        .execute_batch("COMMIT")
+                        .context("failed to commit canonical entity merge")?;
+                }
+                Ok(merged)
+            }
+            Err(error) => {
+                if owns_transaction {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                }
+                Err(error)
+            }
+        }
     }
 
     pub fn delete_canonical_entity(&self, id: Uuid) -> anyhow::Result<bool> {
@@ -5521,6 +5658,10 @@ fn decode_event_revision(row: &Row<'_>) -> rusqlite::Result<EventRevision> {
         event_updated_at,
         event,
     })
+}
+
+fn json_object_is_empty(value: &Value) -> bool {
+    value.as_object().is_some_and(serde_json::Map::is_empty)
 }
 
 fn normalize_entity_alias(value: &str) -> String {
