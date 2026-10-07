@@ -840,16 +840,10 @@ impl TemporalStore {
                         collection_id, event_id, position
                     ) VALUES (?1, ?2, ?3)
                     "#,
-                    params![
-                        collection_id.to_string(),
-                        event_id.to_string(),
-                        position,
-                    ],
+                    params![collection_id.to_string(), event_id.to_string(), position,],
                 )
                 .with_context(|| {
-                    format!(
-                        "failed to add event {event_id} to collection {collection_id}"
-                    )
+                    format!("failed to add event {event_id} to collection {collection_id}")
                 })?;
             }
             Ok(())
@@ -4445,7 +4439,10 @@ mod tests {
                 .expect("relation"),
             relation
         );
-        assert_eq!(store.list_event_relations().expect("relations"), vec![relation.clone()]);
+        assert_eq!(
+            store.list_event_relations().expect("relations"),
+            vec![relation.clone()]
+        );
         assert_eq!(
             store
                 .event_relations_for_event(first.id)
@@ -4513,7 +4510,10 @@ mod tests {
         let gamma = TemporalEvent::new(
             "Gamma",
             TimeSpec::DateOnly {
-                start: day.succ_opt().and_then(NaiveDate::succ_opt).expect("third day"),
+                start: day
+                    .succ_opt()
+                    .and_then(NaiveDate::succ_opt)
+                    .expect("third day"),
                 end_exclusive: None,
             },
         );
@@ -4573,7 +4573,9 @@ mod tests {
             vec!["Gamma", "Alpha", "Beta"]
         );
         assert_eq!(
-            store.collections_for_event(alpha.id).expect("reverse lookup"),
+            store
+                .collections_for_event(alpha.id)
+                .expect("reverse lookup"),
             vec![collection.clone()]
         );
 
@@ -4591,9 +4593,11 @@ mod tests {
             before
         );
 
-        assert!(store
-            .replace_event_collection_members(collection.id, &[alpha.id, alpha.id])
-            .is_err());
+        assert!(
+            store
+                .replace_event_collection_members(collection.id, &[alpha.id, alpha.id])
+                .is_err()
+        );
         assert_eq!(
             store
                 .event_collection_members(collection.id)
@@ -4606,14 +4610,18 @@ mod tests {
                 .delete_event_collection(collection.id)
                 .expect("delete collection")
         );
-        assert!(store
-            .event_collection_by_id(collection.id)
-            .expect("collection query")
-            .is_none());
-        assert!(store
-            .event_collection_members(collection.id)
-            .expect("members after collection delete")
-            .is_empty());
+        assert!(
+            store
+                .event_collection_by_id(collection.id)
+                .expect("collection query")
+                .is_none()
+        );
+        assert!(
+            store
+                .event_collection_members(collection.id)
+                .expect("members after collection delete")
+                .is_empty()
+        );
     }
 
     #[test]
