@@ -1453,6 +1453,7 @@ pub struct EphemerisApp {
     remote_ics_import_receiver: Option<Receiver<Result<IcsImportReport, String>>>,
     taria_current_source_ids: BTreeSet<Uuid>,
     event_memberships: HashMap<Uuid, EventMembership>,
+    canonical_entities: Vec<CanonicalEntity>,
     event_collections: Vec<EventCollection>,
     event_collection_members: Vec<EventCollectionMember>,
     event_relations: Vec<EventRelation>,
@@ -1550,6 +1551,7 @@ impl EphemerisApp {
             remote_ics_import_receiver: None,
             taria_current_source_ids: BTreeSet::new(),
             event_memberships: HashMap::new(),
+            canonical_entities: Vec::new(),
             event_collections: Vec::new(),
             event_collection_members: Vec::new(),
             event_relations: Vec::new(),
@@ -2710,6 +2712,20 @@ impl EphemerisApp {
                 .provenance_references
                 .insert(record.reference.clone());
         }
+        self.canonical_entities = self.store.list_canonical_entities()?;
+        for (event_id, entities) in self.store.resolved_canonical_entities_by_event()? {
+            let membership = self.event_memberships.entry(event_id).or_default();
+            for entity in entities {
+                membership.canonical_entity_ids.insert(entity.id);
+                membership
+                    .canonical_entity_names
+                    .insert(entity.canonical_name.clone());
+                if let Some(entity_type) = entity.entity_type {
+                    membership.canonical_entity_types.insert(entity_type);
+                }
+            }
+        }
+
         self.event_collections = self.store.list_event_collections()?;
         self.event_collection_members = self.store.list_event_collection_members()?;
         self.event_relations = self.store.list_event_relations()?;
@@ -3255,6 +3271,14 @@ impl EphemerisApp {
             collections: self.event_collections.clone(),
             relation_types: self.event_relation_types.clone(),
             annotation_kinds: self.event_annotation_kinds.clone(),
+            canonical_entities: self.canonical_entities.clone(),
+            canonical_entity_types: self
+                .canonical_entities
+                .iter()
+                .filter_map(|entity| entity.entity_type.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
         };
         ui.separator();
 
@@ -6298,6 +6322,8 @@ struct MembershipPredicateOptions {
     collections: Vec<EventCollection>,
     relation_types: Vec<String>,
     annotation_kinds: Vec<String>,
+    canonical_entities: Vec<CanonicalEntity>,
+    canonical_entity_types: Vec<String>,
 }
 
 fn render_contextual_week_start(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft) {
@@ -7483,10 +7509,12 @@ enum QueryPredicateKind {
     AnnotationKind,
     ProvenanceRoleAnyOf,
     ProvenanceReference,
+    CanonicalEntityMembership,
+    CanonicalEntityType,
 }
 
 impl QueryPredicateKind {
-    const ALL: [Self; 17] = [
+    const ALL: [Self; 19] = [
         Self::Text,
         Self::TextAnyOf,
         Self::StatusAnyOf,
@@ -7504,6 +7532,8 @@ impl QueryPredicateKind {
         Self::AnnotationKind,
         Self::ProvenanceRoleAnyOf,
         Self::ProvenanceReference,
+        Self::CanonicalEntityMembership,
+        Self::CanonicalEntityType,
     ];
 
     const fn label(self) -> &'static str {
@@ -7525,6 +7555,8 @@ impl QueryPredicateKind {
             Self::AnnotationKind => "Annotation kind",
             Self::ProvenanceRoleAnyOf => "Provenance role",
             Self::ProvenanceReference => "Provenance reference",
+            Self::CanonicalEntityMembership => "Canonical participant entity",
+            Self::CanonicalEntityType => "Canonical participant entity type",
         }
     }
 }
@@ -7627,6 +7659,14 @@ fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
         QueryPredicateKind::ProvenanceReference => QueryPredicate::ProvenanceReference {
             reference: String::new(),
         },
+        QueryPredicateKind::CanonicalEntityMembership => {
+            QueryPredicate::CanonicalEntityMembership {
+                entity_id: Uuid::nil(),
+            }
+        }
+        QueryPredicateKind::CanonicalEntityType => QueryPredicate::CanonicalEntityType {
+            entity_type: String::new(),
+        },
     }
 }
 
@@ -7651,6 +7691,10 @@ fn query_predicate_kind(predicate: &QueryPredicate) -> QueryPredicateKind {
         QueryPredicate::AnnotationKind { .. } => QueryPredicateKind::AnnotationKind,
         QueryPredicate::ProvenanceRoleAnyOf { .. } => QueryPredicateKind::ProvenanceRoleAnyOf,
         QueryPredicate::ProvenanceReference { .. } => QueryPredicateKind::ProvenanceReference,
+        QueryPredicate::CanonicalEntityMembership { .. } => {
+            QueryPredicateKind::CanonicalEntityMembership
+        }
+        QueryPredicate::CanonicalEntityType { .. } => QueryPredicateKind::CanonicalEntityType,
     }
 }
 
@@ -8147,6 +8191,65 @@ fn render_query_predicate_editor(
                 .add(
                     egui::TextEdit::singleline(annotation_kind)
                         .hint_text("note, watched, rating, ..."),
+                )
+                .changed();
+        }
+        QueryPredicate::CanonicalEntityMembership { entity_id } => {
+            ui.small(
+                "Matches participants resolved to a durable canonical entity; the saved view stores the entity UUID, so renames remain stable.",
+            );
+            let selected = membership_options
+                .canonical_entities
+                .iter()
+                .find(|entity| entity.id == *entity_id)
+                .map(|entity| {
+                    entity.entity_type.as_deref().map_or_else(
+                        || entity.canonical_name.clone(),
+                        |kind| format!("{} · {kind}", entity.canonical_name),
+                    )
+                })
+                .unwrap_or_else(|| {
+                    if entity_id.is_nil() {
+                        "Select canonical entity…".to_string()
+                    } else {
+                        entity_id.to_string()
+                    }
+                });
+            egui::ComboBox::from_id_salt(("advanced-canonical-entity", path))
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    for entity in &membership_options.canonical_entities {
+                        let label = entity.entity_type.as_deref().map_or_else(
+                            || entity.canonical_name.clone(),
+                            |kind| format!("{} · {kind}", entity.canonical_name),
+                        );
+                        changed |= ui
+                            .selectable_value(entity_id, entity.id, label)
+                            .changed();
+                    }
+                });
+        }
+        QueryPredicate::CanonicalEntityType { entity_type } => {
+            ui.small(
+                "Matches events whose participants resolve to a canonical entity of this type.",
+            );
+            egui::ComboBox::from_id_salt(("advanced-canonical-entity-type", path))
+                .selected_text(if entity_type.is_empty() {
+                    "Select entity type…"
+                } else {
+                    entity_type.as_str()
+                })
+                .show_ui(ui, |ui| {
+                    for candidate in &membership_options.canonical_entity_types {
+                        changed |= ui
+                            .selectable_value(entity_type, candidate.clone(), candidate)
+                            .changed();
+                    }
+                });
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(entity_type)
+                        .hint_text("person, organization, team, ..."),
                 )
                 .changed();
         }
