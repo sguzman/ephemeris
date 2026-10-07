@@ -19,7 +19,7 @@ use crate::calendar::{
 };
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
-    CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
+    AvailabilityBehavior, CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
     EventIdentityAssessment, EventIdentityState, EventParticipant, EventProvenanceRecord,
     EventProvenanceRole, EventRelation, EventStatus, NotificationRule, NotificationTarget,
     RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride,
@@ -1618,6 +1618,7 @@ struct EventDetailsEditDraft {
     jurisdiction: String,
     institution: String,
     status: EventStatus,
+    availability: AvailabilityBehavior,
     confidence: String,
     importance: String,
     personal_relevance: String,
@@ -1634,6 +1635,7 @@ impl EventDetailsEditDraft {
             jurisdiction: event.jurisdiction.clone().unwrap_or_default(),
             institution: event.institution.clone().unwrap_or_default(),
             status: event.status,
+            availability: event.availability,
             confidence: event
                 .confidence
                 .map_or_else(String::new, |value| value.to_string()),
@@ -2913,6 +2915,7 @@ impl EphemerisApp {
             event.jurisdiction = optional_trimmed(&draft.jurisdiction);
             event.institution = optional_trimmed(&draft.institution);
             event.status = draft.status;
+            event.availability = draft.availability;
             event.confidence = confidence;
             event.importance = importance;
             event.personal_relevance = personal_relevance;
@@ -6572,13 +6575,32 @@ impl EphemerisApp {
                             .hint_text("Institution"),
                     );
 
-                    egui::ComboBox::from_id_salt(("event-details-status", canonical_id))
-                        .selected_text(draft.status.as_str())
-                        .show_ui(ui, |ui| {
-                            for status in EventStatus::ALL {
-                                ui.selectable_value(&mut draft.status, status, status.as_str());
-                            }
-                        });
+                    ui.horizontal_wrapped(|ui| {
+                        egui::ComboBox::from_id_salt(("event-details-status", canonical_id))
+                            .selected_text(draft.status.as_str())
+                            .show_ui(ui, |ui| {
+                                for status in EventStatus::ALL {
+                                    ui.selectable_value(&mut draft.status, status, status.as_str());
+                                }
+                            });
+                        egui::ComboBox::from_id_salt(("event-details-availability", canonical_id))
+                            .selected_text(match draft.availability {
+                                AvailabilityBehavior::Busy => "Busy",
+                                AvailabilityBehavior::Free => "Free",
+                            })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut draft.availability,
+                                    AvailabilityBehavior::Busy,
+                                    "Busy · blocks availability",
+                                );
+                                ui.selectable_value(
+                                    &mut draft.availability,
+                                    AvailabilityBehavior::Free,
+                                    "Free · does not block availability",
+                                );
+                            });
+                    });
 
                     ui.horizontal_wrapped(|ui| {
                         ui.add(
@@ -6622,6 +6644,14 @@ impl EphemerisApp {
 
             inspector_row(ui, "Time kind", event.time.kind_name());
             inspector_row(ui, "Display", &event.display_time_label(self.timezone()));
+            inspector_row(
+                ui,
+                "Availability",
+                match event.availability {
+                    AvailabilityBehavior::Busy => "Busy · blocks time",
+                    AvailabilityBehavior::Free => "Free · does not block time",
+                },
+            );
             if let Some(uncertainty) = event.time_uncertainty.as_ref() {
                 let (earliest, latest) =
                     temporal_uncertainty_labels(uncertainty, self.timezone());
