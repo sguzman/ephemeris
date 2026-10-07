@@ -530,6 +530,7 @@ pub enum TextField {
     Domain,
     Jurisdiction,
     Institution,
+    Location,
     Renderability,
     UpstreamEventRef,
     UpstreamReconciledKey,
@@ -541,7 +542,7 @@ pub enum TextField {
 }
 
 impl TextField {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Title,
         Self::RawTitle,
         Self::Description,
@@ -549,6 +550,7 @@ impl TextField {
         Self::Domain,
         Self::Jurisdiction,
         Self::Institution,
+        Self::Location,
         Self::Renderability,
         Self::UpstreamEventRef,
         Self::UpstreamReconciledKey,
@@ -568,6 +570,7 @@ impl TextField {
             Self::Domain => "Domain",
             Self::Jurisdiction => "Jurisdiction",
             Self::Institution => "Institution",
+            Self::Location => "Location",
             Self::Renderability => "Renderability",
             Self::UpstreamEventRef => "Upstream event ref",
             Self::UpstreamReconciledKey => "Reconciled key",
@@ -671,6 +674,7 @@ pub enum PresenceField {
     Domain,
     Jurisdiction,
     Institution,
+    Location,
     Renderability,
     Confidence,
     TimeUncertainty,
@@ -686,7 +690,7 @@ pub enum PresenceField {
 }
 
 impl PresenceField {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::Source,
         Self::RawTitle,
         Self::Description,
@@ -694,6 +698,7 @@ impl PresenceField {
         Self::Domain,
         Self::Jurisdiction,
         Self::Institution,
+        Self::Location,
         Self::Renderability,
         Self::Confidence,
         Self::TimeUncertainty,
@@ -717,6 +722,7 @@ impl PresenceField {
             Self::Domain => "Domain",
             Self::Jurisdiction => "Jurisdiction",
             Self::Institution => "Institution",
+            Self::Location => "Location",
             Self::Renderability => "Renderability",
             Self::Confidence => "Confidence",
             Self::TimeUncertainty => "Temporal uncertainty",
@@ -742,6 +748,10 @@ fn text_values(event: &TemporalEvent, field: TextField) -> Vec<&str> {
         TextField::Domain => event.domain.iter().map(String::as_str).collect(),
         TextField::Jurisdiction => event.jurisdiction.iter().map(String::as_str).collect(),
         TextField::Institution => event.institution.iter().map(String::as_str).collect(),
+        TextField::Location => event
+            .location
+            .as_ref()
+            .map_or_else(Vec::new, |location| location.text_values().collect()),
         TextField::Renderability => event.renderability.iter().map(String::as_str).collect(),
         TextField::UpstreamEventRef => event
             .upstream_event_ref
@@ -907,6 +917,7 @@ fn field_exists(event: &TemporalEvent, field: PresenceField) -> bool {
         PresenceField::Domain => event.domain.is_some(),
         PresenceField::Jurisdiction => event.jurisdiction.is_some(),
         PresenceField::Institution => event.institution.is_some(),
+        PresenceField::Location => event.location.is_some(),
         PresenceField::Renderability => event.renderability.is_some(),
         PresenceField::Confidence => event.confidence.is_some(),
         PresenceField::TimeUncertainty => event.time_uncertainty.is_some(),
@@ -1720,6 +1731,42 @@ mod tests {
         };
 
         assert!(query.matches(&event(), &test_context()));
+    }
+
+    #[test]
+    fn structured_location_is_queryable_by_text_and_presence() {
+        let mut located = event();
+        located.location = Some(crate::domain::EventLocation {
+            name: Some("Palacio de Bellas Artes".to_string()),
+            locality: Some("Ciudad de México".to_string()),
+            country: Some("MX".to_string()),
+            ..crate::domain::EventLocation::default()
+        });
+
+        let text = QueryPredicate::Text {
+            field: TextField::Location,
+            operator: TextOperator::Contains,
+            value: "bellas".to_string(),
+            case_sensitive: false,
+        };
+        let locality = QueryPredicate::Text {
+            field: TextField::Location,
+            operator: TextOperator::Contains,
+            value: "méxico".to_string(),
+            case_sensitive: false,
+        };
+        let present = QueryPredicate::Exists {
+            field: PresenceField::Location,
+            exists: true,
+        };
+
+        assert!(text.matches(&located, &test_context()));
+        assert!(locality.matches(&located, &test_context()));
+        assert!(present.matches(&located, &test_context()));
+
+        let unlocated = event();
+        assert!(!text.matches(&unlocated, &test_context()));
+        assert!(!present.matches(&unlocated, &test_context()));
     }
 
     #[test]
