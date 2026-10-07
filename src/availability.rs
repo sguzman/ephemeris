@@ -44,6 +44,12 @@ pub struct AvailabilityResult {
     pub skipped: Vec<AvailabilitySkip>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConflictCheck {
+    pub conflicts: Vec<BusyInterval>,
+    pub skipped: Vec<AvailabilitySkip>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlotSearch {
     pub duration_minutes: u32,
@@ -70,6 +76,49 @@ impl SlotSearch {
         }
         Ok(self)
     }
+}
+
+pub fn conflicts_for_candidate_event(
+    events: &[TemporalEvent],
+    candidate: &TemporalEvent,
+    display_timezone: Tz,
+    exclude_event_id: Option<Uuid>,
+) -> anyhow::Result<ConflictCheck> {
+    if !candidate.availability.blocks_time() || busy_kind(candidate.status).is_none() {
+        return Ok(ConflictCheck::default());
+    }
+    if candidate.recurrence.is_some() {
+        anyhow::bail!("conflict checking requires a non-recurring candidate event");
+    }
+
+    let occurrence = EventOccurrence {
+        id: candidate.id,
+        event_id: candidate.id,
+        recurrence_index: None,
+        origin: crate::domain::RecurrenceOccurrenceOrigin::Rule,
+        original_time: candidate.time.clone(),
+        time: candidate.time.clone(),
+        status: candidate.status,
+        override_applied: false,
+        cancelled_by_override: false,
+    };
+    let candidate_interval = occurrence_interval_utc(&occurrence, display_timezone)
+        .map_err(anyhow::Error::msg)?
+        .ok_or_else(|| anyhow::anyhow!("candidate event has no blocking interval"))?;
+    let (start_utc, end_utc) = candidate_interval;
+
+    let other_events = events
+        .iter()
+        .filter(|event| Some(event.id) != exclude_event_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    let availability =
+        availability_for_events(&other_events, display_timezone, start_utc, end_utc)?;
+
+    Ok(ConflictCheck {
+        conflicts: availability.busy,
+        skipped: availability.skipped,
+    })
 }
 
 pub fn availability_for_materialized_date_window(
@@ -499,6 +548,120 @@ mod tests {
 
     use super::*;
     use crate::domain::{RecurrenceFrequency, RecurrenceOverride, RecurrenceRule};
+
+    #[test]
+    fn conflict_check_finds_overlapping_busy_events_and_ignores_free_or_excluded() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 15, 0, 0)
+            .single()
+            .expect("start");
+        let mut candidate = TemporalEvent::new(
+            "Candidate",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+
+        let busy = TemporalEvent::new(
+            "Existing busy",
+            TimeSpec::Instant {
+                start_utc: start + Duration::minutes(30),
+                end_utc: Some(start + Duration::minutes(90)),
+                source_timezone: None,
+            },
+        );
+        let mut free = TemporalEvent::new(
+            "Existing free",
+            TimeSpec::Instant {
+                start_utc: start + Duration::minutes(15),
+                end_utc: Some(start + Duration::minutes(45)),
+                source_timezone: None,
+            },
+        );
+        free.availability = crate::domain::AvailabilityBehavior::Free;
+        let excluded = TemporalEvent::new(
+            "Edited event",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+
+        let result = conflicts_for_candidate_event(
+            &[busy.clone(), free, excluded.clone()],
+            &candidate,
+            chrono_tz::UTC,
+            Some(excluded.id),
+        )
+        .expect("conflicts");
+        assert_eq!(result.conflicts.len(), 1);
+        assert_eq!(result.conflicts[0].event_id, busy.id);
+        assert!(result.skipped.is_empty());
+
+        candidate.availability = crate::domain::AvailabilityBehavior::Free;
+        assert!(
+            conflicts_for_candidate_event(
+                &[busy],
+                &candidate,
+                chrono_tz::UTC,
+                Some(excluded.id)
+            )
+            .expect("free candidate")
+            .conflicts
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn conflict_check_expands_recurring_existing_events() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 15, 0, 0)
+            .single()
+            .expect("start");
+        let mut recurring = TemporalEvent::new(
+            "Daily busy",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        recurring.recurrence = Some(rule);
+
+        let candidate = TemporalEvent::new(
+            "Tomorrow conflict",
+            TimeSpec::Instant {
+                start_utc: start + Duration::days(1) + Duration::minutes(15),
+                end_utc: Some(start + Duration::days(1) + Duration::minutes(45)),
+                source_timezone: None,
+            },
+        );
+
+        let result =
+            conflicts_for_candidate_event(&[recurring], &candidate, chrono_tz::UTC, None)
+                .expect("conflicts");
+        assert_eq!(result.conflicts.len(), 1);
+        assert_eq!(result.conflicts[0].event_title, "Daily busy");
+    }
+
+    #[test]
+    fn conflict_check_rejects_candidate_without_concrete_busy_interval() {
+        let candidate = TemporalEvent::new(
+            "Date only",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 8).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        assert!(
+            conflicts_for_candidate_event(&[], &candidate, chrono_tz::UTC, None).is_err()
+        );
+    }
 
     #[test]
     fn materialized_events_do_not_reexpand_attached_recurrence() {
