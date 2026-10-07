@@ -5,6 +5,7 @@ use anyhow::{Context, anyhow};
 use chrono::{DateTime, Datelike, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use rusqlite::{Connection, OptionalExtension, Row, named_params, params};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -19,7 +20,7 @@ use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
 const SCHEMA_VERSION: i64 = 24;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParticipantEntityBinding {
     pub event_id: Uuid,
     pub participant_key: String,
@@ -77,6 +78,9 @@ pub struct CanonicalSnapshotMergeResult {
     pub provenance_records_created: usize,
     pub provenance_records_updated: usize,
     pub provenance_records_unchanged: usize,
+    pub participant_entity_bindings_created: usize,
+    pub participant_entity_bindings_updated: usize,
+    pub participant_entity_bindings_unchanged: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -90,6 +94,7 @@ pub struct CanonicalSnapshotMergeInput<'a> {
     pub identity_assessments: &'a [EventIdentityAssessment],
     pub annotations: &'a [EventAnnotation],
     pub provenance_records: &'a [EventProvenanceRecord],
+    pub participant_entity_bindings: &'a [ParticipantEntityBinding],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1327,6 +1332,91 @@ impl TemporalStore {
         Ok(entities)
     }
 
+    pub fn list_participant_entity_bindings(
+        &self,
+    ) -> anyhow::Result<Vec<ParticipantEntityBinding>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT event_id, participant_key, entity_id, created_at, updated_at
+            FROM participant_entity_bindings
+            ORDER BY event_id, participant_key
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut bindings = Vec::new();
+        while let Some(row) = rows.next()? {
+            bindings.push(decode_participant_entity_binding(row)?);
+        }
+        Ok(bindings)
+    }
+
+    pub fn participant_entity_binding_by_key(
+        &self,
+        event_id: Uuid,
+        participant_key: &str,
+    ) -> anyhow::Result<Option<ParticipantEntityBinding>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT event_id, participant_key, entity_id, created_at, updated_at
+            FROM participant_entity_bindings
+            WHERE event_id = ?1 AND participant_key = ?2
+            "#,
+        )?;
+        stmt.query_row(
+            params![event_id.to_string(), participant_key],
+            decode_participant_entity_binding,
+        )
+        .optional()
+        .context("failed to query participant entity binding by key")
+    }
+
+    pub fn upsert_participant_entity_binding(
+        &self,
+        binding: &ParticipantEntityBinding,
+    ) -> anyhow::Result<()> {
+        let event = self
+            .event_by_id(binding.event_id)?
+            .ok_or_else(|| anyhow!("event {} does not exist", binding.event_id))?;
+        if self.canonical_entity_by_id(binding.entity_id)?.is_none() {
+            return Err(anyhow!(
+                "canonical entity {} does not exist",
+                binding.entity_id
+            ));
+        }
+        if !event
+            .participants
+            .iter()
+            .any(|participant| participant_entity_binding_key(participant) == binding.participant_key)
+        {
+            return Err(anyhow!(
+                "participant binding key {:?} does not identify a participant on event {}",
+                binding.participant_key,
+                binding.event_id
+            ));
+        }
+
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO participant_entity_bindings (
+                    event_id, participant_key, entity_id, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                ON CONFLICT(event_id, participant_key) DO UPDATE SET
+                    entity_id = excluded.entity_id,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    binding.event_id.to_string(),
+                    binding.participant_key,
+                    binding.entity_id.to_string(),
+                    binding.created_at.to_rfc3339(),
+                    binding.updated_at.to_rfc3339(),
+                ],
+            )
+            .context("failed to upsert participant entity binding")?;
+        Ok(())
+    }
+
     pub fn bind_event_participant_entity(
         &self,
         event_id: Uuid,
@@ -1346,24 +1436,17 @@ impl TemporalStore {
 
         let participant_key = participant_entity_binding_key(participant);
         let now = Utc::now();
-        self.conn
-            .execute(
-                r#"
-                INSERT INTO participant_entity_bindings (
-                    event_id, participant_key, entity_id, created_at, updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?4)
-                ON CONFLICT(event_id, participant_key) DO UPDATE SET
-                    entity_id = excluded.entity_id,
-                    updated_at = excluded.updated_at
-                "#,
-                params![
-                    event_id.to_string(),
-                    participant_key,
-                    entity_id.to_string(),
-                    now.to_rfc3339(),
-                ],
-            )
-            .context("failed to bind event participant to canonical entity")?;
+        let existing = self.participant_entity_binding_by_key(event_id, &participant_key)?;
+        let binding = ParticipantEntityBinding {
+            event_id,
+            participant_key,
+            entity_id,
+            created_at: existing
+                .as_ref()
+                .map_or(now, |existing| existing.created_at),
+            updated_at: now,
+        };
+        self.upsert_participant_entity_binding(&binding)?;
 
         self.participant_entity_binding(event_id, participant_index)?
             .ok_or_else(|| anyhow!("participant entity binding disappeared after upsert"))
@@ -3366,6 +3449,7 @@ impl TemporalStore {
             identity_assessments,
             annotations,
             provenance_records,
+            participant_entity_bindings,
         } = input;
         let tx = self
             .conn
@@ -3528,6 +3612,28 @@ impl TemporalStore {
                 }
             }
 
+            let mut participant_entity_bindings_created = 0;
+            let mut participant_entity_bindings_updated = 0;
+            let mut participant_entity_bindings_unchanged = 0;
+            for binding in participant_entity_bindings {
+                match self.participant_entity_binding_by_key(
+                    binding.event_id,
+                    &binding.participant_key,
+                )? {
+                    None => {
+                        self.upsert_participant_entity_binding(binding)?;
+                        participant_entity_bindings_created += 1;
+                    }
+                    Some(existing) if existing == *binding => {
+                        participant_entity_bindings_unchanged += 1;
+                    }
+                    Some(_) => {
+                        self.upsert_participant_entity_binding(binding)?;
+                        participant_entity_bindings_updated += 1;
+                    }
+                }
+            }
+
             let mut collection_memberships_replaced = 0;
             let mut collection_memberships_unchanged = 0;
             for collection in collections {
@@ -3583,6 +3689,9 @@ impl TemporalStore {
                 provenance_records_created,
                 provenance_records_updated,
                 provenance_records_unchanged,
+                participant_entity_bindings_created,
+                participant_entity_bindings_updated,
+                participant_entity_bindings_unchanged,
             })
         })();
 
@@ -5324,7 +5433,7 @@ fn decode_participant_entity_binding(row: &Row<'_>) -> rusqlite::Result<Particip
     })
 }
 
-fn participant_entity_binding_key(participant: &EventParticipant) -> String {
+pub(crate) fn participant_entity_binding_key(participant: &EventParticipant) -> String {
     let normalized = [
         normalize_entity_alias(&participant.name),
         participant
