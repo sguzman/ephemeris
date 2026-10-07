@@ -29,6 +29,46 @@ pub struct NotificationOccurrence {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationDelivery {
+    pub id: Uuid,
+    pub rule_id: Uuid,
+    pub event_id: Uuid,
+    pub occurrence_id: Uuid,
+    pub rule_name: String,
+    pub event_title: String,
+    pub trigger_at_utc: DateTime<Utc>,
+    pub starts_at_utc: DateTime<Utc>,
+    pub lead_minutes: u32,
+    pub delivered_at: DateTime<Utc>,
+    pub dismissed_at: Option<DateTime<Utc>>,
+}
+
+impl NotificationDelivery {
+    pub fn from_occurrence(
+        occurrence: &NotificationOccurrence,
+        delivered_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            id: occurrence.id,
+            rule_id: occurrence.rule_id,
+            event_id: occurrence.event_id,
+            occurrence_id: occurrence.occurrence_id,
+            rule_name: occurrence.rule_name.clone(),
+            event_title: occurrence.event_title.clone(),
+            trigger_at_utc: occurrence.trigger_at_utc,
+            starts_at_utc: occurrence.starts_at_utc,
+            lead_minutes: occurrence.lead_minutes,
+            delivered_at,
+            dismissed_at: None,
+        }
+    }
+
+    pub const fn is_active(&self) -> bool {
+        self.dismissed_at.is_none()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationSkip {
     pub rule_id: Uuid,
     pub event_id: Uuid,
@@ -356,6 +396,34 @@ mod tests {
             display_timezone: "America/Mexico_City".to_string(),
             week_start_monday: false,
         }
+    }
+
+    #[test]
+    fn notification_delivery_preserves_stable_occurrence_identity() {
+        let trigger = Utc
+            .with_ymd_and_hms(2026, 10, 7, 14, 45, 0)
+            .single()
+            .expect("trigger");
+        let occurrence = NotificationOccurrence {
+            id: Uuid::new_v4(),
+            rule_id: Uuid::new_v4(),
+            rule_name: "15 minutes before".to_string(),
+            event_id: Uuid::new_v4(),
+            occurrence_id: Uuid::new_v4(),
+            event_title: "Call".to_string(),
+            trigger_at_utc: trigger,
+            starts_at_utc: trigger + Duration::minutes(15),
+            lead_minutes: 15,
+        };
+        let delivery = NotificationDelivery::from_occurrence(
+            &occurrence,
+            trigger + Duration::minutes(1),
+        );
+        assert_eq!(delivery.id, occurrence.id);
+        assert_eq!(delivery.rule_id, occurrence.rule_id);
+        assert_eq!(delivery.event_id, occurrence.event_id);
+        assert_eq!(delivery.occurrence_id, occurrence.occurrence_id);
+        assert!(delivery.is_active());
     }
 
     #[test]
