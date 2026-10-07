@@ -3451,7 +3451,12 @@ impl EphemerisApp {
                 if self.state.active_saved_view_id == Some(id) {
                     self.state.active_saved_view_id = None;
                 }
+                if self.notification_saved_view_id == Some(id) {
+                    self.notification_saved_view_id = self.saved_views.first().map(|view| view.id);
+                }
+                self.notification_eval_minute = None;
                 self.mark_state_dirty();
+                self.reload_or_report();
             }
             Err(error) => {
                 self.last_message = None;
@@ -3587,41 +3592,66 @@ impl EphemerisApp {
     }
 
     fn render_notification_center(&mut self, ui: &mut egui::Ui) {
-        if self.notification_rules.is_empty() {
+        if self.notification_rules.is_empty() && self.notification_deliveries.is_empty() {
             return;
         }
 
         let now = Utc::now();
         let timezone = self.timezone();
-        let due = self
-            .notification_occurrences
-            .iter()
-            .filter(|occurrence| occurrence.trigger_at_utc <= now)
-            .count();
-        let upcoming = self
+        let deliveries = self.notification_deliveries.clone();
+        let upcoming_rows = self
             .notification_occurrences
             .iter()
             .filter(|occurrence| occurrence.trigger_at_utc > now)
-            .count();
+            .cloned()
+            .collect::<Vec<_>>();
+        let skipped_count = self.notification_skipped.len();
+        let mut dismiss = None;
 
         ui.collapsing(
-            format!("Reminders · {due} due · {upcoming} upcoming"),
+            format!(
+                "Reminders · {} due · {} upcoming",
+                deliveries.len(),
+                upcoming_rows.len()
+            ),
             |ui| {
-                if self.notification_occurrences.is_empty() {
+                if deliveries.is_empty() && upcoming_rows.is_empty() {
                     ui.small("No timed reminders fall within the next seven days.");
                 }
 
-                for occurrence in self.notification_occurrences.iter().take(12) {
-                    let trigger = occurrence.trigger_at_utc.with_timezone(&timezone);
-                    let start = occurrence.starts_at_utc.with_timezone(&timezone);
-                    let due_now = occurrence.trigger_at_utc <= now;
+                for delivery in deliveries.iter().take(12) {
+                    let trigger = delivery.trigger_at_utc.with_timezone(&timezone);
+                    let start = delivery.starts_at_utc.with_timezone(&timezone);
                     ui.group(|ui| {
                         ui.horizontal_wrapped(|ui| {
-                            if due_now {
-                                ui.label(RichText::new("DUE").color(Color32::LIGHT_RED).strong());
-                            } else {
-                                ui.label(RichText::new("UPCOMING").strong());
+                            ui.label(RichText::new("DUE").color(Color32::LIGHT_RED).strong());
+                            ui.strong(&delivery.event_title);
+                            if ui.small_button("Dismiss").clicked() {
+                                dismiss = Some(delivery.id);
                             }
+                        });
+                        ui.small(format!(
+                            "{} · trigger {} · starts {} · {}m lead",
+                            delivery.rule_name,
+                            trigger.format("%Y-%m-%d %H:%M"),
+                            start.format("%Y-%m-%d %H:%M"),
+                            delivery.lead_minutes
+                        ));
+                    });
+                }
+                if deliveries.len() > 12 {
+                    ui.small(format!(
+                        "{} more undismissed reminders",
+                        deliveries.len() - 12
+                    ));
+                }
+
+                for occurrence in upcoming_rows.iter().take(12) {
+                    let trigger = occurrence.trigger_at_utc.with_timezone(&timezone);
+                    let start = occurrence.starts_at_utc.with_timezone(&timezone);
+                    ui.group(|ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("UPCOMING").strong());
                             ui.strong(&occurrence.event_title);
                         });
                         ui.small(format!(
@@ -3633,21 +3663,23 @@ impl EphemerisApp {
                         ));
                     });
                 }
-
-                if self.notification_occurrences.len() > 12 {
+                if upcoming_rows.len() > 12 {
                     ui.small(format!(
-                        "{} more reminders in the seven-day evaluation window",
-                        self.notification_occurrences.len() - 12
+                        "{} more upcoming reminders in the seven-day evaluation window",
+                        upcoming_rows.len() - 12
                     ));
                 }
-                if !self.notification_skipped.is_empty() {
+                if skipped_count != 0 {
                     ui.small(format!(
-                        "{} rule/event matches are not schedulable yet because their temporal kind has no explicit notification clock.",
-                        self.notification_skipped.len()
+                        "{skipped_count} rule/event matches are not schedulable yet because their temporal kind has no explicit notification clock."
                     ));
                 }
             },
         );
+
+        if let Some(delivery_id) = dismiss {
+            self.dismiss_notification_delivery(delivery_id);
+        }
     }
 
     fn render_event_notification_rules(
