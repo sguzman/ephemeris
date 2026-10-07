@@ -465,8 +465,9 @@ impl QueryPredicate {
                     .iter()
                     .any(|role| membership.has_provenance_role(*role))
             }),
-            Self::ProvenanceReference { reference } => membership
-                .is_some_and(|membership| membership.has_provenance_reference(reference)),
+            Self::ProvenanceReference { reference } => {
+                membership.is_some_and(|membership| membership.has_provenance_reference(reference))
+            }
         }
     }
 }
@@ -2161,49 +2162,32 @@ mod tests {
             .insert("https://example.org/source/42".to_string());
 
         let role_query = EventQuery {
-            expression: Some(QueryExpr::Predicate(
-                QueryPredicate::ProvenanceRoleAnyOf {
-                    values: vec![
-                        EventProvenanceRole::Assertion,
-                        EventProvenanceRole::Source,
-                    ],
-                },
-            )),
+            expression: Some(QueryExpr::Predicate(QueryPredicate::ProvenanceRoleAnyOf {
+                values: vec![EventProvenanceRole::Assertion, EventProvenanceRole::Source],
+            })),
             ..EventQuery::default()
         };
         let reference_query = EventQuery {
-            expression: Some(QueryExpr::Predicate(
-                QueryPredicate::ProvenanceReference {
-                    reference: "https://example.org/source/42".to_string(),
-                },
-            )),
+            expression: Some(QueryExpr::Predicate(QueryPredicate::ProvenanceReference {
+                reference: "https://example.org/source/42".to_string(),
+            })),
             ..EventQuery::default()
         };
         let missing_query = EventQuery {
-            expression: Some(QueryExpr::Predicate(
-                QueryPredicate::ProvenanceRoleAnyOf {
-                    values: vec![EventProvenanceRole::Provenance],
-                },
-            )),
+            expression: Some(QueryExpr::Predicate(QueryPredicate::ProvenanceRoleAnyOf {
+                values: vec![EventProvenanceRole::Provenance],
+            })),
             ..EventQuery::default()
         };
 
         assert!(!role_query.matches(&event, &test_context()));
-        assert!(role_query.matches_with_membership(
-            &event,
-            &test_context(),
-            Some(&membership)
-        ));
+        assert!(role_query.matches_with_membership(&event, &test_context(), Some(&membership)));
         assert!(reference_query.matches_with_membership(
             &event,
             &test_context(),
             Some(&membership)
         ));
-        assert!(!missing_query.matches_with_membership(
-            &event,
-            &test_context(),
-            Some(&membership)
-        ));
+        assert!(!missing_query.matches_with_membership(&event, &test_context(), Some(&membership)));
     }
 
     #[test]
