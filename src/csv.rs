@@ -15,7 +15,7 @@ use crate::store::TemporalStore;
 
 pub const EPHEMERIS_CSV_VERSION: &str = "1";
 
-const CSV_HEADERS: [&str; 19] = [
+const CSV_HEADERS: [&str; 20] = [
     "schema_version",
     "record_key",
     "title",
@@ -35,6 +35,7 @@ const CSV_HEADERS: [&str; 19] = [
     "time_kind",
     "start",
     "end",
+    "source_timezone",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -177,11 +178,7 @@ pub fn parse_csv_events(raw: &str) -> anyhow::Result<Vec<TemporalEvent>> {
         .headers()
         .context("failed to read Ephemeris CSV header")?
         .clone();
-    let expected = CSV_HEADERS
-        .iter()
-        .copied()
-        .chain(std::iter::once("source_timezone"))
-        .collect::<Vec<_>>();
+    let expected = CSV_HEADERS.to_vec();
     let actual = headers.iter().collect::<Vec<_>>();
     if actual != expected {
         return Err(anyhow!(
@@ -218,8 +215,11 @@ pub fn format_csv_events(events: &[TemporalEvent]) -> anyhow::Result<String> {
     let mut encoded = Vec::new();
     {
         let mut writer = csv_crate::WriterBuilder::new()
-            .has_headers(true)
+            .has_headers(false)
             .from_writer(&mut encoded);
+        writer
+            .write_record(CSV_HEADERS)
+            .context("failed to write Ephemeris CSV header")?;
         for event in events {
             writer
                 .serialize(event_into_row(event)?)
@@ -497,6 +497,14 @@ mod tests {
         event.status = EventStatus::Confirmed;
         event.confidence = Some(0.9);
         event
+    }
+
+    #[test]
+    fn csv_empty_export_keeps_a_reimportable_schema_header() {
+        let encoded = format_csv_events(&[]).expect("format empty CSV");
+        let decoded = parse_csv_events(&encoded).expect("parse empty CSV");
+        assert!(decoded.is_empty());
+        assert!(encoded.starts_with("schema_version,record_key,title,"));
     }
 
     #[test]
