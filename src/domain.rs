@@ -5203,6 +5203,10 @@ fn resolve_local_datetime(timezone: Tz, value: NaiveDateTime) -> Option<DateTime
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
     #[test]
     fn availability_behavior_defaults_busy_and_roundtrips() {
         assert_eq!(AvailabilityBehavior::default(), AvailabilityBehavior::Busy);
@@ -5234,9 +5238,6 @@ mod tests {
     }
 
 
-    #![allow(clippy::unwrap_used)]
-
-    use super::*;
 
     #[test]
     fn event_annotation_requires_nonempty_kind() {
