@@ -10,10 +10,10 @@ use uuid::Uuid;
 
 use crate::calendar::CalendarLayout;
 use crate::domain::{
-    CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
-    EventIdentityState, EventLocation, EventParticipant, EventProvenanceRecord,
-    EventProvenanceRole, EventRelation, EventStatus, RecurrenceRule, SourceAuthority, SourceKind,
-    TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
+    CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
+    EventIdentityAssessment, EventIdentityState, EventLocation, EventParticipant,
+    EventProvenanceRecord, EventProvenanceRole, EventRelation, EventStatus, RecurrenceRule,
+    SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
@@ -1138,11 +1138,7 @@ impl TemporalStore {
                         INSERT INTO canonical_entity_aliases (entity_id, alias, alias_key)
                         VALUES (?1, ?2, ?3)
                         "#,
-                        params![
-                            entity.id.to_string(),
-                            alias,
-                            normalize_entity_alias(alias),
-                        ],
+                        params![entity.id.to_string(), alias, normalize_entity_alias(alias),],
                     )
                     .with_context(|| format!("failed to add canonical entity alias {alias:?}"))?;
             }
@@ -1330,7 +1326,9 @@ impl TemporalStore {
             "#,
         )?;
         let aliases = alias_stmt
-            .query_map(params![entity.id.to_string()], |row| row.get::<_, String>(0))?
+            .query_map(params![entity.id.to_string()], |row| {
+                row.get::<_, String>(0)
+            })?
             .collect::<Result<Vec<_>, _>>()
             .context("failed to load canonical entity aliases")?;
 
@@ -1343,7 +1341,9 @@ impl TemporalStore {
             "#,
         )?;
         let external_refs = refs_stmt
-            .query_map(params![entity.id.to_string()], |row| row.get::<_, String>(0))?
+            .query_map(params![entity.id.to_string()], |row| {
+                row.get::<_, String>(0)
+            })?
             .collect::<Result<Vec<_>, _>>()
             .context("failed to load canonical entity external references")?;
 
@@ -6216,7 +6216,11 @@ mod tests {
         event.participants.push(participant);
         store.upsert_event(&event).expect("participant event");
 
-        assert!(store.delete_canonical_entity(updated.id).expect("delete entity"));
+        assert!(
+            store
+                .delete_canonical_entity(updated.id)
+                .expect("delete entity")
+        );
         let reloaded = store
             .event_by_id(event.id)
             .expect("event query")
