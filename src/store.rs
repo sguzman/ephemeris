@@ -963,6 +963,26 @@ impl TemporalStore {
         }
     }
 
+    pub fn list_event_collection_members(&self) -> anyhow::Result<Vec<EventCollectionMember>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT collection_id, event_id, position
+            FROM event_collection_members
+            ORDER BY
+                collection_id,
+                CASE WHEN position IS NULL THEN 1 ELSE 0 END,
+                position,
+                event_id
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut members = Vec::new();
+        while let Some(row) = rows.next()? {
+            members.push(decode_event_collection_member(row)?);
+        }
+        Ok(members)
+    }
+
     pub fn event_collection_members(
         &self,
         collection_id: Uuid,
@@ -4702,6 +4722,13 @@ mod tests {
                     position: Some(2),
                 },
             ]
+        );
+
+        assert_eq!(
+            store
+                .list_event_collection_members()
+                .expect("all collection members"),
+            members
         );
 
         let events = store
