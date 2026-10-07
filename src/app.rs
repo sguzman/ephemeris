@@ -3690,6 +3690,7 @@ impl EphemerisApp {
         );
         let visible_events = self.visible_events();
         let mut selected_free_interval = None;
+        let mut selected_suggested_slot = None;
 
         ui.collapsing(
             format!("Availability · {}", self.state.calendar_view.label()),
@@ -3724,76 +3725,150 @@ impl EphemerisApp {
                         });
 
                         ui.add_space(4.0);
-                        ui.strong("Free");
-                        if result.free.is_empty() {
-                            ui.small("No free time in the current visible window.");
-                        }
-                        for interval in result.free.iter().take(24) {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.monospace(format_availability_interval(
-                                    interval.start_utc,
-                                    interval.end_utc,
-                                    timezone,
-                                ));
-                                let minutes = (interval.end_utc - interval.start_utc).num_minutes();
-                                ui.small(format!("{minutes} min"));
-                                if ui.small_button("New event here").clicked() {
-                                    selected_free_interval = Some(interval.clone());
+                        ui.strong("Find a slot");
+                        ui.horizontal_wrapped(|ui| {
+                            ui.small("duration");
+                            ui.add(
+                                egui::TextEdit::singleline(
+                                    &mut self.availability_duration_minutes,
+                                )
+                                .desired_width(55.0),
+                            );
+                            ui.small("min · step");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.availability_step_minutes)
+                                    .desired_width(55.0),
+                            );
+                            ui.small("min · hours");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.availability_day_start)
+                                    .desired_width(60.0),
+                            );
+                            ui.small("to");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.availability_day_end)
+                                    .desired_width(60.0),
+                            );
+                        });
+
+                        match parse_slot_search(
+                            &self.availability_duration_minutes,
+                            &self.availability_step_minutes,
+                            &self.availability_day_start,
+                            &self.availability_day_end,
+                        )
+                        .and_then(|search| {
+                            suggest_slots(
+                                &result.free,
+                                timezone,
+                                window.start,
+                                window.end_exclusive,
+                                search,
+                            )
+                        }) {
+                            Ok(slots) => {
+                                if slots.is_empty() {
+                                    ui.small("No candidate slots match those constraints.");
                                 }
-                            });
-                        }
-                        if result.free.len() > 24 {
-                            ui.small(format!(
-                                "{} more free intervals hidden in this long view",
-                                result.free.len() - 24
-                            ));
+                                for slot in slots.iter().take(20) {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.monospace(format_availability_interval(
+                                            slot.start_utc,
+                                            slot.end_utc,
+                                            timezone,
+                                        ));
+                                        if ui.small_button("Use slot").clicked() {
+                                            selected_suggested_slot = Some(slot.clone());
+                                        }
+                                    });
+                                }
+                                if slots.len() > 20 {
+                                    ui.small(format!(
+                                        "{} more candidate slots hidden",
+                                        slots.len() - 20
+                                    ));
+                                }
+                            }
+                            Err(error) => {
+                                ui.small(format!("Slot search unavailable: {error}"));
+                            }
                         }
 
                         ui.add_space(4.0);
-                        ui.strong("Busy");
-                        if result.busy.is_empty() {
-                            ui.small("No blocking commitments in the current visible window.");
-                        }
-                        for interval in result.busy.iter().take(24) {
-                            let kind = match interval.kind {
-                                BusyKind::Busy => "busy",
-                                BusyKind::Tentative => "tentative",
-                            };
-                            ui.horizontal_wrapped(|ui| {
-                                ui.monospace(format_availability_interval(
-                                    interval.start_utc,
-                                    interval.end_utc,
-                                    timezone,
+                        ui.collapsing("Raw free intervals", |ui| {
+                            if result.free.is_empty() {
+                                ui.small("No free time in the current visible window.");
+                            }
+                            for interval in result.free.iter().take(24) {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.monospace(format_availability_interval(
+                                        interval.start_utc,
+                                        interval.end_utc,
+                                        timezone,
+                                    ));
+                                    let minutes =
+                                        (interval.end_utc - interval.start_utc).num_minutes();
+                                    ui.small(format!("{minutes} min"));
+                                    if ui.small_button("New event here").clicked() {
+                                        selected_free_interval = Some(interval.clone());
+                                    }
+                                });
+                            }
+                            if result.free.len() > 24 {
+                                ui.small(format!(
+                                    "{} more free intervals hidden in this long view",
+                                    result.free.len() - 24
                                 ));
-                                ui.label(&interval.event_title);
-                                ui.small(kind);
-                            });
-                        }
-                        if result.busy.len() > 24 {
-                            ui.small(format!(
-                                "{} more busy intervals hidden in this long view",
-                                result.busy.len() - 24
-                            ));
-                        }
+                            }
+                        });
+
+                        ui.add_space(4.0);
+                        ui.collapsing("Busy intervals", |ui| {
+                            if result.busy.is_empty() {
+                                ui.small("No blocking commitments in the current visible window.");
+                            }
+                            for interval in result.busy.iter().take(24) {
+                                let kind = match interval.kind {
+                                    BusyKind::Busy => "busy",
+                                    BusyKind::Tentative => "tentative",
+                                };
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.monospace(format_availability_interval(
+                                        interval.start_utc,
+                                        interval.end_utc,
+                                        timezone,
+                                    ));
+                                    ui.label(&interval.event_title);
+                                    ui.small(kind);
+                                });
+                            }
+                            if result.busy.len() > 24 {
+                                ui.small(format!(
+                                    "{} more busy intervals hidden in this long view",
+                                    result.busy.len() - 24
+                                ));
+                            }
+                        });
 
                         if !result.skipped.is_empty() {
                             ui.add_space(4.0);
-                            ui.strong("Not used for free/busy");
-                            for skip in result.skipped.iter().take(12) {
-                                let title = visible_events
-                                    .iter()
-                                    .find(|event| event.id == skip.event_id)
-                                    .map_or_else(|| skip.event_id.to_string(), |event| {
-                                        event.normalized_title.clone()
-                                    });
-                                ui.small(format!("{title}: {}", skip.reason));
-                            }
-                            if result.skipped.len() > 12 {
-                                ui.small(format!(
-                                    "{} more skipped values hidden",
-                                    result.skipped.len() - 12
-                                ));
-                            }
+                            ui.collapsing("Not used for free/busy", |ui| {
+                                for skip in result.skipped.iter().take(12) {
+                                    let title = visible_events
+                                        .iter()
+                                        .find(|event| event.id == skip.event_id)
+                                        .map_or_else(|| skip.event_id.to_string(), |event| {
+                                            event.normalized_title.clone()
+                                        });
+                                    ui.small(format!("{title}: {}", skip.reason));
+                                }
+                                if result.skipped.len() > 12 {
+                                    ui.small(format!(
+                                        "{} more skipped values hidden",
+                                        result.skipped.len() - 12
+                                    ));
+                                }
+                            });
                         }
                     }
                     Err(error) => {
@@ -3806,18 +3881,24 @@ impl EphemerisApp {
             },
         );
 
-        if let Some(interval) = selected_free_interval {
-            match new_event_draft_for_free_interval(&interval, timezone) {
-                Ok(draft) => {
-                    self.new_local_event = Some(draft);
-                    self.last_message =
-                        Some("Prepared a new local event in the selected free interval.".to_string());
-                    self.last_error = None;
-                }
-                Err(error) => {
-                    self.last_message = None;
-                    self.last_error = Some(format!("Could not use free interval: {error:#}"));
-                }
+        let draft_result = if let Some(interval) = selected_suggested_slot {
+            new_event_draft_for_suggested_slot(&interval, timezone)
+        } else if let Some(interval) = selected_free_interval {
+            new_event_draft_for_free_interval(&interval, timezone)
+        } else {
+            return;
+        };
+
+        match draft_result {
+            Ok(draft) => {
+                self.new_local_event = Some(draft);
+                self.last_message =
+                    Some("Prepared a new local event in the selected free interval.".to_string());
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Could not use free interval: {error:#}"));
             }
         }
     }
