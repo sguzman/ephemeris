@@ -43,6 +43,15 @@ use crate::taria_workspace::{
 
 const TARIA_STALE_AFTER_HOURS: i64 = 7 * 24;
 
+fn multiline_values(value: &str) -> Vec<String> {
+    value
+        .lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 fn optional_trimmed(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -1473,6 +1482,12 @@ pub struct EphemerisApp {
     participant_entity_search: String,
     participant_entity_candidates: Vec<(Uuid, String, Option<String>)>,
     participant_entity_target_id: Option<Uuid>,
+    entity_registry_search: String,
+    entity_manage_id: Option<Uuid>,
+    entity_manage_name: String,
+    entity_manage_type: String,
+    entity_manage_aliases: String,
+    entity_manage_external_refs: String,
     event_provenance_records: Vec<EventProvenanceRecord>,
     event_revision_event_id: Option<Uuid>,
     event_revisions: Vec<EventRevision>,
@@ -1571,6 +1586,12 @@ impl EphemerisApp {
             participant_entity_search: String::new(),
             participant_entity_candidates: Vec::new(),
             participant_entity_target_id: None,
+            entity_registry_search: String::new(),
+            entity_manage_id: None,
+            entity_manage_name: String::new(),
+            entity_manage_type: String::new(),
+            entity_manage_aliases: String::new(),
+            entity_manage_external_refs: String::new(),
             event_provenance_records: Vec::new(),
             event_revision_event_id: None,
             event_revisions: Vec::new(),
@@ -3227,6 +3248,215 @@ impl EphemerisApp {
         );
     }
 
+    fn begin_canonical_entity_edit(&mut self, entity_id: Uuid) {
+        if let Some(entity) = self
+            .canonical_entities
+            .iter()
+            .find(|entity| entity.id == entity_id)
+            .cloned()
+        {
+            self.entity_manage_id = Some(entity.id);
+            self.entity_manage_name = entity.canonical_name;
+            self.entity_manage_type = entity.entity_type.unwrap_or_default();
+            self.entity_manage_aliases = entity.aliases.join("\n");
+            self.entity_manage_external_refs = entity.external_refs.join("\n");
+        }
+    }
+
+    fn begin_new_canonical_entity(&mut self) {
+        self.entity_manage_id = None;
+        self.entity_manage_name.clear();
+        self.entity_manage_type.clear();
+        self.entity_manage_aliases.clear();
+        self.entity_manage_external_refs.clear();
+    }
+
+    fn save_managed_canonical_entity(&mut self) {
+        let result = (|| -> anyhow::Result<CanonicalEntity> {
+            let mut entity = match self.entity_manage_id {
+                Some(entity_id) => self
+                    .store
+                    .canonical_entity_by_id(entity_id)?
+                    .ok_or_else(|| anyhow::anyhow!("canonical entity {entity_id} no longer exists"))?,
+                None => CanonicalEntity::new(self.entity_manage_name.trim()),
+            };
+
+            entity.canonical_name = self.entity_manage_name.trim().to_string();
+            entity.entity_type = optional_trimmed(&self.entity_manage_type);
+            entity.aliases = multiline_values(&self.entity_manage_aliases);
+            entity.external_refs = multiline_values(&self.entity_manage_external_refs);
+            entity.updated_at = Utc::now();
+            entity.validate()?;
+            self.store.upsert_canonical_entity(&entity)?;
+            Ok(entity)
+        })();
+
+        match result {
+            Ok(entity) => {
+                self.last_message =
+                    Some(format!("Saved canonical entity {:?}.", entity.canonical_name));
+                self.last_error = None;
+                self.entity_manage_id = Some(entity.id);
+                self.reload_or_report();
+                self.begin_canonical_entity_edit(entity.id);
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Canonical entity save failed: {error:#}"));
+            }
+        }
+    }
+
+    fn delete_managed_canonical_entity(&mut self) {
+        let Some(entity_id) = self.entity_manage_id else {
+            return;
+        };
+        match self.store.delete_canonical_entity(entity_id) {
+            Ok(true) => {
+                self.last_message = Some(
+                    "Deleted canonical entity. Manual participant bindings were removed; source participant refs were left untouched."
+                        .to_string(),
+                );
+                self.last_error = None;
+                self.begin_new_canonical_entity();
+                self.reload_or_report();
+            }
+            Ok(false) => {
+                self.last_message = None;
+                self.last_error = Some("Canonical entity no longer exists.".to_string());
+                self.begin_new_canonical_entity();
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Canonical entity delete failed: {error:#}"));
+            }
+        }
+    }
+
+    fn render_canonical_entity_registry(&mut self, ui: &mut egui::Ui) {
+        ui.separator();
+        egui::CollapsingHeader::new(format!(
+            "Canonical Entities ({})",
+            self.canonical_entities.len()
+        ))
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.small(
+                "Durable people, organizations, teams, places, and other entities used by participant resolution.",
+            );
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.entity_registry_search)
+                        .hint_text("Search entities")
+                        .desired_width(170.0),
+                );
+                if ui.button("New").clicked() {
+                    self.begin_new_canonical_entity();
+                }
+            });
+
+            let query = self.entity_registry_search.trim().to_lowercase();
+            let visible = self
+                .canonical_entities
+                .iter()
+                .filter(|entity| {
+                    query.is_empty()
+                        || entity
+                            .text_values()
+                            .any(|value| value.to_lowercase().contains(&query))
+                })
+                .take(24)
+                .cloned()
+                .collect::<Vec<_>>();
+            if visible.is_empty() {
+                ui.small("No canonical entities match.");
+            } else {
+                egui::ScrollArea::vertical()
+                    .max_height(150.0)
+                    .show(ui, |ui| {
+                        for entity in visible {
+                            let label = entity.entity_type.as_deref().map_or_else(
+                                || entity.canonical_name.clone(),
+                                |kind| format!("{} · {kind}", entity.canonical_name),
+                            );
+                            if ui
+                                .selectable_label(
+                                    self.entity_manage_id == Some(entity.id),
+                                    label,
+                                )
+                                .clicked()
+                            {
+                                self.begin_canonical_entity_edit(entity.id);
+                            }
+                        }
+                    });
+            }
+
+            if self.entity_manage_id.is_some() || !self.entity_manage_name.is_empty() {
+                ui.separator();
+                ui.strong(if self.entity_manage_id.is_some() {
+                    "Edit canonical entity"
+                } else {
+                    "New canonical entity"
+                });
+                if let Some(entity_id) = self.entity_manage_id
+                    && let Some(entity) = self
+                        .canonical_entities
+                        .iter()
+                        .find(|entity| entity.id == entity_id)
+                {
+                    ui.small(format!("Local ref: {}", entity.local_reference()));
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.entity_manage_name)
+                        .hint_text("Canonical name"),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.entity_manage_type)
+                        .hint_text("Type: person, organization, team, place, ..."),
+                );
+                ui.label("Aliases");
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.entity_manage_aliases)
+                        .desired_rows(3)
+                        .hint_text("One alias per line"),
+                );
+                ui.label("External refs");
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.entity_manage_external_refs)
+                        .desired_rows(3)
+                        .hint_text("wikidata:Q…\nsource:stable-id"),
+                );
+
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            !self.entity_manage_name.trim().is_empty(),
+                            egui::Button::new("Save entity"),
+                        )
+                        .clicked()
+                    {
+                        self.save_managed_canonical_entity();
+                    }
+                    if self.entity_manage_id.is_some()
+                        && ui
+                            .button("Delete")
+                            .on_hover_text(
+                                "Deletes the registry entity and local manual bindings. Source participant refs are preserved.",
+                            )
+                            .clicked()
+                    {
+                        self.delete_managed_canonical_entity();
+                    }
+                    if ui.small_button("Clear editor").clicked() {
+                        self.begin_new_canonical_entity();
+                    }
+                });
+            }
+        });
+    }
+
     fn render_sources(&mut self, ui: &mut egui::Ui) {
         ui.set_width(280.0);
 
@@ -3264,6 +3494,7 @@ impl EphemerisApp {
             ui.small("Fetching and importing in the background...");
         }
         self.render_calendar_refresh_history(ui);
+        self.render_canonical_entity_registry(ui);
 
         let membership_options = MembershipPredicateOptions {
             bundles: self.taria_bundle_refs.clone(),
