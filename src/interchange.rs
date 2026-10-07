@@ -189,6 +189,9 @@ impl CanonicalJsonSnapshot {
             event
                 .validate_location()
                 .with_context(|| format!("event {} has invalid structured location", event.id))?;
+            event
+                .validate_participants()
+                .with_context(|| format!("event {} has invalid structured participants", event.id))?;
         }
 
         if self.version >= 2 {
