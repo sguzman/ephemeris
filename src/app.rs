@@ -15,8 +15,8 @@ use crate::calendar::{
 };
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
-    EventCollection, EventCollectionMember, EventIdentityState, EventRelation, EventStatus,
-    RecurrenceFrequency,
+    EventCollection, EventCollectionMember, EventIdentityAssessment, EventIdentityState,
+    EventRelation, EventStatus, RecurrenceFrequency,
     RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule,
     RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
@@ -1408,6 +1408,8 @@ enum TopologyInspectorAction {
     DeleteCollection(Uuid),
     AddRelation,
     DeleteRelation(Uuid),
+    SetIdentityState(Uuid, EventIdentityState),
+    DeleteIdentityAssessment(Uuid),
 }
 
 pub struct EphemerisApp {
@@ -1432,6 +1434,8 @@ pub struct EphemerisApp {
     event_relations: Vec<EventRelation>,
     event_relation_titles: HashMap<Uuid, String>,
     event_relation_types: Vec<String>,
+    event_identity_assessments: Vec<EventIdentityAssessment>,
+    event_identity_titles: HashMap<Uuid, String>,
     topology_edit_event_id: Option<Uuid>,
     topology_collection_choice: Option<Uuid>,
     topology_new_collection_name: String,
@@ -1503,6 +1507,8 @@ impl EphemerisApp {
             event_relations: Vec::new(),
             event_relation_titles: HashMap::new(),
             event_relation_types: Vec::new(),
+            event_identity_assessments: Vec::new(),
+            event_identity_titles: HashMap::new(),
             topology_edit_event_id: None,
             topology_collection_choice: None,
             topology_new_collection_name: String::new(),
@@ -2611,6 +2617,19 @@ impl EphemerisApp {
         for event_id in relation_event_ids {
             if let Some(related) = self.store.event_by_id(event_id)? {
                 self.event_relation_titles
+                    .insert(event_id, related.normalized_title);
+            }
+        }
+        self.event_identity_assessments = self.store.list_event_identity_assessments()?;
+        self.event_identity_titles.clear();
+        let identity_event_ids = self
+            .event_identity_assessments
+            .iter()
+            .flat_map(|assessment| [assessment.left_event_id, assessment.right_event_id])
+            .collect::<BTreeSet<_>>();
+        for event_id in identity_event_ids {
+            if let Some(related) = self.store.event_by_id(event_id)? {
+                self.event_identity_titles
                     .insert(event_id, related.normalized_title);
             }
         }
@@ -4225,6 +4244,13 @@ impl EphemerisApp {
             TopologyInspectorAction::DeleteRelation(relation_id) => {
                 self.store.delete_event_relation(relation_id).map(|_| ())
             }
+            TopologyInspectorAction::SetIdentityState(assessment_id, state) => {
+                self.set_identity_assessment_state(assessment_id, state)
+            }
+            TopologyInspectorAction::DeleteIdentityAssessment(assessment_id) => self
+                .store
+                .delete_event_identity_assessment(assessment_id)
+                .map(|_| ()),
         };
 
         match result {
@@ -4237,6 +4263,25 @@ impl EphemerisApp {
                 self.last_error = Some(format!("Topology edit failed: {error:#}"));
             }
         }
+    }
+
+    fn set_identity_assessment_state(
+        &mut self,
+        assessment_id: Uuid,
+        state: EventIdentityState,
+    ) -> anyhow::Result<()> {
+        let mut assessment = self
+            .store
+            .event_identity_assessment_by_id(assessment_id)?
+            .ok_or_else(|| anyhow::anyhow!("identity assessment {assessment_id} does not exist"))?;
+        assessment.state = state;
+        assessment.updated_at = Utc::now();
+        self.store.upsert_event_identity_assessment(&assessment)?;
+        self.last_message = Some(format!(
+            "Updated duplicate/entity assessment to {}.",
+            state.as_str()
+        ));
+        Ok(())
     }
 
     fn add_event_to_collection(
