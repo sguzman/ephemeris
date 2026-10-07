@@ -3494,6 +3494,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         create_event_provenance_schema_current(&tx)?;
         create_event_revision_schema_current(&tx)?;
         add_event_location_column(&tx)?;
+        add_event_participants_column(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -5748,6 +5749,106 @@ mod tests {
                 .expect("empty search")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn structured_event_participants_roundtrip_and_invalid_rows_are_rejected() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let mut event = TemporalEvent::new(
+            "Participant event",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        let mut speaker = EventParticipant::new("Ada Lovelace");
+        speaker.role = Some("speaker".to_string());
+        speaker.participant_type = Some("person".to_string());
+        speaker.entity_ref = Some("person:ada-lovelace".to_string());
+        speaker.properties = serde_json::json!({"keynote": true});
+        event.participants.push(speaker);
+
+        store.upsert_event(&event).expect("persist participant event");
+        assert_eq!(
+            store
+                .event_by_id(event.id)
+                .expect("query participant event")
+                .expect("participant event"),
+            event
+        );
+
+        let mut invalid = TemporalEvent::new(
+            "Invalid participant",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 8).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        invalid.participants.push(EventParticipant::new("   "));
+        assert!(
+            store
+                .upsert_event(&invalid)
+                .expect_err("blank participant name must fail")
+                .to_string()
+                .contains("invalid event participants")
+        );
+        assert!(
+            store
+                .event_by_id(invalid.id)
+                .expect("invalid participant query")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn v21_migration_adds_structured_participants_without_rewriting_events() {
+        let mut conn = Connection::open_in_memory().expect("connection");
+        configure_connection(&conn).expect("configure");
+
+        let tx = conn.transaction().expect("schema transaction");
+        create_schema_v2(&tx).expect("base schema");
+        add_event_recurrence_column(&tx).expect("recurrence column");
+        create_saved_views_schema_current(&tx).expect("saved views");
+        create_taria_release_schema_current(&tx).expect("taria schema");
+        create_refresh_history_schema_current(&tx).expect("refresh schema");
+        create_event_relation_collection_schema_current(&tx).expect("topology schema");
+        add_event_uncertainty_column(&tx).expect("uncertainty column");
+        create_event_identity_schema_current(&tx).expect("identity schema");
+        create_event_annotation_schema_current(&tx).expect("annotation schema");
+        create_event_provenance_schema_current(&tx).expect("provenance schema");
+        create_event_revision_schema_current(&tx).expect("revision schema");
+        add_event_location_column(&tx).expect("location column");
+        tx.pragma_update(None, "user_version", 21).expect("set v21");
+        tx.commit().expect("commit v21 schema");
+
+        let event_id = Uuid::new_v4();
+        conn.execute(
+            r#"
+            INSERT INTO temporal_events (
+                id,
+                assertion_refs_json, source_refs_json, provenance_refs_json,
+                normalized_title, status,
+                time_kind, start_date,
+                tags_json, properties_json,
+                created_at, updated_at
+            ) VALUES (?1, '[]', '[]', '[]', ?2, 'scheduled', 'date_only', ?3, '[]', '{}', ?4, ?4)
+            "#,
+            params![
+                event_id.to_string(),
+                "Pre-v22 event",
+                "2026-10-07",
+                "2026-10-07T00:00:00Z",
+            ],
+        )
+        .expect("insert v21 event");
+
+        migrate(&mut conn).expect("migrate to current");
+        let store = TemporalStore { conn, path: None };
+        assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+
+        let loaded = store.event_by_id(event_id).expect("query").expect("event");
+        assert_eq!(loaded.normalized_title, "Pre-v22 event");
+        assert!(loaded.participants.is_empty());
     }
 
     #[test]
