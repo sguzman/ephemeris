@@ -3729,10 +3729,8 @@ impl EphemerisApp {
                         ui.horizontal_wrapped(|ui| {
                             ui.small("duration");
                             ui.add(
-                                egui::TextEdit::singleline(
-                                    &mut self.availability_duration_minutes,
-                                )
-                                .desired_width(55.0),
+                                egui::TextEdit::singleline(&mut self.availability_duration_minutes)
+                                    .desired_width(55.0),
                             );
                             ui.small("min · step");
                             ui.add(
@@ -3857,9 +3855,10 @@ impl EphemerisApp {
                                     let title = visible_events
                                         .iter()
                                         .find(|event| event.id == skip.event_id)
-                                        .map_or_else(|| skip.event_id.to_string(), |event| {
-                                            event.normalized_title.clone()
-                                        });
+                                        .map_or_else(
+                                            || skip.event_id.to_string(),
+                                            |event| event.normalized_title.clone(),
+                                        );
                                     ui.small(format!("{title}: {}", skip.reason));
                                 }
                                 if result.skipped.len() > 12 {
@@ -13141,8 +13140,7 @@ mod tests {
             end_utc: start + ChronoDuration::minutes(90),
         };
 
-        let draft =
-            new_event_draft_for_suggested_slot(&interval, chrono_tz::UTC).expect("draft");
+        let draft = new_event_draft_for_suggested_slot(&interval, chrono_tz::UTC).expect("draft");
         assert_eq!(draft.duration_minutes, "90");
     }
 
