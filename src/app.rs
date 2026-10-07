@@ -13116,6 +13116,37 @@ mod tests {
     }
 
     #[test]
+    fn slot_search_parser_accepts_clock_and_minute_constraints() {
+        let search = parse_slot_search("90", "15", "08:30", "18:00").expect("search");
+        assert_eq!(search.duration_minutes, 90);
+        assert_eq!(search.step_minutes, 15);
+        assert_eq!(
+            search.day_start,
+            NaiveTime::from_hms_opt(8, 30, 0).expect("start")
+        );
+        assert_eq!(
+            search.day_end,
+            NaiveTime::from_hms_opt(18, 0, 0).expect("end")
+        );
+    }
+
+    #[test]
+    fn suggested_slot_prefills_exact_requested_duration() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 7, 14, 0, 0)
+            .single()
+            .expect("start");
+        let interval = FreeInterval {
+            start_utc: start,
+            end_utc: start + ChronoDuration::minutes(90),
+        };
+
+        let draft =
+            new_event_draft_for_suggested_slot(&interval, chrono_tz::UTC).expect("draft");
+        assert_eq!(draft.duration_minutes, "90");
+    }
+
+    #[test]
     fn free_interval_prefills_local_event_with_capped_one_hour_duration() {
         let timezone = chrono_tz::America::Mexico_City;
         let start = timezone
