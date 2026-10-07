@@ -5,12 +5,13 @@ use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    EventCollection, EventCollectionMember, EventRelation, TemporalEvent, TemporalSource,
+    EventCollection, EventCollectionMember, EventIdentityAssessment, EventRelation, TemporalEvent,
+    TemporalSource,
 };
 use crate::store::{CanonicalSnapshotMergeResult, TemporalStore};
 
 pub const CANONICAL_SNAPSHOT_FORMAT: &str = "ephemeris.canonical_snapshot";
-pub const CANONICAL_SNAPSHOT_VERSION: u32 = 2;
+pub const CANONICAL_SNAPSHOT_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalJsonSnapshot {
@@ -24,6 +25,8 @@ pub struct CanonicalJsonSnapshot {
     pub collections: Vec<EventCollection>,
     #[serde(default)]
     pub collection_members: Vec<EventCollectionMember>,
+    #[serde(default)]
+    pub identity_assessments: Vec<EventIdentityAssessment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +36,7 @@ pub struct CanonicalJsonExportReport {
     pub relation_count: usize,
     pub collection_count: usize,
     pub collection_member_count: usize,
+    pub identity_assessment_count: usize,
     pub output_path: PathBuf,
 }
 
@@ -43,12 +47,14 @@ impl CanonicalJsonSnapshot {
         let mut relations = store.list_event_relations()?;
         let mut collections = store.list_event_collections()?;
         let mut collection_members = store.list_event_collection_members()?;
+        let mut identity_assessments = store.list_event_identity_assessments()?;
         sources.sort_by_key(|source| source.id);
         events.sort_by_key(|event| event.id);
         relations.sort_by_key(|relation| relation.id);
         collections.sort_by_key(|collection| collection.id);
         collection_members
             .sort_by_key(|member| (member.collection_id, member.position, member.event_id));
+        identity_assessments.sort_by_key(|assessment| assessment.id);
 
         let snapshot = Self {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
@@ -58,6 +64,7 @@ impl CanonicalJsonSnapshot {
             relations,
             collections,
             collection_members,
+            identity_assessments,
         };
         snapshot.validate()?;
         Ok(snapshot)
@@ -80,10 +87,16 @@ impl CanonicalJsonSnapshot {
         if self.version == 1
             && (!self.relations.is_empty()
                 || !self.collections.is_empty()
-                || !self.collection_members.is_empty())
+                || !self.collection_members.is_empty()
+                || !self.identity_assessments.is_empty())
         {
             return Err(anyhow!(
-                "canonical snapshot version 1 cannot contain topology records"
+                "canonical snapshot version 1 cannot contain topology or identity records"
+            ));
+        }
+        if self.version == 2 && !self.identity_assessments.is_empty() {
+            return Err(anyhow!(
+                "canonical snapshot version 2 cannot contain identity-assessment records"
             ));
         }
 
@@ -245,6 +258,41 @@ impl CanonicalJsonSnapshot {
             }
         }
 
+        if self.version >= 3 {
+            let mut assessment_ids = HashSet::new();
+            let mut assessment_pairs = BTreeSet::new();
+            for assessment in &self.identity_assessments {
+                assessment
+                    .validate()
+                    .with_context(|| {
+                        format!("identity assessment {} is invalid", assessment.id)
+                    })?;
+                if !assessment_ids.insert(assessment.id) {
+                    return Err(anyhow!(
+                        "duplicate event identity assessment UUID {}",
+                        assessment.id
+                    ));
+                }
+                if !event_ids.contains(&assessment.left_event_id)
+                    || !event_ids.contains(&assessment.right_event_id)
+                {
+                    return Err(anyhow!(
+                        "identity assessment {} references an event that is not present in the snapshot",
+                        assessment.id
+                    ));
+                }
+                if !assessment_pairs
+                    .insert((assessment.left_event_id, assessment.right_event_id))
+                {
+                    return Err(anyhow!(
+                        "duplicate event identity assessment pair {} / {}",
+                        assessment.left_event_id,
+                        assessment.right_event_id
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -267,16 +315,23 @@ pub fn import_canonical_json_snapshot(
     snapshot: &CanonicalJsonSnapshot,
 ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
     snapshot.validate()?;
-    if snapshot.version == 1 {
-        store.merge_canonical_snapshot(&snapshot.sources, &snapshot.events)
-    } else {
-        store.merge_canonical_snapshot_with_topology(
+    match snapshot.version {
+        1 => store.merge_canonical_snapshot(&snapshot.sources, &snapshot.events),
+        2 => store.merge_canonical_snapshot_with_topology(
             &snapshot.sources,
             &snapshot.events,
             &snapshot.relations,
             &snapshot.collections,
             &snapshot.collection_members,
-        )
+        ),
+        _ => store.merge_canonical_snapshot_with_identity(
+            &snapshot.sources,
+            &snapshot.events,
+            &snapshot.relations,
+            &snapshot.collections,
+            &snapshot.collection_members,
+            &snapshot.identity_assessments,
+        ),
     }
 }
 
@@ -306,6 +361,7 @@ pub fn export_canonical_json_file(
         relation_count: snapshot.relations.len(),
         collection_count: snapshot.collections.len(),
         collection_member_count: snapshot.collection_members.len(),
+        identity_assessment_count: snapshot.identity_assessments.len(),
         output_path,
     })
 }
@@ -385,6 +441,7 @@ mod tests {
             relations: Vec::new(),
             collections: Vec::new(),
             collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
         };
 
         let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
@@ -418,6 +475,7 @@ mod tests {
             relations: Vec::new(),
             collections: Vec::new(),
             collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
         };
 
         let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
@@ -445,6 +503,7 @@ mod tests {
             relations: Vec::new(),
             collections: Vec::new(),
             collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
         };
         let store = TemporalStore::open_in_memory().expect("store");
 
@@ -486,6 +545,7 @@ mod tests {
             relations: Vec::new(),
             collections: Vec::new(),
             collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
         };
         import_canonical_json_snapshot(&store, &initial).expect("initial merge");
 
@@ -501,6 +561,7 @@ mod tests {
             relations: Vec::new(),
             collections: Vec::new(),
             collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
         };
 
         let report = import_canonical_json_snapshot(&store, &changed).expect("changed merge");
@@ -535,6 +596,7 @@ mod tests {
             relations: Vec::new(),
             collections: Vec::new(),
             collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
         };
         assert!(dangling_snapshot.validate().is_err());
 
@@ -549,6 +611,7 @@ mod tests {
             relations: Vec::new(),
             collections: Vec::new(),
             collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
         };
         assert!(duplicate_snapshot.validate().is_err());
     }
@@ -563,6 +626,7 @@ mod tests {
             relations: Vec::new(),
             collections: Vec::new(),
             collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
         };
         assert!(snapshot.validate().is_err());
     }
@@ -658,6 +722,7 @@ mod tests {
             relations: vec![dangling_relation],
             collections: Vec::new(),
             collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
         };
         assert!(dangling.validate().is_err());
 
