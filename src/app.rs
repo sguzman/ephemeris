@@ -3939,6 +3939,8 @@ impl EphemerisApp {
             }
         }
 
+        self.render_notification_center(ui);
+
         if let Some(message) = self.last_message.as_deref() {
             ui.colored_label(Color32::LIGHT_GREEN, message);
         }
@@ -4409,6 +4411,8 @@ impl EphemerisApp {
                 self.save_current_view();
             }
         });
+
+        self.render_saved_view_notification_rules(ui);
 
         ui.separator();
         ui.heading("Query");
@@ -6256,6 +6260,13 @@ impl EphemerisApp {
                 inspector_row(ui, "Raw title", raw);
             }
 
+            self.render_event_notification_rules(
+                ui,
+                canonical_id,
+                &event.normalized_title,
+                &event.time,
+            );
+
             if let Some(rule) = event.recurrence.as_ref() {
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -7427,8 +7438,11 @@ impl eframe::App for EphemerisApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_taria_workspace_update();
         self.poll_remote_ics_import();
+        self.refresh_notification_evaluation_if_needed();
         if self.taria_update_receiver.is_some() || self.remote_ics_import_receiver.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
+        } else if self.notification_rules.iter().any(|rule| rule.enabled) {
+            ui.ctx().request_repaint_after(Duration::from_secs(30));
         }
 
         self.handle_shortcuts(ui);
