@@ -7223,7 +7223,7 @@ mod tests {
     }
 
     #[test]
-    fn v24_migration_adds_notification_rules_without_rewriting_existing_data() {
+    fn v24_migration_adds_notification_rules_and_deliveries_without_rewriting_data() {
         use crate::calendar::{CalendarLayout, CalendarView};
         use crate::query::{
             ColorBy, EventQuery, GroupBy, SavedView, SortRule, default_table_columns,
@@ -7282,7 +7282,7 @@ mod tests {
         let mut conn = store_v24.conn;
         migrate(&mut conn).expect("migrate");
         let store = TemporalStore { conn, path: None };
-        assert_eq!(store.schema_version().expect("version"), 25);
+        assert_eq!(store.schema_version().expect("version"), 26);
         assert_eq!(
             store
                 .event_by_id(event.id)
@@ -7296,7 +7296,134 @@ mod tests {
         store
             .upsert_notification_rule(&rule)
             .expect("notification after migration");
-        assert_eq!(store.list_notification_rules().expect("rules"), vec![rule]);
+        assert_eq!(
+            store.list_notification_rules().expect("rules"),
+            vec![rule.clone()]
+        );
+
+        let trigger = Utc
+            .with_ymd_and_hms(2026, 10, 8, 14, 30, 0)
+            .single()
+            .expect("trigger");
+        let occurrence = crate::notifications::NotificationOccurrence {
+            id: Uuid::new_v4(),
+            rule_id: rule.id,
+            rule_name: rule.name.clone(),
+            event_id: event.id,
+            occurrence_id: event.id,
+            event_title: event.normalized_title.clone(),
+            trigger_at_utc: trigger,
+            starts_at_utc: trigger + chrono::Duration::minutes(30),
+            lead_minutes: 30,
+        };
+        let delivery = NotificationDelivery::from_occurrence(&occurrence, trigger);
+        assert!(
+            store
+                .record_notification_delivery(&delivery)
+                .expect("record delivery")
+        );
+        assert!(
+            !store
+                .record_notification_delivery(&delivery)
+                .expect("deduplicate delivery")
+        );
+        assert_eq!(
+            store.active_notification_deliveries().expect("deliveries"),
+            vec![delivery.clone()]
+        );
+        assert!(
+            store
+                .dismiss_notification_delivery(delivery.id, trigger + chrono::Duration::minutes(1))
+                .expect("dismiss")
+        );
+        assert!(store
+            .active_notification_deliveries()
+            .expect("active deliveries")
+            .is_empty());
+        assert!(
+            !store
+                .notification_delivery_by_id(delivery.id)
+                .expect("delivery lookup")
+                .expect("delivery")
+                .is_active()
+        );
+    }
+
+    #[test]
+    fn notification_delivery_cascades_with_rule_and_event() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 15, 0, 0)
+            .single()
+            .expect("start");
+        let event = TemporalEvent::new(
+            "Delivery target",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: None,
+                source_timezone: None,
+            },
+        );
+        store.upsert_event(&event).expect("event");
+        let rule = NotificationRule::for_event(event.id, "Reminder", 15);
+        store.upsert_notification_rule(&rule).expect("rule");
+
+        let occurrence = crate::notifications::NotificationOccurrence {
+            id: Uuid::new_v4(),
+            rule_id: rule.id,
+            rule_name: rule.name.clone(),
+            event_id: event.id,
+            occurrence_id: event.id,
+            event_title: event.normalized_title.clone(),
+            trigger_at_utc: start - chrono::Duration::minutes(15),
+            starts_at_utc: start,
+            lead_minutes: 15,
+        };
+        let delivery =
+            NotificationDelivery::from_occurrence(&occurrence, start - chrono::Duration::minutes(14));
+        store
+            .record_notification_delivery(&delivery)
+            .expect("delivery");
+
+        assert!(store
+            .notification_delivery_by_id(delivery.id)
+            .expect("delivery query")
+            .is_some());
+        assert!(store.delete_notification_rule(rule.id).expect("delete rule"));
+        assert!(store
+            .notification_delivery_by_id(delivery.id)
+            .expect("delivery after rule cascade")
+            .is_none());
+
+        let second_rule = NotificationRule::for_event(event.id, "Second reminder", 30);
+        store
+            .upsert_notification_rule(&second_rule)
+            .expect("second rule");
+        let mut second_occurrence = occurrence;
+        second_occurrence.id = Uuid::new_v4();
+        second_occurrence.rule_id = second_rule.id;
+        second_occurrence.rule_name = second_rule.name.clone();
+        second_occurrence.trigger_at_utc = start - chrono::Duration::minutes(30);
+        second_occurrence.lead_minutes = 30;
+        let second_delivery = NotificationDelivery::from_occurrence(
+            &second_occurrence,
+            start - chrono::Duration::minutes(29),
+        );
+        store
+            .record_notification_delivery(&second_delivery)
+            .expect("second delivery");
+
+        store
+            .conn
+            .execute(
+                "DELETE FROM temporal_events WHERE id = ?1",
+                params![event.id.to_string()],
+            )
+            .expect("delete event");
+        assert!(store
+            .notification_delivery_by_id(second_delivery.id)
+            .expect("delivery after event cascade")
+            .is_none());
     }
 
     #[test]
