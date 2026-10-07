@@ -435,8 +435,8 @@ mod tests {
 
     use super::*;
     use crate::domain::{
-        EventIdentityAssessment, EventIdentityState, RecurrenceFrequency, RecurrenceRule,
-        SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
+        EventAnnotation, EventIdentityAssessment, EventIdentityState, RecurrenceFrequency,
+        RecurrenceRule, SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
     };
 
     fn fixture_source() -> TemporalSource {
@@ -699,6 +699,93 @@ mod tests {
     }
 
     #[test]
+    fn canonical_snapshot_v4_preserves_user_annotations() {
+        let source = fixture_source();
+        let event = fixture_event(&source);
+        let annotation = EventAnnotation::new(
+            event.id,
+            "note",
+            json!({"text": "Keep this local context"}),
+        );
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: 4,
+            sources: vec![source],
+            events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
+            annotations: vec![annotation.clone()],
+        };
+        snapshot.validate().expect("valid v4 snapshot");
+
+        let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
+        let decoded = parse_canonical_json_snapshot(&encoded).expect("decode");
+        assert_eq!(decoded, snapshot);
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let report = import_canonical_json_snapshot(&store, &decoded).expect("merge annotations");
+        assert_eq!(report.annotations_created, 1);
+        assert_eq!(
+            store
+                .event_annotations_for_event(event.id)
+                .expect("annotations"),
+            vec![annotation]
+        );
+    }
+
+    #[test]
+    fn canonical_snapshot_v3_rejects_annotation_records() {
+        let source = fixture_source();
+        let event = fixture_event(&source);
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: 3,
+            sources: vec![source],
+            events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
+            annotations: vec![EventAnnotation::new(event.id, "watched", json!(true))],
+        };
+        assert!(snapshot.validate().is_err());
+    }
+
+    #[test]
+    fn canonical_snapshot_v4_rejects_dangling_and_duplicate_annotations() {
+        let source = fixture_source();
+        let event = fixture_event(&source);
+        let annotation = EventAnnotation::new(event.id, "rating", json!(5));
+        let dangling = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: 4,
+            sources: vec![source.clone()],
+            events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
+            annotations: vec![EventAnnotation::new(Uuid::new_v4(), "note", json!("dangling"))],
+        };
+        assert!(dangling.validate().is_err());
+
+        let duplicate = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: 4,
+            sources: vec![source],
+            events: vec![event],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
+            annotations: vec![annotation.clone(), annotation],
+        };
+        assert!(duplicate.validate().is_err());
+    }
+
+    #[test]
     fn canonical_snapshot_v3_roundtrips_identity_assessments() {
         let source = fixture_source();
         let first = fixture_event(&source);
@@ -721,6 +808,7 @@ mod tests {
             collections: Vec::new(),
             collection_members: Vec::new(),
             identity_assessments: vec![assessment.clone()],
+            annotations: Vec::new(),
         };
         snapshot.validate().expect("valid v3 snapshot");
 
@@ -761,6 +849,7 @@ mod tests {
             collections: Vec::new(),
             collection_members: Vec::new(),
             identity_assessments: vec![EventIdentityAssessment::new(first.id, second.id)],
+            annotations: Vec::new(),
         };
         assert!(snapshot.validate().is_err());
     }
