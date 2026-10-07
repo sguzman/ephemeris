@@ -1580,11 +1580,16 @@ pub enum CanonicalEntityError {
 impl fmt::Display for CanonicalEntityError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyCanonicalName => formatter.write_str("canonical entity name cannot be blank"),
+            Self::EmptyCanonicalName => {
+                formatter.write_str("canonical entity name cannot be blank")
+            }
             Self::EmptyEntityType => formatter.write_str("canonical entity type cannot be blank"),
             Self::EmptyAlias => formatter.write_str("canonical entity alias cannot be blank"),
             Self::DuplicateAlias(alias) => {
-                write!(formatter, "canonical entity contains duplicate alias {alias:?}")
+                write!(
+                    formatter,
+                    "canonical entity contains duplicate alias {alias:?}"
+                )
             }
             Self::EmptyExternalRef => {
                 formatter.write_str("canonical entity external reference cannot be blank")
