@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`f903eace2267648da5c7b219a901a4d3cbb050ad`
+`98df2aa618be9d4f50c0910808f8518c9b371bac`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **479 library tests** pass
+- **480 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -112,13 +112,11 @@ Strict CSV v1 projection/import is now implemented and verified. CSV files becom
 
 CSV v1 deliberately rejects recurrence, month/year/unknown precision, list-valued tags/reference metadata, and arbitrary event properties rather than flattening them into lossy cells.
 
-The next interoperability slice is **durable refresh diagnostics for CSV sources**, so CSV refresh attempts participate in the same source-history machinery as ICS/Webcal.
+CSV refresh attempts now participate in the same durable external-source history as ICS/Webcal, including persisted success/failure state and immediate GUI visibility.
 
-After that, the Phase 9 priorities are:
+The core Phase 9 interoperability boundary is now strong enough to stop driving the roadmap: local/remote iCalendar, conditional Webcal refresh, canonical JSON snapshots, and strict CSV are all implemented. JSCalendar/jCal and CalDAV remain optional future adapters when concrete ecosystem value justifies them.
 
-- richer remote-source refresh policy and diagnostics
-- JSCalendar/jCal where their ecosystem value justifies the extra semantic surface
-- CalDAV only if its synchronization value justifies the added state machine
+The next canonical-model frontier is **event relations and collections/sequences**: represent relationships between events without encoding those relationships into titles, tags, or copied calendar membership.
 
 The long-horizon domain roadmap then returns to event relations, collections/sequences, uncertainty, and duplicate/entity resolution.
 
