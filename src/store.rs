@@ -1615,7 +1615,7 @@ impl TemporalStore {
             )
             .context("failed to upsert temporal event")?;
 
-        if previous.as_ref() != Some(event) {
+        if event_changed_for_revision(previous.as_ref(), event) {
             self.record_event_revision(event)?;
         }
 
@@ -3344,6 +3344,18 @@ impl TemporalStore {
 
 fn i64_to_u64(value: i64, label: &str) -> anyhow::Result<u64> {
     u64::try_from(value).with_context(|| format!("{label} cannot be represented as u64"))
+}
+
+fn event_changed_for_revision(
+    previous: Option<&TemporalEvent>,
+    current: &TemporalEvent,
+) -> bool {
+    let Some(previous) = previous else {
+        return true;
+    };
+    let mut comparable = previous.clone();
+    comparable.updated_at = current.updated_at;
+    comparable != *current
 }
 
 fn canonical_event_snapshot_json(event: &TemporalEvent) -> anyhow::Result<String> {
@@ -5694,7 +5706,17 @@ mod tests {
             first_revisions
         );
 
-        let mut updated = event.clone();
+        let mut touched = event.clone();
+        touched.updated_at = Utc::now();
+        store.upsert_event(&touched).expect("timestamp-only touch");
+        assert_eq!(
+            store
+                .event_revisions(event.id)
+                .expect("revisions after timestamp-only touch"),
+            first_revisions
+        );
+
+        let mut updated = touched.clone();
         updated.normalized_title = "Updated title".to_string();
         updated.updated_at = Utc::now();
         store.upsert_event(&updated).expect("updated event");
