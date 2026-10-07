@@ -3764,16 +3764,12 @@ impl EphemerisApp {
                         });
                         ui.horizontal_wrapped(|ui| {
                             ui.small("days");
-                            for (index, label) in
-                                ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-                                    .into_iter()
-                                    .enumerate()
+                            for (index, label) in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                                .into_iter()
+                                .enumerate()
                             {
                                 availability_preferences_changed |= ui
-                                    .checkbox(
-                                        &mut self.state.availability_workdays[index],
-                                        label,
-                                    )
+                                    .checkbox(&mut self.state.availability_workdays[index], label)
                                     .changed();
                             }
                         });
@@ -13178,8 +13174,7 @@ mod tests {
     #[test]
     fn slot_search_parser_accepts_clock_and_minute_constraints() {
         let workdays = [true, true, true, true, true, false, false];
-        let search =
-            parse_slot_search("90", "15", "08:30", "18:00", workdays).expect("search");
+        let search = parse_slot_search("90", "15", "08:30", "18:00", workdays).expect("search");
         assert_eq!(search.duration_minutes, 90);
         assert_eq!(search.step_minutes, 15);
         assert_eq!(
