@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, anyhow};
 use ephemeris::domain::{SourceKind, TemporalSource};
 use ephemeris::ics::{export_ics_source_by_id, ics_file_external_ref};
+use ephemeris::interchange::export_canonical_json_file;
 use ephemeris::store::TemporalStore;
 use uuid::Uuid;
 
@@ -22,6 +23,22 @@ fn main() -> anyhow::Result<()> {
 
     if selector == OsStr::new("--list") {
         list_ics_sources(&store)?;
+        return Ok(());
+    }
+
+    if selector == OsStr::new("--canonical-json") {
+        let output_path = args
+            .next()
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow!(usage()))?;
+        if args.next().is_some() {
+            return Err(anyhow!(usage()));
+        }
+        let report = export_canonical_json_file(&store, &output_path)?;
+        println!("Exported Ephemeris canonical JSON snapshot");
+        println!("Sources: {}", report.source_count);
+        println!("Events: {}", report.event_count);
+        println!("Output: {}", report.output_path.display());
         return Ok(());
     }
 
@@ -48,6 +65,7 @@ fn main() -> anyhow::Result<()> {
 fn usage() -> &'static str {
     "usage:
   ephemeris-export --list
+  ephemeris-export --canonical-json <output.ephemeris.json>
   ephemeris-export <source-id|external-ref|source-file|exact-name> <output.ics>"
 }
 
