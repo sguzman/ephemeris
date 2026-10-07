@@ -38,6 +38,7 @@ pub struct EventMembership {
     pub outgoing_relation_types: BTreeSet<String>,
     pub incoming_relation_types: BTreeSet<String>,
     pub identity_states: BTreeSet<String>,
+    pub annotation_kinds: BTreeSet<String>,
 }
 
 impl EventMembership {
@@ -66,6 +67,10 @@ impl EventMembership {
 
     pub fn has_identity_state(&self, state: EventIdentityState) -> bool {
         self.identity_states.contains(state.as_str())
+    }
+
+    pub fn has_annotation_kind(&self, kind: &str) -> bool {
+        self.annotation_kinds.contains(kind)
     }
 }
 
@@ -316,6 +321,9 @@ pub enum QueryPredicate {
     IdentityStateAnyOf {
         values: Vec<EventIdentityState>,
     },
+    AnnotationKind {
+        kind: String,
+    },
 }
 
 impl QueryPredicate {
@@ -431,6 +439,9 @@ impl QueryPredicate {
                     .iter()
                     .any(|state| membership.has_identity_state(*state))
             }),
+            Self::AnnotationKind { kind } => {
+                membership.is_some_and(|membership| membership.has_annotation_kind(kind))
+            }
         }
     }
 }
@@ -2082,6 +2093,39 @@ mod tests {
             Some(&membership)
         ));
         assert!(either_relation_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+    }
+
+    #[test]
+    fn annotation_kind_predicate_uses_external_user_metadata_context() {
+        let event = event();
+        let mut membership = EventMembership::default();
+        membership.annotation_kinds.insert("note".to_string());
+        membership.annotation_kinds.insert("watched".to_string());
+
+        let note_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::AnnotationKind {
+                kind: "note".to_string(),
+            })),
+            ..EventQuery::default()
+        };
+        let missing_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::AnnotationKind {
+                kind: "rating".to_string(),
+            })),
+            ..EventQuery::default()
+        };
+
+        assert!(!note_query.matches(&event, &test_context()));
+        assert!(note_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+        assert!(!missing_query.matches_with_membership(
             &event,
             &test_context(),
             Some(&membership)
