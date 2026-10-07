@@ -1327,6 +1327,190 @@ impl TemporalStore {
         Ok(entities)
     }
 
+    pub fn bind_event_participant_entity(
+        &self,
+        event_id: Uuid,
+        participant_index: usize,
+        entity_id: Uuid,
+    ) -> anyhow::Result<ParticipantEntityBinding> {
+        let event = self
+            .event_by_id(event_id)?
+            .ok_or_else(|| anyhow!("event {event_id} does not exist"))?;
+        let participant = event
+            .participants
+            .get(participant_index)
+            .ok_or_else(|| anyhow!("participant row {participant_index} does not exist"))?;
+        if self.canonical_entity_by_id(entity_id)?.is_none() {
+            return Err(anyhow!("canonical entity {entity_id} does not exist"));
+        }
+
+        let participant_key = participant_entity_binding_key(participant);
+        let now = Utc::now();
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO participant_entity_bindings (
+                    event_id, participant_key, entity_id, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?4)
+                ON CONFLICT(event_id, participant_key) DO UPDATE SET
+                    entity_id = excluded.entity_id,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    event_id.to_string(),
+                    participant_key,
+                    entity_id.to_string(),
+                    now.to_rfc3339(),
+                ],
+            )
+            .context("failed to bind event participant to canonical entity")?;
+
+        self.participant_entity_binding(event_id, participant_index)?
+            .ok_or_else(|| anyhow!("participant entity binding disappeared after upsert"))
+    }
+
+    pub fn participant_entity_binding(
+        &self,
+        event_id: Uuid,
+        participant_index: usize,
+    ) -> anyhow::Result<Option<ParticipantEntityBinding>> {
+        let event = self
+            .event_by_id(event_id)?
+            .ok_or_else(|| anyhow!("event {event_id} does not exist"))?;
+        let participant = event
+            .participants
+            .get(participant_index)
+            .ok_or_else(|| anyhow!("participant row {participant_index} does not exist"))?;
+        let key = participant_entity_binding_key(participant);
+
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT event_id, participant_key, entity_id, created_at, updated_at
+            FROM participant_entity_bindings
+            WHERE event_id = ?1 AND participant_key = ?2
+            "#,
+        )?;
+        stmt.query_row(
+            params![event_id.to_string(), key],
+            decode_participant_entity_binding,
+        )
+        .optional()
+        .context("failed to query participant entity binding")
+    }
+
+    pub fn unbind_event_participant_entity(
+        &self,
+        event_id: Uuid,
+        participant_index: usize,
+    ) -> anyhow::Result<bool> {
+        let event = self
+            .event_by_id(event_id)?
+            .ok_or_else(|| anyhow!("event {event_id} does not exist"))?;
+        let participant = event
+            .participants
+            .get(participant_index)
+            .ok_or_else(|| anyhow!("participant row {participant_index} does not exist"))?;
+        let key = participant_entity_binding_key(participant);
+        let changed = self
+            .conn
+            .execute(
+                "DELETE FROM participant_entity_bindings WHERE event_id = ?1 AND participant_key = ?2",
+                params![event_id.to_string(), key],
+            )
+            .context("failed to remove participant entity binding")?;
+        Ok(changed != 0)
+    }
+
+    pub fn resolve_event_participant_entity(
+        &self,
+        event_id: Uuid,
+        participant_index: usize,
+    ) -> anyhow::Result<ParticipantEntityResolution> {
+        let event = self
+            .event_by_id(event_id)?
+            .ok_or_else(|| anyhow!("event {event_id} does not exist"))?;
+        let participant = event
+            .participants
+            .get(participant_index)
+            .ok_or_else(|| anyhow!("participant row {participant_index} does not exist"))?;
+
+        if let Some(binding) = self.participant_entity_binding(event_id, participant_index)?
+            && let Some(entity) = self.canonical_entity_by_id(binding.entity_id)?
+        {
+            return Ok(ParticipantEntityResolution::Manual { binding, entity });
+        }
+
+        if let Some(reference) = participant.entity_ref.as_deref() {
+            return Ok(match self.canonical_entity_by_reference(reference)? {
+                Some(entity) => ParticipantEntityResolution::SourceReference(entity),
+                None => ParticipantEntityResolution::UnresolvedReference(reference.to_string()),
+            });
+        }
+
+        let mut candidates = self.canonical_entities_by_exact_label(&participant.name)?;
+        if let Some(participant_type) = participant.participant_type.as_deref() {
+            let typed = candidates
+                .iter()
+                .filter(|entity| {
+                    entity
+                        .entity_type
+                        .as_deref()
+                        .is_some_and(|entity_type| entity_type.eq_ignore_ascii_case(participant_type))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if !typed.is_empty() {
+                candidates = typed;
+            }
+        }
+
+        Ok(match candidates.as_slice() {
+            [] => ParticipantEntityResolution::Unresolved,
+            [entity] => ParticipantEntityResolution::ExactLabel(entity.clone()),
+            _ => ParticipantEntityResolution::Ambiguous(candidates),
+        })
+    }
+
+    pub fn canonical_entities_by_exact_label(
+        &self,
+        label: &str,
+    ) -> anyhow::Result<Vec<CanonicalEntity>> {
+        let label = label.trim();
+        if label.is_empty() {
+            return Ok(Vec::new());
+        }
+        let alias_key = normalize_entity_alias(label);
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT DISTINCT e.id
+            FROM canonical_entities e
+            LEFT JOIN canonical_entity_aliases a ON a.entity_id = e.id
+            WHERE lower(trim(e.canonical_name)) = lower(trim(?1))
+               OR a.alias_key = ?2
+            ORDER BY e.canonical_name COLLATE NOCASE, e.id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![label, alias_key])?;
+        let mut ids = Vec::new();
+        while let Some(row) = rows.next()? {
+            let raw: String = row.get(0)?;
+            ids.push(
+                Uuid::parse_str(&raw)
+                    .with_context(|| format!("invalid canonical entity id {raw:?}"))?,
+            );
+        }
+        drop(rows);
+        drop(stmt);
+
+        let mut entities = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(entity) = self.canonical_entity_by_id(id)? {
+                entities.push(entity);
+            }
+        }
+        Ok(entities)
+    }
+
     pub fn delete_canonical_entity(&self, id: Uuid) -> anyhow::Result<bool> {
         let changed = self
             .conn
@@ -5125,6 +5309,48 @@ fn decode_event_revision(row: &Row<'_>) -> rusqlite::Result<EventRevision> {
 
 fn normalize_entity_alias(value: &str) -> String {
     value.trim().to_lowercase()
+}
+
+fn decode_participant_entity_binding(
+    row: &Row<'_>,
+) -> rusqlite::Result<ParticipantEntityBinding> {
+    Ok(ParticipantEntityBinding {
+        event_id: Uuid::parse_str(&row.get::<_, String>("event_id")?)
+            .map_err(to_sql_decode_error)?,
+        participant_key: row.get("participant_key")?,
+        entity_id: Uuid::parse_str(&row.get::<_, String>("entity_id")?)
+            .map_err(to_sql_decode_error)?,
+        created_at: parse_datetime(&row.get::<_, String>("created_at")?)
+            .map_err(to_sql_decode_error)?,
+        updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)
+            .map_err(to_sql_decode_error)?,
+    })
+}
+
+fn participant_entity_binding_key(participant: &EventParticipant) -> String {
+    let normalized = [
+        normalize_entity_alias(&participant.name),
+        participant
+            .role
+            .as_deref()
+            .map(normalize_entity_alias)
+            .unwrap_or_default(),
+        participant
+            .participant_type
+            .as_deref()
+            .map(normalize_entity_alias)
+            .unwrap_or_default(),
+        participant
+            .entity_ref
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string(),
+    ];
+    format!(
+        "v1:{}",
+        serde_json::to_string(&normalized).expect("string array serialization cannot fail")
+    )
 }
 
 fn decode_canonical_entity(row: &Row<'_>) -> rusqlite::Result<CanonicalEntity> {
