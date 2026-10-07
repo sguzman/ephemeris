@@ -6527,6 +6527,211 @@ mod tests {
     }
 
     #[test]
+    fn participant_entity_resolution_uses_source_refs_exact_labels_and_manual_bindings() {
+        let store = TemporalStore::open_in_memory().expect("store");
+
+        let mut person = CanonicalEntity::new("Ada Lovelace");
+        person.entity_type = Some("person".to_string());
+        person.aliases = vec!["Ada".to_string()];
+        person.external_refs = vec!["wikidata:Q7259".to_string()];
+        store
+            .upsert_canonical_entity(&person)
+            .expect("persist person");
+
+        let mut organization = CanonicalEntity::new("Ada Foundation");
+        organization.entity_type = Some("organization".to_string());
+        organization.aliases = vec!["Ada".to_string()];
+        store
+            .upsert_canonical_entity(&organization)
+            .expect("persist organization");
+
+        let source = TemporalSource::new(
+            "Read-only fixture",
+            SourceKind::Json,
+            SourceAuthority::Imported,
+        );
+        store.upsert_source(&source).expect("source");
+
+        let mut event = TemporalEvent::new(
+            "Participant resolution",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        event.source_id = Some(source.id);
+
+        let mut referenced = EventParticipant::new("Source label");
+        referenced.entity_ref = Some("wikidata:Q7259".to_string());
+        event.participants.push(referenced);
+
+        let mut typed = EventParticipant::new("Ada");
+        typed.participant_type = Some("person".to_string());
+        event.participants.push(typed);
+
+        event.participants.push(EventParticipant::new("Ada"));
+        store.upsert_event(&event).expect("event");
+
+        assert_eq!(
+            store
+                .resolve_event_participant_entity(event.id, 0)
+                .expect("resolve source ref"),
+            ParticipantEntityResolution::SourceReference(person.clone())
+        );
+        assert_eq!(
+            store
+                .resolve_event_participant_entity(event.id, 1)
+                .expect("resolve typed label"),
+            ParticipantEntityResolution::ExactLabel(person.clone())
+        );
+        assert!(matches!(
+            store
+                .resolve_event_participant_entity(event.id, 2)
+                .expect("resolve ambiguous label"),
+            ParticipantEntityResolution::Ambiguous(candidates)
+                if candidates.len() == 2
+        ));
+
+        let binding = store
+            .bind_event_participant_entity(event.id, 2, organization.id)
+            .expect("manual binding");
+        assert_eq!(binding.entity_id, organization.id);
+        assert!(matches!(
+            store
+                .resolve_event_participant_entity(event.id, 2)
+                .expect("resolve manual binding"),
+            ParticipantEntityResolution::Manual {
+                entity,
+                ..
+            } if entity == organization
+        ));
+
+        assert!(
+            store
+                .unbind_event_participant_entity(event.id, 2)
+                .expect("unbind participant")
+        );
+        assert!(matches!(
+            store
+                .resolve_event_participant_entity(event.id, 2)
+                .expect("resolve after unbind"),
+            ParticipantEntityResolution::Ambiguous(_)
+        ));
+    }
+
+    #[test]
+    fn participant_entity_bindings_follow_participant_fingerprint_and_fk_cascades() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let entity = CanonicalEntity::new("Ada Lovelace");
+        store
+            .upsert_canonical_entity(&entity)
+            .expect("persist entity");
+
+        let mut event = TemporalEvent::new(
+            "Binding durability",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        let mut first = EventParticipant::new("First");
+        first.role = Some("speaker".to_string());
+        let second = EventParticipant::new("Second");
+        event.participants = vec![first, second];
+        store.upsert_event(&event).expect("event");
+
+        let binding = store
+            .bind_event_participant_entity(event.id, 0, entity.id)
+            .expect("bind first");
+        assert!(binding.participant_key.starts_with("v1:"));
+
+        event.participants.swap(0, 1);
+        event.updated_at = Utc::now();
+        store.upsert_event(&event).expect("reordered event");
+        assert!(matches!(
+            store
+                .resolve_event_participant_entity(event.id, 1)
+                .expect("resolve after reorder"),
+            ParticipantEntityResolution::Manual {
+                entity: resolved,
+                ..
+            } if resolved == entity
+        ));
+
+        assert!(
+            store
+                .delete_canonical_entity(entity.id)
+                .expect("delete entity")
+        );
+        assert!(
+            store
+                .participant_entity_binding(event.id, 1)
+                .expect("binding after entity delete")
+                .is_none()
+        );
+        assert!(matches!(
+            store
+                .resolve_event_participant_entity(event.id, 1)
+                .expect("resolve after entity delete"),
+            ParticipantEntityResolution::Unresolved
+        ));
+
+        let replacement = CanonicalEntity::new("First");
+        store
+            .upsert_canonical_entity(&replacement)
+            .expect("replacement entity");
+        store
+            .bind_event_participant_entity(event.id, 1, replacement.id)
+            .expect("rebind");
+        store
+            .conn
+            .execute(
+                "DELETE FROM temporal_events WHERE id = ?1",
+                params![event.id.to_string()],
+            )
+            .expect("delete event");
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM participant_entity_bindings WHERE event_id = ?1",
+                params![event.id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("binding count");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn unresolved_source_entity_ref_does_not_fall_back_to_label_guessing() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let entity = CanonicalEntity::new("Ada Lovelace");
+        store
+            .upsert_canonical_entity(&entity)
+            .expect("persist entity");
+
+        let mut event = TemporalEvent::new(
+            "Unresolved source ref",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        let mut participant = EventParticipant::new("Ada Lovelace");
+        participant.entity_ref = Some("source:missing-ada".to_string());
+        event.participants.push(participant);
+        store.upsert_event(&event).expect("event");
+
+        assert_eq!(
+            store
+                .resolve_event_participant_entity(event.id, 0)
+                .expect("resolution"),
+            ParticipantEntityResolution::UnresolvedReference(
+                "source:missing-ada".to_string()
+            )
+        );
+    }
+
+    #[test]
     fn canonical_entity_validation_rejects_duplicate_aliases_and_blank_refs() {
         let store = TemporalStore::open_in_memory().expect("store");
 
@@ -6549,6 +6754,60 @@ mod tests {
                 .to_string()
                 .contains("invalid canonical entity")
         );
+    }
+
+    #[test]
+    fn v23_migration_adds_participant_entity_bindings_without_rewriting_entities_or_events() {
+        let mut conn = Connection::open_in_memory().expect("connection");
+        configure_connection(&conn).expect("configure");
+
+        let tx = conn.transaction().expect("schema transaction");
+        create_schema_v2(&tx).expect("base schema");
+        add_event_recurrence_column(&tx).expect("recurrence column");
+        create_saved_views_schema_current(&tx).expect("saved views");
+        create_taria_release_schema_current(&tx).expect("taria schema");
+        create_refresh_history_schema_current(&tx).expect("refresh schema");
+        create_event_relation_collection_schema_current(&tx).expect("topology schema");
+        add_event_uncertainty_column(&tx).expect("uncertainty column");
+        create_event_identity_schema_current(&tx).expect("identity schema");
+        create_event_annotation_schema_current(&tx).expect("annotation schema");
+        create_event_provenance_schema_current(&tx).expect("provenance schema");
+        create_event_revision_schema_current(&tx).expect("revision schema");
+        add_event_location_column(&tx).expect("location column");
+        add_event_participants_column(&tx).expect("participants column");
+        create_canonical_entity_schema_current(&tx).expect("entity schema");
+        tx.pragma_update(None, "user_version", 23).expect("set v23");
+        tx.commit().expect("commit v23 schema");
+
+        let entity = CanonicalEntity::new("Ada Lovelace");
+        let store = TemporalStore { conn, path: None };
+        store
+            .upsert_canonical_entity(&entity)
+            .expect("persist pre-v24 entity");
+
+        let mut event = TemporalEvent::new(
+            "Pre-v24 participant",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        event.participants.push(EventParticipant::new("Ada Lovelace"));
+        store.upsert_event(&event).expect("persist pre-v24 event");
+
+        let mut conn = store.conn;
+        migrate(&mut conn).expect("migrate to current");
+        let store = TemporalStore { conn, path: None };
+        assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+        assert!(matches!(
+            store
+                .resolve_event_participant_entity(event.id, 0)
+                .expect("resolution"),
+            ParticipantEntityResolution::ExactLabel(resolved) if resolved == entity
+        ));
+        store
+            .bind_event_participant_entity(event.id, 0, entity.id)
+            .expect("binding after migration");
     }
 
     #[test]
