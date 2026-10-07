@@ -16,9 +16,8 @@ use crate::calendar::{
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
     EventCollection, EventCollectionMember, EventRelation, EventStatus, RecurrenceFrequency,
-    RecurrenceOccurrenceOrigin,
-    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
-    TemporalSource, TimeSpec,
+    RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule,
+    RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
@@ -4247,11 +4246,17 @@ impl EphemerisApp {
             .event_collection_by_id(collection_id)?
             .ok_or_else(|| anyhow::anyhow!("event collection {collection_id} does not exist"))?;
         if !collection.ordered {
-            anyhow::bail!("collection {:?} is not an ordered sequence", collection.name);
+            anyhow::bail!(
+                "collection {:?} is not an ordered sequence",
+                collection.name
+            );
         }
 
         let members = self.store.event_collection_members(collection_id)?;
-        let Some(index) = members.iter().position(|member| member.event_id == event_id) else {
+        let Some(index) = members
+            .iter()
+            .position(|member| member.event_id == event_id)
+        else {
             anyhow::bail!("event {event_id} is not in collection {collection_id}");
         };
         let target = index.saturating_add_signed(offset);
@@ -4266,7 +4271,10 @@ impl EphemerisApp {
         event_ids.swap(index, target);
         self.store
             .replace_event_collection_members(collection_id, &event_ids)?;
-        self.last_message = Some(format!("Moved event within sequence {:?}.", collection.name));
+        self.last_message = Some(format!(
+            "Moved event within sequence {:?}.",
+            collection.name
+        ));
         Ok(())
     }
 
@@ -4634,24 +4642,22 @@ impl EphemerisApp {
             ui.separator();
             ui.strong("Topology");
 
-            for (collection_id, collection_name, ordered, position, member_count) in &collection_rows {
+            for (collection_id, collection_name, ordered, position, member_count) in
+                &collection_rows
+            {
                 ui.horizontal(|ui| {
                     ui.label(if *ordered { "Sequence" } else { "Collection" });
                     ui.label(collection_name);
-                    if *ordered
-                        && let Some(position) = *position
-                    {
+                    if *ordered && let Some(position) = *position {
                         ui.label(format!("#{}", position + 1));
                         if ui
-                            .add_enabled(
-                                position > 0,
-                                egui::Button::new("↑").small(),
-                            )
+                            .add_enabled(position > 0, egui::Button::new("↑").small())
                             .on_hover_text("Move earlier in sequence")
                             .clicked()
                         {
-                            topology_action =
-                                Some(TopologyInspectorAction::MoveCollectionMemberUp(*collection_id));
+                            topology_action = Some(
+                                TopologyInspectorAction::MoveCollectionMemberUp(*collection_id),
+                            );
                         }
                         if ui
                             .add_enabled(
