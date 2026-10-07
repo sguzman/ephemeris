@@ -1617,10 +1617,13 @@ impl EphemerisApp {
         match import_canonical_json_file(&self.store, path) {
             Ok(report) => {
                 self.last_message = Some(format!(
-                    "Merged canonical snapshot: sources {} created/{} updated/{} unchanged; events {} created/{} updated/{} unchanged; relations {} created/{} updated/{} unchanged; collections {} created/{} updated/{} unchanged; memberships {} replaced/{} unchanged; identity {} created/{} updated/{} unchanged; annotations {} created/{} updated/{} unchanged; provenance {} created/{} updated/{} unchanged",
+                    "Merged canonical snapshot: sources {} created/{} updated/{} unchanged; entities {} created/{} updated/{} unchanged; events {} created/{} updated/{} unchanged; relations {} created/{} updated/{} unchanged; collections {} created/{} updated/{} unchanged; memberships {} replaced/{} unchanged; identity {} created/{} updated/{} unchanged; annotations {} created/{} updated/{} unchanged; provenance {} created/{} updated/{} unchanged",
                     report.sources_created,
                     report.sources_updated,
                     report.sources_unchanged,
+                    report.entities_created,
+                    report.entities_updated,
+                    report.entities_unchanged,
                     report.events_created,
                     report.events_updated,
                     report.events_unchanged,
