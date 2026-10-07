@@ -4670,6 +4670,105 @@ mod tests {
     }
 
     #[test]
+    fn temporal_uncertainty_roundtrips_and_invalid_windows_do_not_persist() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let mut event = TemporalEvent::new(
+            "Uncertain placement",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: day - chrono::Duration::days(2),
+            latest: day + chrono::Duration::days(3),
+        });
+
+        store.upsert_event(&event).expect("persist uncertainty");
+        let loaded = store
+            .event_by_id(event.id)
+            .expect("query")
+            .expect("event");
+        assert_eq!(loaded.time_uncertainty, event.time_uncertainty);
+
+        let mut invalid = TemporalEvent::new(
+            "Invalid uncertainty",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        invalid.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: day + chrono::Duration::days(1),
+            latest: day + chrono::Duration::days(2),
+        });
+        let error = store
+            .upsert_event(&invalid)
+            .expect_err("invalid uncertainty must not persist");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid event temporal uncertainty")
+        );
+        assert!(
+            store
+                .event_by_id(invalid.id)
+                .expect("query invalid event")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn v15_migration_adds_nullable_temporal_uncertainty_without_rewriting_events() {
+        let mut conn = Connection::open_in_memory().expect("connection");
+        configure_connection(&conn).expect("configure");
+
+        let tx = conn.transaction().expect("schema transaction");
+        create_schema_v2(&tx).expect("base schema");
+        add_event_recurrence_column(&tx).expect("recurrence column");
+        create_saved_views_schema_current(&tx).expect("saved views");
+        create_taria_release_schema_current(&tx).expect("taria schema");
+        create_refresh_history_schema_current(&tx).expect("refresh schema");
+        create_event_relation_collection_schema_current(&tx).expect("topology schema");
+        tx.pragma_update(None, "user_version", 15)
+            .expect("set v15");
+        tx.commit().expect("commit v15 schema");
+
+        let event_id = Uuid::new_v4();
+        conn.execute(
+            r#"
+            INSERT INTO temporal_events (
+                id,
+                assertion_refs_json, source_refs_json, provenance_refs_json,
+                normalized_title, status,
+                time_kind, start_date,
+                tags_json, properties_json,
+                created_at, updated_at
+            ) VALUES (?1, '[]', '[]', '[]', ?2, 'scheduled', 'date_only', ?3, '[]', '{}', ?4, ?4)
+            "#,
+            params![
+                event_id.to_string(),
+                "Pre-v16 event",
+                "2026-10-07",
+                "2026-10-07T00:00:00Z",
+            ],
+        )
+        .expect("insert v15 event");
+
+        migrate(&mut conn).expect("migrate to current");
+        let store = TemporalStore { conn, path: None };
+        assert_eq!(store.schema_version().expect("version"), 16);
+
+        let loaded = store
+            .event_by_id(event_id)
+            .expect("query")
+            .expect("event");
+        assert_eq!(loaded.normalized_title, "Pre-v16 event");
+        assert!(loaded.time_uncertainty.is_none());
+    }
+
+    #[test]
     fn event_title_search_is_bounded_case_insensitive_and_excludable() {
         let store = TemporalStore::open_in_memory().expect("store");
         let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
