@@ -85,9 +85,7 @@ fn parse_new_local_event_time(
     let start = match timezone.from_local_datetime(&local) {
         chrono::LocalResult::Single(value) => value,
         chrono::LocalResult::Ambiguous(_, _) => {
-            anyhow::bail!(
-                "start time is ambiguous in {timezone}; choose an unambiguous local time"
-            )
+            anyhow::bail!("start time is ambiguous in {timezone}; choose an unambiguous local time")
         }
         chrono::LocalResult::None => {
             anyhow::bail!(
@@ -11032,22 +11030,18 @@ mod tests {
 
     #[test]
     fn new_local_event_time_preserves_all_day_and_timezone_semantics() {
-        let mut all_day = NewLocalEventDraft::for_date(
-            NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
-        );
+        let mut all_day =
+            NewLocalEventDraft::for_date(NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"));
         all_day.all_day = true;
         let (time, date) =
-            parse_new_local_event_time(&all_day, chrono_tz::America::Mexico_City)
-                .expect("all day");
+            parse_new_local_event_time(&all_day, chrono_tz::America::Mexico_City).expect("all day");
         assert_eq!(date, NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"));
         assert!(matches!(time, TimeSpec::AllDay { .. }));
 
-        let timed = NewLocalEventDraft::for_date(
-            NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
-        );
-        let (time, _) =
-            parse_new_local_event_time(&timed, chrono_tz::America::Mexico_City)
-                .expect("timed event");
+        let timed =
+            NewLocalEventDraft::for_date(NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"));
+        let (time, _) = parse_new_local_event_time(&timed, chrono_tz::America::Mexico_City)
+            .expect("timed event");
         assert!(matches!(
             time,
             TimeSpec::Instant {
@@ -11059,26 +11053,23 @@ mod tests {
 
     #[test]
     fn new_local_event_time_rejects_invalid_duration_and_ambiguous_wall_time() {
-        let mut invalid = NewLocalEventDraft::for_date(
-            NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
-        );
+        let mut invalid =
+            NewLocalEventDraft::for_date(NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"));
         invalid.duration_minutes = "0".to_string();
-        assert!(
-            parse_new_local_event_time(&invalid, chrono_tz::America::Mexico_City).is_err()
-        );
+        assert!(parse_new_local_event_time(&invalid, chrono_tz::America::Mexico_City).is_err());
 
-        let mut ambiguous = NewLocalEventDraft::for_date(
-            NaiveDate::from_ymd_opt(2026, 11, 1).expect("date"),
-        );
+        let mut ambiguous =
+            NewLocalEventDraft::for_date(NaiveDate::from_ymd_opt(2026, 11, 1).expect("date"));
         ambiguous.start_time = "01:30".to_string();
-        assert!(
-            parse_new_local_event_time(&ambiguous, chrono_tz::America::New_York).is_err()
-        );
+        assert!(parse_new_local_event_time(&ambiguous, chrono_tz::America::New_York).is_err());
     }
 
     #[test]
     fn event_details_numeric_parsers_are_strict_and_blank_aware() {
-        assert_eq!(parse_optional_confidence("").expect("blank confidence"), None);
+        assert_eq!(
+            parse_optional_confidence("").expect("blank confidence"),
+            None
+        );
         assert_eq!(
             parse_optional_confidence("0.75").expect("confidence"),
             Some(0.75)
