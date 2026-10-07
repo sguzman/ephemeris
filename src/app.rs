@@ -240,6 +240,17 @@ fn optional_trimmed(value: &str) -> Option<String> {
     }
 }
 
+fn parse_snooze_minutes(raw: &str) -> anyhow::Result<i64> {
+    let minutes = raw
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| anyhow::anyhow!("snooze minutes must be a whole number"))?;
+    if !(1..=10_080).contains(&minutes) {
+        anyhow::bail!("snooze minutes must be between 1 and 10080");
+    }
+    Ok(i64::from(minutes))
+}
+
 fn is_ics_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
@@ -2134,6 +2145,7 @@ pub struct EphemerisApp {
     notification_event_lead_minutes: String,
     notification_saved_view_id: Option<Uuid>,
     notification_saved_view_lead_minutes: String,
+    notification_snooze_minutes: String,
     dirty_state: bool,
     saved_view_name: String,
     saved_views: Vec<SavedView>,
@@ -2252,6 +2264,7 @@ impl EphemerisApp {
             notification_event_lead_minutes: "15".to_string(),
             notification_saved_view_id: None,
             notification_saved_view_lead_minutes: "15".to_string(),
+            notification_snooze_minutes: "15".to_string(),
             dirty_state: false,
             saved_view_name: String::new(),
             saved_views,
@@ -4461,6 +4474,23 @@ impl EphemerisApp {
                     ui.small("No timed reminders fall within the next seven days.");
                 }
 
+                ui.horizontal_wrapped(|ui| {
+                    ui.small("Custom snooze");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.notification_snooze_minutes)
+                            .desired_width(64.0)
+                            .hint_text("minutes"),
+                    );
+                    match parse_snooze_minutes(&self.notification_snooze_minutes) {
+                        Ok(minutes) => {
+                            ui.small(format!("{minutes}m"));
+                        }
+                        Err(_) => {
+                            ui.colored_label(Color32::LIGHT_RED, "1–10080 minutes");
+                        }
+                    }
+                });
+
                 for delivery in deliveries.iter().take(12) {
                     let trigger = delivery.trigger_at_utc.with_timezone(&timezone);
                     let start = delivery.starts_at_utc.with_timezone(&timezone);
@@ -4476,6 +4506,19 @@ impl EphemerisApp {
                             }
                             if ui.small_button("1h").on_hover_text("Snooze 1 hour").clicked() {
                                 snooze = Some((delivery.id, 60));
+                            }
+                            let custom_minutes =
+                                parse_snooze_minutes(&self.notification_snooze_minutes).ok();
+                            if ui
+                                .add_enabled(
+                                    custom_minutes.is_some(),
+                                    egui::Button::new("Custom").small(),
+                                )
+                                .on_hover_text("Snooze by the custom interval above")
+                                .clicked()
+                                && let Some(minutes) = custom_minutes
+                            {
+                                snooze = Some((delivery.id, minutes));
                             }
                             if ui.small_button("Dismiss").clicked() {
                                 dismiss = Some(delivery.id);
@@ -12590,6 +12633,16 @@ fn status_color(status: EventStatus) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_snooze_minutes_are_bounded_and_whitespace_tolerant() {
+        assert_eq!(parse_snooze_minutes(" 15 ").expect("15 minutes"), 15);
+        assert_eq!(parse_snooze_minutes("10080").expect("seven days"), 10_080);
+        assert!(parse_snooze_minutes("0").is_err());
+        assert!(parse_snooze_minutes("10081").is_err());
+        assert!(parse_snooze_minutes("1.5").is_err());
+        assert!(parse_snooze_minutes("").is_err());
+    }
 
     #[test]
     fn new_local_event_time_preserves_all_day_and_timezone_semantics() {
