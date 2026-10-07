@@ -1059,6 +1059,120 @@ impl fmt::Display for RecurrenceError {
 impl std::error::Error for RecurrenceError {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventRelation {
+    pub id: Uuid,
+    pub from_event_id: Uuid,
+    pub to_event_id: Uuid,
+    pub relation_type: String,
+    pub properties: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl EventRelation {
+    pub fn new(
+        from_event_id: Uuid,
+        to_event_id: Uuid,
+        relation_type: impl Into<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            from_event_id,
+            to_event_id,
+            relation_type: relation_type.into(),
+            properties: Value::Object(Default::default()),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), EventRelationError> {
+        if self.from_event_id == self.to_event_id {
+            return Err(EventRelationError::SelfRelation(self.from_event_id));
+        }
+        if self.relation_type.trim().is_empty() {
+            return Err(EventRelationError::EmptyRelationType);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventRelationError {
+    EmptyRelationType,
+    SelfRelation(Uuid),
+}
+
+impl fmt::Display for EventRelationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyRelationType => formatter.write_str("event relation type cannot be empty"),
+            Self::SelfRelation(event_id) => {
+                write!(formatter, "event relation cannot point event {event_id} to itself")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EventRelationError {}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventCollection {
+    pub id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub ordered: bool,
+    pub properties: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl EventCollection {
+    pub fn new(name: impl Into<String>, ordered: bool) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            description: None,
+            ordered,
+            properties: Value::Object(Default::default()),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), EventCollectionError> {
+        if self.name.trim().is_empty() {
+            return Err(EventCollectionError::EmptyName);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventCollectionError {
+    EmptyName,
+}
+
+impl fmt::Display for EventCollectionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyName => formatter.write_str("event collection name cannot be empty"),
+        }
+    }
+}
+
+impl std::error::Error for EventCollectionError {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventCollectionMember {
+    pub collection_id: Uuid,
+    pub event_id: Uuid,
+    pub position: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TemporalEvent {
     pub id: Uuid,
     pub source_id: Option<Uuid>,
