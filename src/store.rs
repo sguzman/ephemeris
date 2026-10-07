@@ -17,7 +17,29 @@ use crate::domain::{
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 23;
+const SCHEMA_VERSION: i64 = 24;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParticipantEntityBinding {
+    pub event_id: Uuid,
+    pub participant_key: String,
+    pub entity_id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParticipantEntityResolution {
+    Manual {
+        binding: ParticipantEntityBinding,
+        entity: CanonicalEntity,
+    },
+    SourceReference(CanonicalEntity),
+    ExactLabel(CanonicalEntity),
+    Ambiguous(Vec<CanonicalEntity>),
+    UnresolvedReference(String),
+    Unresolved,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -3788,6 +3810,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         add_event_location_column(&tx)?;
         add_event_participants_column(&tx)?;
         create_canonical_entity_schema_current(&tx)?;
+        create_participant_entity_binding_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -3901,6 +3924,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 22 {
         migrate_v22_to_v23(conn)?;
+        current = 23;
+    }
+
+    if current == 23 {
+        migrate_v23_to_v24(conn)?;
     }
 
     Ok(())
@@ -4360,6 +4388,25 @@ fn add_event_location_column(conn: &Connection) -> anyhow::Result<()> {
         .context("failed to add event location column")
 }
 
+fn create_participant_entity_binding_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE participant_entity_bindings (
+            event_id TEXT NOT NULL REFERENCES temporal_events(id) ON DELETE CASCADE,
+            participant_key TEXT NOT NULL,
+            entity_id TEXT NOT NULL REFERENCES canonical_entities(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (event_id, participant_key)
+        );
+
+        CREATE INDEX participant_entity_bindings_entity
+            ON participant_entity_bindings(entity_id, event_id);
+        "#,
+    )
+    .context("failed to create participant entity binding schema")
+}
+
 fn create_canonical_entity_schema_current(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -4466,6 +4513,17 @@ fn create_event_annotation_schema_current(conn: &Connection) -> anyhow::Result<(
         "#,
     )
     .context("failed to create event annotation schema")
+}
+
+fn migrate_v23_to_v24(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v23 to v24 migration")?;
+    create_participant_entity_binding_schema_current(&tx)?;
+    tx.pragma_update(None, "user_version", 24)
+        .context("failed to set schema version 24")?;
+    tx.commit()
+        .context("failed to commit v23 to v24 schema migration")
 }
 
 fn migrate_v22_to_v23(conn: &mut Connection) -> anyhow::Result<()> {
