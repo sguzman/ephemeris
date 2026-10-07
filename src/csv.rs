@@ -452,13 +452,7 @@ fn validate_timezone(value: Option<&str>) -> anyhow::Result<()> {
 }
 
 fn nonempty(value: Option<String>) -> Option<String> {
-    value.and_then(|value| {
-        if value.trim().is_empty() {
-            None
-        } else {
-            Some(value)
-        }
-    })
+    value.filter(|value| !value.trim().is_empty())
 }
 
 fn write_atomically(path: &Path, encoded: &str) -> anyhow::Result<()> {
