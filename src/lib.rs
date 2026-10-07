@@ -1,5 +1,6 @@
 pub mod app;
 pub mod calendar;
+pub mod csv;
 pub mod domain;
 pub mod ical;
 pub mod ics;
