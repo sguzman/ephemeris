@@ -2554,15 +2554,7 @@ impl TemporalStore {
         sources: &[TemporalSource],
         events: &[TemporalEvent],
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
-        self.merge_canonical_snapshot_with_annotations(
-            sources,
-            events,
-            &[],
-            &[],
-            &[],
-            &[],
-            &[],
-        )
+        self.merge_canonical_snapshot_with_annotations(sources, events, &[], &[], &[], &[], &[])
     }
 
     pub fn merge_canonical_snapshot_with_topology(
