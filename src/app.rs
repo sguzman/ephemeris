@@ -16,8 +16,9 @@ use crate::calendar::{
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
     EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
-    EventIdentityState, EventProvenanceRecord, EventProvenanceRole, EventRelation, EventStatus,
-    RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride,
+    EventIdentityState, EventParticipant, EventProvenanceRecord, EventProvenanceRole,
+    EventRelation, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
+    RecurrenceOrdinalWeekday, RecurrenceOverride,
     RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
@@ -1398,6 +1399,12 @@ enum RecurrenceEditorAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParticipantInspectorAction {
+    Add,
+    Remove(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TopologyInspectorAction {
     AddToCollection(Uuid),
     RemoveFromCollection(Uuid),
@@ -1445,6 +1452,10 @@ pub struct EphemerisApp {
     event_annotation_kinds: Vec<String>,
     annotation_new_kind: String,
     annotation_new_value: String,
+    participant_new_name: String,
+    participant_new_role: String,
+    participant_new_type: String,
+    participant_new_entity_ref: String,
     event_provenance_records: Vec<EventProvenanceRecord>,
     event_revision_event_id: Option<Uuid>,
     event_revisions: Vec<EventRevision>,
@@ -1534,6 +1545,10 @@ impl EphemerisApp {
             event_annotation_kinds: Vec::new(),
             annotation_new_kind: "note".to_string(),
             annotation_new_value: String::new(),
+            participant_new_name: String::new(),
+            participant_new_role: String::new(),
+            participant_new_type: String::new(),
+            participant_new_entity_ref: String::new(),
             event_provenance_records: Vec::new(),
             event_revision_event_id: None,
             event_revisions: Vec::new(),
@@ -4386,6 +4401,59 @@ impl EphemerisApp {
         }
     }
 
+    fn apply_participant_action(
+        &mut self,
+        event_id: Uuid,
+        action: ParticipantInspectorAction,
+    ) {
+        let result = (|| -> anyhow::Result<()> {
+            let mut event = self
+                .store
+                .event_by_id(event_id)?
+                .ok_or_else(|| anyhow::anyhow!("event {event_id} does not exist"))?;
+            if !self.event_is_editable(&event) {
+                anyhow::bail!("this event comes from a read-only source and cannot be edited");
+            }
+
+            match action {
+                ParticipantInspectorAction::Add => {
+                    let mut participant = EventParticipant::new(self.participant_new_name.trim());
+                    participant.role = optional_trimmed(&self.participant_new_role);
+                    participant.participant_type = optional_trimmed(&self.participant_new_type);
+                    participant.entity_ref = optional_trimmed(&self.participant_new_entity_ref);
+                    participant.validate()?;
+                    event.participants.push(participant);
+                    self.participant_new_name.clear();
+                    self.participant_new_role.clear();
+                    self.participant_new_type.clear();
+                    self.participant_new_entity_ref.clear();
+                    self.last_message = Some("Added event participant.".to_string());
+                }
+                ParticipantInspectorAction::Remove(index) => {
+                    if index >= event.participants.len() {
+                        anyhow::bail!("participant row no longer exists");
+                    }
+                    event.participants.remove(index);
+                    self.last_message = Some("Removed event participant.".to_string());
+                }
+            }
+
+            event.updated_at = Utc::now();
+            self.store.upsert_event(&event)
+        })();
+
+        match result {
+            Ok(()) => {
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Participant edit failed: {error:#}"));
+            }
+        }
+    }
+
     fn create_provenance_for_event(&mut self, event_id: Uuid) -> anyhow::Result<()> {
         let reference = self.provenance_new_reference.trim();
         if reference.is_empty() {
@@ -4806,6 +4874,7 @@ impl EphemerisApp {
             .cloned()
             .collect::<Vec<_>>();
         let mut topology_action = None;
+        let mut participant_action = None;
         let mut refresh_relation_search = false;
         let mut refresh_identity_search = false;
 
@@ -5061,18 +5130,59 @@ impl EphemerisApp {
                     inspector_row(ui, "Virtual URL", value);
                 }
             }
-            if !event.participants.is_empty() {
+            if !event.participants.is_empty() || self.event_is_editable(&event) {
                 ui.separator();
                 ui.strong("Participants");
-                for participant in &event.participants {
-                    let label = participant.role.as_deref().unwrap_or("Participant");
-                    inspector_row(ui, label, &participant.name);
-                    if let Some(participant_type) = participant.participant_type.as_deref() {
-                        inspector_row(ui, "Type", participant_type);
-                    }
-                    if let Some(entity_ref) = participant.entity_ref.as_deref() {
-                        inspector_row(ui, "Entity ref", entity_ref);
-                    }
+                for (index, participant) in event.participants.iter().enumerate() {
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            let label = participant.role.as_deref().unwrap_or("Participant");
+                            ui.label(RichText::new(&participant.name).strong());
+                            ui.small(format!("· {label}"));
+                            if self.event_is_editable(&event)
+                                && ui.small_button("×").on_hover_text("Remove participant").clicked()
+                            {
+                                participant_action =
+                                    Some(ParticipantInspectorAction::Remove(index));
+                            }
+                        });
+                        if let Some(participant_type) = participant.participant_type.as_deref() {
+                            inspector_row(ui, "Type", participant_type);
+                        }
+                        if let Some(entity_ref) = participant.entity_ref.as_deref() {
+                            inspector_row(ui, "Entity ref", entity_ref);
+                        }
+                    });
+                }
+
+                if self.event_is_editable(&event) {
+                    ui.collapsing("Add participant", |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.participant_new_name)
+                                .hint_text("Name"),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.participant_new_role)
+                                .hint_text("Role (optional)"),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.participant_new_type)
+                                .hint_text("Type: person, organization, team…"),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.participant_new_entity_ref)
+                                .hint_text("Stable entity ref (optional)"),
+                        );
+                        if ui
+                            .add_enabled(
+                                !self.participant_new_name.trim().is_empty(),
+                                egui::Button::new("Add participant"),
+                            )
+                            .clicked()
+                        {
+                            participant_action = Some(ParticipantInspectorAction::Add);
+                        }
+                    });
                 }
             }
             if let Some(value) = event.confidence {
@@ -5768,6 +5878,9 @@ impl EphemerisApp {
         }
         if let Some(action) = topology_action {
             self.apply_topology_action(canonical_id, action);
+        }
+        if let Some(action) = participant_action {
+            self.apply_participant_action(canonical_id, action);
         }
     }
 
