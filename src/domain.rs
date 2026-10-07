@@ -75,6 +75,37 @@ impl EventStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AvailabilityBehavior {
+    #[default]
+    Busy,
+    Free,
+}
+
+impl AvailabilityBehavior {
+    pub const ALL: [Self; 2] = [Self::Busy, Self::Free];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Busy => "busy",
+            Self::Free => "free",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "busy" => Some(Self::Busy),
+            "free" => Some(Self::Free),
+            _ => None,
+        }
+    }
+
+    pub const fn blocks_time(self) -> bool {
+        matches!(self, Self::Busy)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceAuthority {
@@ -1921,6 +1952,8 @@ pub struct TemporalEvent {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub participants: Vec<EventParticipant>,
     pub status: EventStatus,
+    #[serde(default)]
+    pub availability: AvailabilityBehavior,
     pub confidence: Option<f32>,
     pub importance: Option<i32>,
     pub personal_relevance: Option<i32>,
@@ -1958,6 +1991,7 @@ impl TemporalEvent {
             location: None,
             participants: Vec::new(),
             status: EventStatus::Scheduled,
+            availability: AvailabilityBehavior::Busy,
             confidence: None,
             importance: None,
             personal_relevance: None,
@@ -5169,6 +5203,37 @@ fn resolve_local_datetime(timezone: Tz, value: NaiveDateTime) -> Option<DateTime
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn availability_behavior_defaults_busy_and_roundtrips() {
+        assert_eq!(AvailabilityBehavior::default(), AvailabilityBehavior::Busy);
+        assert!(AvailabilityBehavior::Busy.blocks_time());
+        assert!(!AvailabilityBehavior::Free.blocks_time());
+        assert_eq!(AvailabilityBehavior::parse("FREE"), Some(AvailabilityBehavior::Free));
+        assert_eq!(
+            serde_json::to_string(&AvailabilityBehavior::Free).expect("serialize"),
+            "\"free\""
+        );
+    }
+
+    #[test]
+    fn temporal_event_deserialization_defaults_missing_availability_to_busy() {
+        let event = TemporalEvent::new(
+            "Default availability",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        let mut value = serde_json::to_value(&event).expect("event JSON");
+        value
+            .as_object_mut()
+            .expect("event object")
+            .remove("availability");
+        let decoded: TemporalEvent = serde_json::from_value(value).expect("decode legacy event");
+        assert_eq!(decoded.availability, AvailabilityBehavior::Busy);
+    }
+
+
     #![allow(clippy::unwrap_used)]
 
     use super::*;
