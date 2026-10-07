@@ -492,8 +492,9 @@ mod tests {
 
     use super::*;
     use crate::domain::{
-        EventAnnotation, EventIdentityAssessment, EventIdentityState, RecurrenceFrequency,
-        RecurrenceRule, SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
+        EventAnnotation, EventIdentityAssessment, EventIdentityState, EventProvenanceRecord,
+        EventProvenanceRole, RecurrenceFrequency, RecurrenceRule, SourceAuthority, SourceKind,
+        TimeSpec, TimeUncertainty,
     };
 
     fn fixture_source() -> TemporalSource {
@@ -761,6 +762,56 @@ mod tests {
         assert!(parsed.relations.is_empty());
         assert!(parsed.collections.is_empty());
         assert!(parsed.collection_members.is_empty());
+    }
+
+    #[test]
+    fn canonical_snapshot_v5_preserves_structured_provenance() {
+        let source = fixture_source();
+        let event = fixture_event(&source);
+        let mut record = EventProvenanceRecord::new(
+            event.id,
+            EventProvenanceRole::Source,
+            "https://example.org/archive/item-42",
+        );
+        record.source_id = Some(source.id);
+        record.note = Some("Primary source".to_string());
+        record.properties = json!({"page": 17});
+
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: 5,
+            sources: vec![source.clone()],
+            events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
+            annotations: Vec::new(),
+            provenance_records: vec![record.clone()],
+        };
+        snapshot.validate().expect("valid v5 snapshot");
+
+        let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
+        let decoded = parse_canonical_json_snapshot(&encoded).expect("decode");
+        assert_eq!(decoded, snapshot);
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let first = import_canonical_json_snapshot(&store, &decoded).expect("first merge");
+        assert_eq!(first.provenance_records_created, 1);
+        assert_eq!(
+            store
+                .event_provenance_records_for_event(event.id)
+                .expect("event provenance"),
+            vec![record.clone()]
+        );
+
+        let second = import_canonical_json_snapshot(&store, &decoded).expect("repeat merge");
+        assert_eq!(second.provenance_records_created, 0);
+        assert_eq!(second.provenance_records_unchanged, 1);
+
+        let mut legacy = snapshot;
+        legacy.version = 4;
+        assert!(legacy.validate().is_err());
     }
 
     #[test]
