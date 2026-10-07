@@ -2120,16 +2120,8 @@ mod tests {
         };
 
         assert!(!note_query.matches(&event, &test_context()));
-        assert!(note_query.matches_with_membership(
-            &event,
-            &test_context(),
-            Some(&membership)
-        ));
-        assert!(!missing_query.matches_with_membership(
-            &event,
-            &test_context(),
-            Some(&membership)
-        ));
+        assert!(note_query.matches_with_membership(&event, &test_context(), Some(&membership)));
+        assert!(!missing_query.matches_with_membership(&event, &test_context(), Some(&membership)));
     }
 
     #[test]
