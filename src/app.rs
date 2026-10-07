@@ -4918,6 +4918,18 @@ impl EphemerisApp {
             return;
         };
         let canonical_id = self.canonical_event_id(event.id);
+        if self
+            .participant_entity_edit
+            .is_some_and(|(event_id, _)| event_id != canonical_id)
+        {
+            self.reset_participant_entity_editor();
+        }
+        let participant_resolutions = event
+            .participants
+            .iter()
+            .enumerate()
+            .map(|(index, _)| self.store.resolve_event_participant_entity(canonical_id, index))
+            .collect::<Vec<_>>();
         if self.event_revision_event_id != Some(canonical_id) {
             match self.store.event_revisions(canonical_id) {
                 Ok(revisions) => {
@@ -5001,6 +5013,7 @@ impl EphemerisApp {
             .collect::<Vec<_>>();
         let mut topology_action = None;
         let mut participant_action = None;
+        let mut refresh_participant_entity_search = false;
         let mut refresh_relation_search = false;
         let mut refresh_identity_search = false;
 
@@ -5259,6 +5272,9 @@ impl EphemerisApp {
             if !event.participants.is_empty() || self.event_is_editable(&event) {
                 ui.separator();
                 ui.strong("Participants");
+                ui.small(
+                    "Participant labels remain source-owned; canonical entity resolution is a separate local layer.",
+                );
                 for (index, participant) in event.participants.iter().enumerate() {
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
@@ -5276,7 +5292,153 @@ impl EphemerisApp {
                             inspector_row(ui, "Type", participant_type);
                         }
                         if let Some(entity_ref) = participant.entity_ref.as_deref() {
-                            inspector_row(ui, "Entity ref", entity_ref);
+                            inspector_row(ui, "Source entity ref", entity_ref);
+                        }
+
+                        let resolution = participant_resolutions.get(index);
+                        match resolution {
+                            Some(Ok(ParticipantEntityResolution::Manual { entity, .. })) => {
+                                inspector_row(
+                                    ui,
+                                    "Canonical entity",
+                                    &format!("{} · manual binding", entity.canonical_name),
+                                );
+                            }
+                            Some(Ok(ParticipantEntityResolution::SourceReference(entity))) => {
+                                inspector_row(
+                                    ui,
+                                    "Canonical entity",
+                                    &format!("{} · source ref", entity.canonical_name),
+                                );
+                            }
+                            Some(Ok(ParticipantEntityResolution::ExactLabel(entity))) => {
+                                inspector_row(
+                                    ui,
+                                    "Canonical entity",
+                                    &format!("{} · exact label", entity.canonical_name),
+                                );
+                            }
+                            Some(Ok(ParticipantEntityResolution::Ambiguous(candidates))) => {
+                                inspector_row(
+                                    ui,
+                                    "Canonical entity",
+                                    &format!("ambiguous · {} matches", candidates.len()),
+                                );
+                            }
+                            Some(Ok(ParticipantEntityResolution::UnresolvedReference(reference))) => {
+                                inspector_row(
+                                    ui,
+                                    "Canonical entity",
+                                    &format!("unresolved source ref · {reference}"),
+                                );
+                            }
+                            Some(Ok(ParticipantEntityResolution::Unresolved)) => {
+                                inspector_row(ui, "Canonical entity", "unresolved");
+                            }
+                            Some(Err(error)) => {
+                                inspector_row(
+                                    ui,
+                                    "Canonical entity",
+                                    &format!("resolution error · {error}"),
+                                );
+                            }
+                            None => {}
+                        }
+
+                        ui.horizontal(|ui| {
+                            if ui.small_button("Resolve…").clicked() {
+                                self.begin_participant_entity_resolution(
+                                    canonical_id,
+                                    index,
+                                    participant,
+                                );
+                            }
+                            if matches!(
+                                resolution,
+                                Some(Ok(ParticipantEntityResolution::Manual { .. }))
+                            ) && ui
+                                .small_button("Unbind")
+                                .on_hover_text("Remove only the Ephemeris-local binding")
+                                .clicked()
+                            {
+                                participant_action =
+                                    Some(ParticipantInspectorAction::UnbindEntity(index));
+                            }
+                        });
+
+                        if self.participant_entity_edit == Some((canonical_id, index)) {
+                            ui.separator();
+                            ui.small("Bind this participant to a durable canonical entity.");
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.participant_entity_search,
+                                    )
+                                    .hint_text("Search canonical entity"),
+                                )
+                                .changed()
+                            {
+                                refresh_participant_entity_search = true;
+                            }
+
+                            let candidates = self.participant_entity_candidates.clone();
+                            if !candidates.is_empty() {
+                                let selected = self
+                                    .participant_entity_target_id
+                                    .and_then(|target_id| {
+                                        candidates
+                                            .iter()
+                                            .find(|(id, _, _)| *id == target_id)
+                                            .map(|(_, name, entity_type)| {
+                                                entity_type.as_deref().map_or_else(
+                                                    || name.clone(),
+                                                    |kind| format!("{name} · {kind}"),
+                                                )
+                                            })
+                                    })
+                                    .unwrap_or_else(|| "Select canonical entity…".to_string());
+                                egui::ComboBox::from_id_salt((
+                                    "participant-entity-target",
+                                    canonical_id,
+                                    index,
+                                ))
+                                .selected_text(selected)
+                                .show_ui(ui, |ui| {
+                                    for (entity_id, name, entity_type) in &candidates {
+                                        let label = entity_type.as_deref().map_or_else(
+                                            || name.clone(),
+                                            |kind| format!("{name} · {kind}"),
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.participant_entity_target_id,
+                                            Some(*entity_id),
+                                            label,
+                                        );
+                                    }
+                                });
+                            }
+
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .add_enabled(
+                                        self.participant_entity_target_id.is_some(),
+                                        egui::Button::new("Bind selected"),
+                                    )
+                                    .clicked()
+                                    && let Some(entity_id) = self.participant_entity_target_id
+                                {
+                                    participant_action = Some(
+                                        ParticipantInspectorAction::BindEntity(index, entity_id),
+                                    );
+                                }
+                                if ui.button("Create entity from participant").clicked() {
+                                    participant_action =
+                                        Some(ParticipantInspectorAction::CreateEntity(index));
+                                }
+                                if ui.small_button("Cancel").clicked() {
+                                    self.reset_participant_entity_editor();
+                                }
+                            });
                         }
                     });
                 }
@@ -5297,7 +5459,7 @@ impl EphemerisApp {
                         );
                         ui.add(
                             egui::TextEdit::singleline(&mut self.participant_new_entity_ref)
-                                .hint_text("Stable entity ref (optional)"),
+                                .hint_text("Stable source entity ref (optional)"),
                         );
                         if ui
                             .add_enabled(
@@ -5996,6 +6158,9 @@ impl EphemerisApp {
             inspector_row(ui, "Updated", &event.updated_at.to_rfc3339());
         });
 
+        if refresh_participant_entity_search {
+            self.refresh_participant_entity_candidates();
+        }
         if refresh_relation_search {
             self.refresh_topology_relation_candidates(canonical_id);
         }
