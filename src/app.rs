@@ -6394,6 +6394,7 @@ enum QueryPredicateKind {
     TemporalKindAnyOf,
     DateOverlaps,
     RelativeDateOverlaps,
+    UncertainStartOverlaps,
     BundleMembership,
     ProjectedCalendarMembership,
     CollectionMembership,
@@ -6401,7 +6402,7 @@ enum QueryPredicateKind {
 }
 
 impl QueryPredicateKind {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::Text,
         Self::TextAnyOf,
         Self::StatusAnyOf,
@@ -6410,6 +6411,7 @@ impl QueryPredicateKind {
         Self::TemporalKindAnyOf,
         Self::DateOverlaps,
         Self::RelativeDateOverlaps,
+        Self::UncertainStartOverlaps,
         Self::BundleMembership,
         Self::ProjectedCalendarMembership,
         Self::CollectionMembership,
@@ -6426,6 +6428,7 @@ impl QueryPredicateKind {
             Self::TemporalKindAnyOf => "Time kind set",
             Self::DateOverlaps => "Date overlap",
             Self::RelativeDateOverlaps => "Relative date window",
+            Self::UncertainStartOverlaps => "Uncertain start overlap",
             Self::BundleMembership => "Taria bundle membership",
             Self::ProjectedCalendarMembership => "Taria projected calendar membership",
             Self::CollectionMembership => "Event collection membership",
@@ -6501,6 +6504,10 @@ fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
             end_offset_days_exclusive: 31,
             include_imprecise: false,
         },
+        QueryPredicateKind::UncertainStartOverlaps => QueryPredicate::UncertainStartOverlaps {
+            start: None,
+            end_exclusive: None,
+        },
         QueryPredicateKind::BundleMembership => QueryPredicate::BundleMembership {
             bundle_ref: String::new(),
         },
@@ -6529,6 +6536,7 @@ fn query_predicate_kind(predicate: &QueryPredicate) -> QueryPredicateKind {
         QueryPredicate::TemporalKindAnyOf { .. } => QueryPredicateKind::TemporalKindAnyOf,
         QueryPredicate::DateOverlaps { .. } => QueryPredicateKind::DateOverlaps,
         QueryPredicate::RelativeDateOverlaps { .. } => QueryPredicateKind::RelativeDateOverlaps,
+        QueryPredicate::UncertainStartOverlaps { .. } => QueryPredicateKind::UncertainStartOverlaps,
         QueryPredicate::BundleMembership { .. } => QueryPredicateKind::BundleMembership,
         QueryPredicate::ProjectedCalendarMembership { .. } => {
             QueryPredicateKind::ProjectedCalendarMembership
@@ -6855,6 +6863,16 @@ fn render_query_predicate_editor(
                     "Include month/year-precision events by their full known span",
                 )
                 .changed();
+        }
+        QueryPredicate::UncertainStartOverlaps {
+            start,
+            end_exclusive,
+        } => {
+            ui.small(
+                "Matches the bounded possible start-placement window, not the event's occupied duration.",
+            );
+            changed |= render_optional_date_editor(ui, "Start inclusive", start);
+            changed |= render_optional_date_editor(ui, "End exclusive", end_exclusive);
         }
         QueryPredicate::BundleMembership { bundle_ref } => {
             ui.small(
