@@ -25,6 +25,16 @@ pub struct ImportBatchResult {
     pub retained_missing: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CanonicalSnapshotMergeResult {
+    pub sources_created: usize,
+    pub sources_updated: usize,
+    pub sources_unchanged: usize,
+    pub events_created: usize,
+    pub events_updated: usize,
+    pub events_unchanged: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TariaReleaseRecord {
     pub release_id: String,
@@ -328,6 +338,17 @@ impl TemporalStore {
             sources.push(decode_source(row)?);
         }
         Ok(sources)
+    }
+
+    pub fn list_events(&self) -> anyhow::Result<Vec<TemporalEvent>> {
+        let sql = event_select_sql("ORDER BY id");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query([])?;
+        let mut events = Vec::new();
+        while let Some(row) = rows.next()? {
+            events.push(decode_event(row)?);
+        }
+        Ok(events)
     }
 
     pub fn events_for_source(&self, source_id: Uuid) -> anyhow::Result<Vec<TemporalEvent>> {
@@ -1841,6 +1862,81 @@ impl TemporalStore {
             events.push(decode_event(row)?);
         }
         Ok(events)
+    }
+
+    pub fn merge_canonical_snapshot(
+        &self,
+        sources: &[TemporalSource],
+        events: &[TemporalEvent],
+    ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .context("failed to begin canonical snapshot merge transaction")?;
+
+        let result = (|| -> anyhow::Result<CanonicalSnapshotMergeResult> {
+            let mut sources_created = 0;
+            let mut sources_updated = 0;
+            let mut sources_unchanged = 0;
+            for source in sources {
+                match self.source_by_id(source.id)? {
+                    None => {
+                        self.upsert_source(source)?;
+                        sources_created += 1;
+                    }
+                    Some(existing) if existing == *source => {
+                        sources_unchanged += 1;
+                    }
+                    Some(_) => {
+                        self.upsert_source(source)?;
+                        sources_updated += 1;
+                    }
+                }
+            }
+
+            let mut events_created = 0;
+            let mut events_updated = 0;
+            let mut events_unchanged = 0;
+            for event in events {
+                event
+                    .validate_recurrence()
+                    .context("invalid event recurrence in canonical snapshot")?;
+                match self.event_by_id(event.id)? {
+                    None => {
+                        self.upsert_event(event)?;
+                        events_created += 1;
+                    }
+                    Some(existing) if existing == *event => {
+                        events_unchanged += 1;
+                    }
+                    Some(_) => {
+                        self.upsert_event(event)?;
+                        events_updated += 1;
+                    }
+                }
+            }
+
+            Ok(CanonicalSnapshotMergeResult {
+                sources_created,
+                sources_updated,
+                sources_unchanged,
+                events_created,
+                events_updated,
+                events_unchanged,
+            })
+        })();
+
+        match result {
+            Ok(result) => {
+                tx.commit()
+                    .context("failed to commit canonical snapshot merge")?;
+                Ok(result)
+            }
+            Err(error) => {
+                let _ = tx.rollback();
+                Err(error)
+            }
+        }
     }
 
     pub fn import_batch(
