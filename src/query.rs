@@ -397,9 +397,8 @@ impl QueryPredicate {
             Self::RelationType {
                 relation_type,
                 direction,
-            } => membership.is_some_and(|membership| {
-                membership.has_relation_type(relation_type, *direction)
-            }),
+            } => membership
+                .is_some_and(|membership| membership.has_relation_type(relation_type, *direction)),
         }
     }
 }
@@ -1899,9 +1898,9 @@ mod tests {
         };
 
         let collection_query = EventQuery {
-            expression: Some(QueryExpr::Predicate(
-                QueryPredicate::CollectionMembership { collection_id },
-            )),
+            expression: Some(QueryExpr::Predicate(QueryPredicate::CollectionMembership {
+                collection_id,
+            })),
             ..EventQuery::default()
         };
         let outgoing_relation_query = EventQuery {
@@ -1929,9 +1928,11 @@ mod tests {
         assert!(!bundle_query.matches(&event, &test_context()));
         assert!(bundle_query.matches_with_membership(&event, &test_context(), Some(&membership)));
         assert!(calendar_query.matches_with_membership(&event, &test_context(), Some(&membership)));
-        assert!(
-            collection_query.matches_with_membership(&event, &test_context(), Some(&membership))
-        );
+        assert!(collection_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
         assert!(outgoing_relation_query.matches_with_membership(
             &event,
             &test_context(),
