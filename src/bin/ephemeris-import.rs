@@ -94,6 +94,12 @@ fn main() -> anyhow::Result<()> {
             report.provenance_records_updated,
             report.provenance_records_unchanged
         );
+        println!(
+            "Participant entity bindings: {} created  {} updated  {} unchanged",
+            report.participant_entity_bindings_created,
+            report.participant_entity_bindings_updated,
+            report.participant_entity_bindings_unchanged
+        );
         return Ok(());
     }
 
