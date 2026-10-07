@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`f8a5fa8d471e4510fcbc59fa370be44ea45be9b9`
+`f903eace2267648da5c7b219a901a4d3cbb050ad`
 
 At that checkpoint:
 
@@ -26,8 +26,8 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **471 library tests** pass
-- **4 export-CLI tests** pass
+- **479 library tests** pass
+- **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
 ## What works now
@@ -88,6 +88,14 @@ Remote subscriptions can be added from the CLI or GUI and refreshed from the sou
 
 Remote refresh is conditional when the server supplies HTTP validators. Ephemeris persists ETag / Last-Modified metadata, sends If-None-Match / If-Modified-Since on later refreshes, and treats HTTP 304 as a successful not-modified refresh without re-downloading, reparsing, or rewriting canonical events. CLI and GUI surfaces report that state explicitly.
 
+### CSV sources
+
+The `csv` adapter implements a strict, versioned tabular subset rather than a generic flattening layer.
+
+Local CSV files import through stable canonical file identity and required row-level `record_key` values. Re-import preserves source/event identity, updates changed rows, and retains rows missing from later snapshots. CLI import/export and GUI drag/drop/refresh/export are implemented.
+
+Only semantics with an explicit round-trip representation are accepted. Unsupported richer semantics fail loudly.
+
 ### Taria
 
 Filesystem-first Taria integration remains the richer upstream path.
@@ -100,7 +108,11 @@ The application can detect a local Resourcearium checkout and run **Update Taria
 
 The versioned native JSON interchange boundary is implemented and verified. Version 1 exports and merges canonical `TemporalSource` and `TemporalEvent` records with UUIDs, timestamps, recurrence, time semantics, and arbitrary properties intact. Validation rejects duplicate IDs/external refs/source-record identities, dangling source references, unsupported format versions, and invalid recurrence. Import is transactional and merge-only. CLI import/export and GUI drag/drop are available through the explicit `.ephemeris.json` suffix. This is a canonical sources/events snapshot, not a full SQLite backup: saved views, refresh history, Taria release tables, and auxiliary alias tables remain outside v1.
 
-The next interoperability slice is **CSV projection/import for a deliberately representable tabular subset**. CSV must not silently flatten recurrence, imprecise time, or other semantics it cannot round-trip.
+Strict CSV v1 projection/import is now implemented and verified. CSV files become first-class `SourceKind::Csv` sources with stable file/source identity and required per-row `record_key` identity. The schema supports non-recurring exact instants, floating date-times, explicit all-day values, date-only values, and scalar event metadata. Refresh updates matching rows in place and retains rows absent from later snapshots. Source-scoped export is available from the CLI and GUI, and empty exports retain a valid schema header.
+
+CSV v1 deliberately rejects recurrence, month/year/unknown precision, list-valued tags/reference metadata, and arbitrary event properties rather than flattening them into lossy cells.
+
+The next interoperability slice is **durable refresh diagnostics for CSV sources**, so CSV refresh attempts participate in the same source-history machinery as ICS/Webcal.
 
 After that, the Phase 9 priorities are:
 
