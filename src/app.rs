@@ -13,6 +13,7 @@ use crate::calendar::{
     CalendarLayout, CalendarView, calendar_title, month_days, month_grid_start, quarter_months,
     shift_focus, week_days, window_for_view, year_months,
 };
+use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
     EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday,
     RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
@@ -51,6 +52,29 @@ fn is_canonical_json_path(path: &std::path::Path) -> bool {
     path.file_name()
         .and_then(|value| value.to_str())
         .is_some_and(|value| value.ends_with(".ephemeris.json"))
+}
+
+fn is_csv_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("csv"))
+}
+
+fn default_csv_export_path(source: &TemporalSource) -> String {
+    if source.kind == crate::domain::SourceKind::Csv
+        && let Some(locator) = source.locator.as_deref()
+    {
+        let path = std::path::Path::new(locator);
+        if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
+            let file_name = format!("{stem}-ephemeris.csv");
+            if let Some(parent) = path.parent() {
+                return parent.join(&file_name).display().to_string();
+            }
+            return file_name;
+        }
+    }
+
+    format!("ephemeris-{}.csv", source.id)
 }
 
 fn default_ics_export_path(source: &TemporalSource) -> String {
@@ -1382,6 +1406,8 @@ pub struct EphemerisApp {
     selected_source_id: Option<Uuid>,
     ics_export_source_id: Option<Uuid>,
     ics_export_path: String,
+    csv_export_source_id: Option<Uuid>,
+    csv_export_path: String,
     remote_ics_url: String,
     remote_ics_import_receiver: Option<Receiver<Result<IcsImportReport, String>>>,
     taria_current_source_ids: BTreeSet<Uuid>,
@@ -1433,6 +1459,8 @@ impl EphemerisApp {
             selected_source_id: None,
             ics_export_source_id: None,
             ics_export_path: String::new(),
+            csv_export_source_id: None,
+            csv_export_path: String::new(),
             remote_ics_url: String::new(),
             remote_ics_import_receiver: None,
             taria_current_source_ids: BTreeSet::new(),
@@ -1458,6 +1486,8 @@ impl EphemerisApp {
     fn import_dropped_path(&mut self, path: &std::path::Path) {
         if is_canonical_json_path(path) {
             self.import_canonical_json_path(path);
+        } else if is_csv_path(path) {
+            self.import_csv_path(path);
         } else if is_ics_path(path) {
             self.import_ics_path(path);
         } else {
@@ -1484,6 +1514,33 @@ impl EphemerisApp {
                 self.last_message = None;
                 self.last_error = Some(format!(
                     "Failed to import canonical snapshot {}: {error:#}",
+                    path.display()
+                ));
+            }
+        }
+    }
+
+    fn import_csv_path(&mut self, path: &std::path::Path) {
+        match import_csv_file(&self.store, path) {
+            Ok(report) => {
+                self.selected_source_id = Some(report.source_id);
+                self.state.show_sources = true;
+                self.last_message = Some(format!(
+                    "Imported {}: {} created, {} updated, {} unchanged, {} retained missing",
+                    report.source_name,
+                    report.created,
+                    report.updated,
+                    report.unchanged,
+                    report.retained_missing
+                ));
+                self.last_error = None;
+                self.mark_state_dirty();
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!(
+                    "Failed to import CSV {}: {error:#}",
                     path.display()
                 ));
             }
@@ -1539,6 +1596,30 @@ impl EphemerisApp {
             Err(error) => {
                 self.last_message = None;
                 self.last_error = Some(format!("Failed to export iCalendar: {error:#}"));
+            }
+        }
+    }
+
+    fn export_csv_source_to_path(&mut self, source_id: Uuid) {
+        let output = self.csv_export_path.trim();
+        if output.is_empty() {
+            self.last_message = None;
+            self.last_error = Some("Choose an output path before exporting CSV.".to_string());
+            return;
+        }
+
+        match export_source_csv_by_id(&self.store, source_id, output) {
+            Ok(report) => {
+                self.last_message = Some(format!(
+                    "Exported {} CSV events to {}",
+                    report.total_events,
+                    report.output_path.display()
+                ));
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to export CSV: {error:#}"));
             }
         }
     }
@@ -3873,6 +3954,42 @@ impl EphemerisApp {
                         || (submit && export_enabled)
                     {
                         self.export_ics_source_to_path(source.id);
+                    }
+                }
+
+                if source.kind == crate::domain::SourceKind::Csv {
+                    if self.csv_export_source_id != Some(source.id) {
+                        self.csv_export_source_id = Some(source.id);
+                        self.csv_export_path = default_csv_export_path(source);
+                    }
+
+                    ui.separator();
+                    ui.strong("CSV source");
+                    if let Some(locator) = source.locator.as_deref() {
+                        ui.small("Refresh re-reads the original CSV using stable source and record_key identity.");
+                        if ui.button("Refresh CSV").clicked() {
+                            self.import_csv_path(std::path::Path::new(locator));
+                        }
+                    } else {
+                        ui.small("This CSV source has no local file locator.");
+                    }
+
+                    ui.add_space(4.0);
+                    ui.small("CSV v1 is strict: unsupported recurrence or richer metadata makes export fail rather than flattening it.");
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.csv_export_path)
+                            .hint_text("/path/to/export.csv")
+                            .desired_width(250.0),
+                    );
+                    let submit = response.lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    let export_enabled = !self.csv_export_path.trim().is_empty();
+                    if ui
+                        .add_enabled(export_enabled, egui::Button::new("Export CSV"))
+                        .clicked()
+                        || (submit && export_enabled)
+                    {
+                        self.export_csv_source_to_path(source.id);
                     }
                 }
 
@@ -7981,6 +8098,29 @@ mod tests {
         assert_eq!(
             default_ics_export_path(&source),
             format!("ephemeris-{}.ics", source.id)
+        );
+    }
+
+    #[test]
+    fn csv_routing_and_default_export_path_are_explicit() {
+        assert!(is_csv_path(std::path::Path::new("/tmp/events.csv")));
+        assert!(is_csv_path(std::path::Path::new("/tmp/EVENTS.CSV")));
+        assert!(!is_csv_path(std::path::Path::new("/tmp/events.json")));
+
+        let mut source = TemporalSource::new(
+            "CSV",
+            crate::domain::SourceKind::Csv,
+            crate::domain::SourceAuthority::Unknown,
+        );
+        source.locator = Some("/tmp/events.csv".to_string());
+        assert_eq!(
+            default_csv_export_path(&source),
+            "/tmp/events-ephemeris.csv"
+        );
+        source.locator = None;
+        assert_eq!(
+            default_csv_export_path(&source),
+            format!("ephemeris-{}.csv", source.id)
         );
     }
 
