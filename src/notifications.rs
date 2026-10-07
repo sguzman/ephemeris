@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::domain::{
-    EventStatus, NotificationRule, NotificationTarget, NotificationTrigger,
+    EventOccurrence, EventStatus, NotificationRule, NotificationTarget, NotificationTrigger,
     TemporalEvent, TimeSpec,
 };
 use crate::query::{
@@ -82,25 +82,17 @@ pub fn evaluate_notification_rules(
                     {
                         continue;
                     }
-                    let membership = memberships.get(&event.id);
-                    if matches_composed_or_overlay_with_saved_views_and_membership(
-                        &view.query,
-                        &view.composition_layers,
-                        &view.overlays,
+                    evaluate_rule_for_saved_view_event(
+                        rule,
+                        view,
                         saved_views,
                         event,
+                        memberships.get(&event.id),
                         context,
-                        membership,
-                    ) {
-                        evaluate_rule_for_event(
-                            rule,
-                            event,
-                            context,
-                            window_start_utc,
-                            window_end_utc,
-                            &mut evaluation,
-                        )?;
-                    }
+                        window_start_utc,
+                        window_end_utc,
+                        &mut evaluation,
+                    )?;
                 }
             }
         }
@@ -130,6 +122,88 @@ fn evaluate_rule_for_event(
     window_end_utc: DateTime<Utc>,
     evaluation: &mut NotificationEvaluation,
 ) -> anyhow::Result<()> {
+    let (lead_minutes, occurrences) = notification_occurrences_for_rule(
+        rule,
+        event,
+        context,
+        window_start_utc,
+        window_end_utc,
+    )?;
+    for occurrence in occurrences {
+        schedule_occurrence(
+            rule,
+            event,
+            occurrence,
+            lead_minutes,
+            context,
+            window_start_utc,
+            window_end_utc,
+            evaluation,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_rule_for_saved_view_event(
+    rule: &NotificationRule,
+    view: &SavedView,
+    saved_views: &[SavedView],
+    event: &TemporalEvent,
+    membership: Option<&EventMembership>,
+    context: &QueryContext,
+    window_start_utc: DateTime<Utc>,
+    window_end_utc: DateTime<Utc>,
+    evaluation: &mut NotificationEvaluation,
+) -> anyhow::Result<()> {
+    let (lead_minutes, occurrences) = notification_occurrences_for_rule(
+        rule,
+        event,
+        context,
+        window_start_utc,
+        window_end_utc,
+    )?;
+
+    for occurrence in occurrences {
+        let mut materialized = event.clone();
+        materialized.id = occurrence.id;
+        materialized.time = occurrence.time.clone();
+        materialized.status = occurrence.status;
+
+        if !matches_composed_or_overlay_with_saved_views_and_membership(
+            &view.query,
+            &view.composition_layers,
+            &view.overlays,
+            saved_views,
+            &materialized,
+            context,
+            membership,
+        ) {
+            continue;
+        }
+
+        schedule_occurrence(
+            rule,
+            event,
+            occurrence,
+            lead_minutes,
+            context,
+            window_start_utc,
+            window_end_utc,
+            evaluation,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn notification_occurrences_for_rule(
+    rule: &NotificationRule,
+    event: &TemporalEvent,
+    context: &QueryContext,
+    window_start_utc: DateTime<Utc>,
+    window_end_utc: DateTime<Utc>,
+) -> anyhow::Result<(u32, Vec<EventOccurrence>)> {
     let lead_minutes = match rule.trigger {
         NotificationTrigger::BeforeStart { minutes } => minutes,
     };
@@ -156,40 +230,54 @@ fn evaluate_rule_for_event(
         .occurrences_in_window(start_date, end_exclusive, context.display_timezone)
         .with_context(|| format!("failed to expand reminder target event {}", event.id))?;
 
-    for occurrence in occurrences {
-        if occurrence.status == EventStatus::Cancelled || occurrence.cancelled_by_override {
-            continue;
-        }
-        let Some(starts_at_utc) =
-            notification_start_utc(&occurrence.time, context.display_timezone)
-        else {
-            evaluation.skipped.push(NotificationSkip {
-                rule_id: rule.id,
-                event_id: event.id,
-                reason: unsupported_time_reason(&occurrence.time),
-            });
-            continue;
-        };
-        let trigger_at_utc = starts_at_utc
-            .checked_sub_signed(lead)
-            .context("notification trigger time overflow")?;
-        if trigger_at_utc < window_start_utc || trigger_at_utc >= window_end_utc {
-            continue;
-        }
+    Ok((lead_minutes, occurrences))
+}
 
-        evaluation.occurrences.push(NotificationOccurrence {
-            id: notification_occurrence_id(rule.id, occurrence.id),
-            rule_id: rule.id,
-            rule_name: rule.name.clone(),
-            event_id: event.id,
-            occurrence_id: occurrence.id,
-            event_title: event.normalized_title.clone(),
-            trigger_at_utc,
-            starts_at_utc,
-            lead_minutes,
-        });
+#[allow(clippy::too_many_arguments)]
+fn schedule_occurrence(
+    rule: &NotificationRule,
+    event: &TemporalEvent,
+    occurrence: EventOccurrence,
+    lead_minutes: u32,
+    context: &QueryContext,
+    window_start_utc: DateTime<Utc>,
+    window_end_utc: DateTime<Utc>,
+    evaluation: &mut NotificationEvaluation,
+) -> anyhow::Result<()> {
+    if occurrence.status == EventStatus::Cancelled || occurrence.cancelled_by_override {
+        return Ok(());
     }
 
+    let Some(starts_at_utc) =
+        notification_start_utc(&occurrence.time, context.display_timezone)
+    else {
+        evaluation.skipped.push(NotificationSkip {
+            rule_id: rule.id,
+            event_id: event.id,
+            reason: unsupported_time_reason(&occurrence.time),
+        });
+        return Ok(());
+    };
+
+    let lead = Duration::minutes(i64::from(lead_minutes));
+    let trigger_at_utc = starts_at_utc
+        .checked_sub_signed(lead)
+        .context("notification trigger time overflow")?;
+    if trigger_at_utc < window_start_utc || trigger_at_utc >= window_end_utc {
+        return Ok(());
+    }
+
+    evaluation.occurrences.push(NotificationOccurrence {
+        id: notification_occurrence_id(rule.id, occurrence.id),
+        rule_id: rule.id,
+        rule_name: rule.name.clone(),
+        event_id: event.id,
+        occurrence_id: occurrence.id,
+        event_title: event.normalized_title.clone(),
+        trigger_at_utc,
+        starts_at_utc,
+        lead_minutes,
+    });
     Ok(())
 }
 
@@ -460,6 +548,57 @@ mod tests {
 
         assert_eq!(evaluation.occurrences.len(), 1);
         assert_eq!(evaluation.occurrences[0].event_id, matching.id);
+    }
+
+    #[test]
+    fn saved_view_temporal_predicate_matches_materialized_recurrence_occurrence() {
+        use crate::query::{QueryExpr, QueryPredicate};
+
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 7, 15, 0, 0)
+            .single()
+            .expect("start");
+        let second_start = start + Duration::days(1);
+        let mut event = TemporalEvent::new(
+            "Daily",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: None,
+                source_timezone: None,
+            },
+        );
+        let mut recurrence = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        recurrence.count = Some(2);
+        event.recurrence = Some(recurrence);
+
+        let view_id = Uuid::new_v4();
+        let view = saved_view(
+            view_id,
+            EventQuery {
+                expression: Some(QueryExpr::Predicate(QueryPredicate::DateOverlaps {
+                    start: Some(NaiveDate::from_ymd_opt(2026, 10, 8).expect("start date")),
+                    end_exclusive: Some(
+                        NaiveDate::from_ymd_opt(2026, 10, 9).expect("end date"),
+                    ),
+                    include_imprecise: false,
+                })),
+                ..EventQuery::default()
+            },
+        );
+        let rule = NotificationRule::for_saved_view(view_id, "October 8 only", 0);
+        let evaluation = evaluate_notification_rules(
+            &[rule],
+            &[event],
+            &[view],
+            &HashMap::new(),
+            &context(),
+            start - Duration::minutes(1),
+            second_start + Duration::minutes(1),
+        )
+        .expect("evaluate");
+
+        assert_eq!(evaluation.occurrences.len(), 1);
+        assert_eq!(evaluation.occurrences[0].starts_at_utc, second_start);
     }
 
     #[test]
