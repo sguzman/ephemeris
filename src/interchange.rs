@@ -11,7 +11,7 @@ use crate::domain::{
 use crate::store::{CanonicalSnapshotMergeInput, CanonicalSnapshotMergeResult, TemporalStore};
 
 pub const CANONICAL_SNAPSHOT_FORMAT: &str = "ephemeris.canonical_snapshot";
-pub const CANONICAL_SNAPSHOT_VERSION: u32 = 6;
+pub const CANONICAL_SNAPSHOT_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalJsonSnapshot {
@@ -127,6 +127,11 @@ impl CanonicalJsonSnapshot {
         if self.version < 6 && self.events.iter().any(|event| event.location.is_some()) {
             return Err(anyhow!(
                 "canonical snapshot versions before 6 cannot contain structured event locations"
+            ));
+        }
+        if self.version < 7 && self.events.iter().any(|event| !event.participants.is_empty()) {
+            return Err(anyhow!(
+                "canonical snapshot versions before 7 cannot contain structured event participants"
             ));
         }
 
@@ -501,7 +506,8 @@ mod tests {
     use super::*;
     use crate::domain::{
         EventAnnotation, EventIdentityAssessment, EventIdentityState, EventLocation,
-        EventProvenanceRecord, EventProvenanceRole, RecurrenceFrequency, RecurrenceRule,
+        EventParticipant, EventProvenanceRecord, EventProvenanceRole, RecurrenceFrequency,
+        RecurrenceRule,
         SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
     };
 
@@ -555,6 +561,56 @@ mod tests {
         let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
         let decoded = parse_canonical_json_snapshot(&encoded).expect("decode");
         assert_eq!(decoded, snapshot);
+    }
+
+    #[test]
+    fn canonical_snapshot_v7_preserves_structured_participants_losslessly() {
+        let source = fixture_source();
+        let mut event = fixture_event(&source);
+        let mut participant = EventParticipant::new("Ada Lovelace");
+        participant.role = Some("speaker".to_string());
+        participant.participant_type = Some("person".to_string());
+        participant.entity_ref = Some("person:ada-lovelace".to_string());
+        participant.properties = json!({"billing": "keynote"});
+        event.participants.push(participant);
+
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: CANONICAL_SNAPSHOT_VERSION,
+            sources: vec![source],
+            events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
+            annotations: Vec::new(),
+            provenance_records: Vec::new(),
+        };
+
+        let encoded = format_canonical_json_snapshot(&snapshot).expect("encode participants");
+        let decoded = parse_canonical_json_snapshot(&encoded).expect("decode participants");
+        assert_eq!(decoded.events[0].participants, event.participants);
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        import_canonical_json_snapshot(&store, &decoded).expect("merge participant snapshot");
+        assert_eq!(
+            store
+                .event_by_id(event.id)
+                .expect("query")
+                .expect("event")
+                .participants,
+            event.participants
+        );
+
+        let mut legacy = snapshot;
+        legacy.version = 6;
+        assert!(
+            legacy
+                .validate()
+                .expect_err("v6 must reject structured participants")
+                .to_string()
+                .contains("before 7")
+        );
     }
 
     #[test]
