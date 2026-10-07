@@ -12303,6 +12303,107 @@ mod tests {
     }
 
     #[test]
+    fn event_time_edit_roundtrips_exact_clock_context_and_optional_end() {
+        let timezone = chrono_tz::America::Mexico_City;
+        let local = timezone
+            .with_ymd_and_hms(2026, 10, 7, 9, 30, 0)
+            .single()
+            .expect("local time");
+        let start_utc = local.with_timezone(&Utc);
+        let mut event = TemporalEvent::new(
+            "Editable time",
+            TimeSpec::Instant {
+                start_utc,
+                end_utc: Some(start_utc + ChronoDuration::minutes(90)),
+                source_timezone: Some("America/Mexico_City".to_string()),
+            },
+        );
+
+        let mut draft =
+            EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("time draft");
+        assert_eq!(draft.date, "2026-10-07");
+        assert_eq!(draft.start_time, "09:30");
+        assert_eq!(draft.duration_minutes, "90");
+        assert_eq!(draft.timezone_label(), Some("America/Mexico_City"));
+
+        draft.start_time = "10:15".to_string();
+        draft.duration_minutes.clear();
+        event.time = draft.parsed_time().expect("parsed time");
+
+        assert!(matches!(
+            event.time,
+            TimeSpec::Instant {
+                end_utc: None,
+                source_timezone: Some(ref timezone),
+                ..
+            } if timezone == "America/Mexico_City"
+        ));
+        let expected = chrono_tz::America::Mexico_City
+            .with_ymd_and_hms(2026, 10, 7, 10, 15, 0)
+            .single()
+            .expect("expected")
+            .with_timezone(&Utc);
+        assert!(matches!(
+            event.time,
+            TimeSpec::Instant { start_utc, .. } if start_utc == expected
+        ));
+    }
+
+    #[test]
+    fn event_time_edit_preserves_date_kinds_and_end_exclusive() {
+        let event = TemporalEvent::new(
+            "All day",
+            TimeSpec::AllDay {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("start"),
+                end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 9).expect("end")),
+            },
+        );
+        let mut draft =
+            EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("time draft");
+        assert_eq!(draft.end_date, "2026-10-09");
+        draft.date = "2026-10-08".to_string();
+        draft.end_date = "2026-10-10".to_string();
+        assert_eq!(
+            draft.parsed_time().expect("parsed"),
+            TimeSpec::AllDay {
+                start: NaiveDate::from_ymd_opt(2026, 10, 8).expect("start"),
+                end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 10).expect("end")),
+            }
+        );
+
+        draft.end_date = "2026-10-08".to_string();
+        assert!(draft.parsed_time().is_err());
+    }
+
+    #[test]
+    fn event_time_edit_refuses_recurrence_and_uncertainty() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let mut recurring = TemporalEvent::new(
+            "Recurring",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("time"),
+                end: None,
+                source_timezone: None,
+            },
+        );
+        recurring.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
+        assert!(EventTimeEditDraft::from_event(&recurring, chrono_tz::UTC).is_err());
+
+        let mut uncertain = TemporalEvent::new(
+            "Uncertain",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        uncertain.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: day,
+            latest: day.succ_opt().expect("next day"),
+        });
+        assert!(EventTimeEditDraft::from_event(&uncertain, chrono_tz::UTC).is_err());
+    }
+
+    #[test]
     fn event_details_numeric_parsers_are_strict_and_blank_aware() {
         assert_eq!(
             parse_optional_confidence("").expect("blank confidence"),
