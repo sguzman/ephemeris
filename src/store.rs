@@ -49,6 +49,9 @@ pub struct CanonicalSnapshotMergeResult {
     pub annotations_created: usize,
     pub annotations_updated: usize,
     pub annotations_unchanged: usize,
+    pub provenance_records_created: usize,
+    pub provenance_records_updated: usize,
+    pub provenance_records_unchanged: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -60,6 +63,7 @@ pub struct CanonicalSnapshotMergeInput<'a> {
     pub collection_members: &'a [EventCollectionMember],
     pub identity_assessments: &'a [EventIdentityAssessment],
     pub annotations: &'a [EventAnnotation],
+    pub provenance_records: &'a [EventProvenanceRecord],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2702,6 +2706,7 @@ impl TemporalStore {
             collection_members: &[],
             identity_assessments: &[],
             annotations: &[],
+            provenance_records: &[],
         })
     }
 
@@ -2721,6 +2726,7 @@ impl TemporalStore {
             collection_members,
             identity_assessments: &[],
             annotations: &[],
+            provenance_records: &[],
         })
     }
 
@@ -2741,6 +2747,7 @@ impl TemporalStore {
             collection_members,
             identity_assessments,
             annotations: &[],
+            provenance_records: &[],
         })
     }
 
@@ -2756,6 +2763,7 @@ impl TemporalStore {
             collection_members,
             identity_assessments,
             annotations,
+            provenance_records,
         } = input;
         let tx = self
             .conn
@@ -2880,6 +2888,25 @@ impl TemporalStore {
                 }
             }
 
+            let mut provenance_records_created = 0;
+            let mut provenance_records_updated = 0;
+            let mut provenance_records_unchanged = 0;
+            for record in provenance_records {
+                match self.event_provenance_record_by_id(record.id)? {
+                    None => {
+                        self.upsert_event_provenance_record(record)?;
+                        provenance_records_created += 1;
+                    }
+                    Some(existing) if existing == *record => {
+                        provenance_records_unchanged += 1;
+                    }
+                    Some(_) => {
+                        self.upsert_event_provenance_record(record)?;
+                        provenance_records_updated += 1;
+                    }
+                }
+            }
+
             let mut collection_memberships_replaced = 0;
             let mut collection_memberships_unchanged = 0;
             for collection in collections {
@@ -2929,6 +2956,9 @@ impl TemporalStore {
                 annotations_created,
                 annotations_updated,
                 annotations_unchanged,
+                provenance_records_created,
+                provenance_records_updated,
+                provenance_records_unchanged,
             })
         })();
 
