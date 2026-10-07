@@ -2939,10 +2939,10 @@ impl EphemerisApp {
             .collect::<Vec<_>>();
 
         ui.collapsing(
-            format!("Calendar refresh history ({})", attempts.len()),
+            format!("External refresh history ({})", attempts.len()),
             |ui| {
                 if attempts.is_empty() {
-                    ui.small("No persisted ICS/Webcal refresh attempts yet.");
+                    ui.small("No persisted ICS/Webcal/CSV refresh attempts yet.");
                     return;
                 }
 
@@ -2955,6 +2955,7 @@ impl EphemerisApp {
                     let kind = match attempt.refresh_kind.as_str() {
                         "ics_file" => "local ICS",
                         "webcal" => "remote Webcal",
+                        "csv_file" => "local CSV",
                         other => other,
                     };
                     ui.strong(format!("{status} · {kind}"));
