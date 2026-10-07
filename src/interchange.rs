@@ -11,7 +11,7 @@ use crate::domain::{
 use crate::store::{CanonicalSnapshotMergeInput, CanonicalSnapshotMergeResult, TemporalStore};
 
 pub const CANONICAL_SNAPSHOT_FORMAT: &str = "ephemeris.canonical_snapshot";
-pub const CANONICAL_SNAPSHOT_VERSION: u32 = 5;
+pub const CANONICAL_SNAPSHOT_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalJsonSnapshot {
@@ -124,6 +124,11 @@ impl CanonicalJsonSnapshot {
                 "canonical snapshot versions before 5 cannot contain structured provenance records"
             ));
         }
+        if self.version < 6 && self.events.iter().any(|event| event.location.is_some()) {
+            return Err(anyhow!(
+                "canonical snapshot versions before 6 cannot contain structured event locations"
+            ));
+        }
 
         let mut source_ids = HashSet::new();
         let mut external_refs = HashSet::new();
@@ -171,6 +176,9 @@ impl CanonicalJsonSnapshot {
             event
                 .validate_time_uncertainty()
                 .with_context(|| format!("event {} has invalid temporal uncertainty", event.id))?;
+            event
+                .validate_location()
+                .with_context(|| format!("event {} has invalid structured location", event.id))?;
         }
 
         if self.version >= 2 {
@@ -492,9 +500,9 @@ mod tests {
 
     use super::*;
     use crate::domain::{
-        EventAnnotation, EventIdentityAssessment, EventIdentityState, EventProvenanceRecord,
-        EventProvenanceRole, RecurrenceFrequency, RecurrenceRule, SourceAuthority, SourceKind,
-        TimeSpec, TimeUncertainty,
+        EventAnnotation, EventIdentityAssessment, EventIdentityState, EventLocation,
+        EventProvenanceRecord, EventProvenanceRole, RecurrenceFrequency, RecurrenceRule,
+        SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
     };
 
     fn fixture_source() -> TemporalSource {
@@ -547,6 +555,58 @@ mod tests {
         let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
         let decoded = parse_canonical_json_snapshot(&encoded).expect("decode");
         assert_eq!(decoded, snapshot);
+    }
+
+    #[test]
+    fn canonical_snapshot_v6_preserves_structured_location_losslessly() {
+        let source = fixture_source();
+        let mut event = fixture_event(&source);
+        event.location = Some(EventLocation {
+            name: Some("Palacio de Bellas Artes".to_string()),
+            locality: Some("Ciudad de México".to_string()),
+            country: Some("MX".to_string()),
+            latitude: Some(19.4352),
+            longitude: Some(-99.1412),
+            ..EventLocation::default()
+        });
+
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: CANONICAL_SNAPSHOT_VERSION,
+            sources: vec![source],
+            events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
+            annotations: Vec::new(),
+            provenance_records: Vec::new(),
+        };
+
+        let encoded = format_canonical_json_snapshot(&snapshot).expect("encode location");
+        let decoded = parse_canonical_json_snapshot(&encoded).expect("decode location");
+        assert_eq!(decoded.events[0].location, event.location);
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        import_canonical_json_snapshot(&store, &decoded).expect("merge location snapshot");
+        assert_eq!(
+            store
+                .event_by_id(event.id)
+                .expect("query")
+                .expect("event")
+                .location,
+            event.location
+        );
+
+        let mut legacy = snapshot;
+        legacy.version = 5;
+        assert!(
+            legacy
+                .validate()
+                .expect_err("v5 must reject structured location")
+                .to_string()
+                .contains("before 6")
+        );
     }
 
     #[test]
