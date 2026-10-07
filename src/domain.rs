@@ -1070,11 +1070,7 @@ pub struct EventRelation {
 }
 
 impl EventRelation {
-    pub fn new(
-        from_event_id: Uuid,
-        to_event_id: Uuid,
-        relation_type: impl Into<String>,
-    ) -> Self {
+    pub fn new(from_event_id: Uuid, to_event_id: Uuid, relation_type: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
@@ -1109,7 +1105,10 @@ impl fmt::Display for EventRelationError {
         match self {
             Self::EmptyRelationType => formatter.write_str("event relation type cannot be empty"),
             Self::SelfRelation(event_id) => {
-                write!(formatter, "event relation cannot point event {event_id} to itself")
+                write!(
+                    formatter,
+                    "event relation cannot point event {event_id} to itself"
+                )
             }
         }
     }
