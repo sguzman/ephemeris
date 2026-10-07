@@ -5924,7 +5924,7 @@ fn event_select_sql(suffix: &str) -> String {
             assertion_refs_json, source_refs_json, provenance_refs_json, renderability,
             normalized_title, raw_title, description,
             event_type, domain, jurisdiction, institution, location_json, participants_json,
-            status, confidence, importance, personal_relevance,
+            status, availability, confidence, importance, personal_relevance,
             time_kind, start_utc, end_utc, source_timezone,
             start_date, end_date_exclusive,
             start_local, end_local, time_original_value,
