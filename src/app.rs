@@ -3,7 +3,8 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
 use chrono::{
-    DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate, NaiveDateTime, Timelike, Utc,
+    DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate, NaiveDateTime, NaiveTime,
+    TimeZone, Timelike, Utc,
 };
 use chrono_tz::Tz;
 use eframe::egui::{self, Color32, RichText};
@@ -50,6 +51,63 @@ fn multiline_values(value: &str) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .collect()
+}
+
+fn parse_new_local_event_time(
+    draft: &NewLocalEventDraft,
+    timezone: Tz,
+) -> anyhow::Result<(TimeSpec, NaiveDate)> {
+    let date = NaiveDate::parse_from_str(draft.date.trim(), "%Y-%m-%d")
+        .map_err(|_| anyhow::anyhow!("date must use YYYY-MM-DD"))?;
+
+    if draft.all_day {
+        return Ok((
+            TimeSpec::AllDay {
+                start: date,
+                end_exclusive: None,
+            },
+            date,
+        ));
+    }
+
+    let time = NaiveTime::parse_from_str(draft.start_time.trim(), "%H:%M")
+        .map_err(|_| anyhow::anyhow!("start time must use 24-hour HH:MM"))?;
+    let duration_minutes = draft
+        .duration_minutes
+        .trim()
+        .parse::<i64>()
+        .map_err(|_| anyhow::anyhow!("duration must be a whole number of minutes"))?;
+    if duration_minutes <= 0 {
+        anyhow::bail!("duration must be greater than zero minutes");
+    }
+
+    let local = date.and_time(time);
+    let start = match timezone.from_local_datetime(&local) {
+        chrono::LocalResult::Single(value) => value,
+        chrono::LocalResult::Ambiguous(_, _) => {
+            anyhow::bail!(
+                "start time is ambiguous in {timezone}; choose an unambiguous local time"
+            )
+        }
+        chrono::LocalResult::None => {
+            anyhow::bail!(
+                "start time does not exist in {timezone} because of a timezone transition"
+            )
+        }
+    };
+    let start_utc = start.with_timezone(&Utc);
+    let end_utc = start_utc
+        .checked_add_signed(ChronoDuration::minutes(duration_minutes))
+        .ok_or_else(|| anyhow::anyhow!("event duration overflows supported time range"))?;
+
+    Ok((
+        TimeSpec::Instant {
+            start_utc,
+            end_utc: Some(end_utc),
+            source_timezone: Some(timezone.name().to_string()),
+        },
+        date,
+    ))
 }
 
 fn parse_optional_confidence(value: &str) -> anyhow::Result<Option<f32>> {
@@ -1435,6 +1493,29 @@ fn parse_ordinal_byday_values(raw: &str) -> Result<Vec<RecurrenceOrdinalWeekday>
 }
 
 #[derive(Debug, Clone)]
+struct NewLocalEventDraft {
+    title: String,
+    description: String,
+    date: String,
+    all_day: bool,
+    start_time: String,
+    duration_minutes: String,
+}
+
+impl NewLocalEventDraft {
+    fn for_date(date: NaiveDate) -> Self {
+        Self {
+            title: String::new(),
+            description: String::new(),
+            date: date.to_string(),
+            all_day: false,
+            start_time: "09:00".to_string(),
+            duration_minutes: "60".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct EventDetailsEditDraft {
     event_id: Uuid,
     title: String,
@@ -1594,6 +1675,7 @@ pub struct EphemerisApp {
     taria_update_receiver: Option<(Uuid, Receiver<Result<TariaWorkspaceUpdateReport, String>>)>,
     last_message: Option<String>,
     last_error: Option<String>,
+    new_local_event: Option<NewLocalEventDraft>,
     event_details_editor: Option<EventDetailsEditDraft>,
     recurrence_editor: Option<RecurrenceEditDraft>,
     dirty_state: bool,
@@ -1701,6 +1783,7 @@ impl EphemerisApp {
             taria_update_receiver: None,
             last_message: None,
             last_error: None,
+            new_local_event: None,
             event_details_editor: None,
             recurrence_editor: None,
             dirty_state: false,
@@ -2614,6 +2697,50 @@ impl EphemerisApp {
         })
     }
 
+    fn begin_new_local_event(&mut self) {
+        self.new_local_event = Some(NewLocalEventDraft::for_date(self.state.focus_date()));
+        self.last_error = None;
+    }
+
+    fn save_new_local_event(&mut self) {
+        let Some(draft) = self.new_local_event.clone() else {
+            return;
+        };
+
+        let result = (|| -> anyhow::Result<(Uuid, NaiveDate)> {
+            let title = draft.title.trim();
+            if title.is_empty() {
+                anyhow::bail!("event title cannot be empty");
+            }
+
+            let timezone = self.timezone();
+            let (time, focus_date) = parse_new_local_event_time(&draft, timezone)?;
+            let mut event = TemporalEvent::new(title, time);
+            event.description = optional_trimmed(&draft.description);
+            event.status = EventStatus::Scheduled;
+            let event_id = event.id;
+            self.store.upsert_event(&event)?;
+            Ok((event_id, focus_date))
+        })();
+
+        match result {
+            Ok((event_id, focus_date)) => {
+                self.new_local_event = None;
+                self.state.set_focus_date(focus_date);
+                self.state.selected_event_id = Some(event_id);
+                self.state.show_inspector = true;
+                self.last_message = Some("Created local event.".to_string());
+                self.last_error = None;
+                self.mark_state_dirty();
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to create local event: {error:#}"));
+            }
+        }
+    }
+
     fn begin_event_details_edit(&mut self, event_id: Uuid) {
         let canonical_id = self.canonical_event_id(event_id);
         match self.store.event_by_id(canonical_id) {
@@ -3282,6 +3409,9 @@ impl EphemerisApp {
             if ui.button("Next").clicked() {
                 self.navigate(1);
             }
+            if ui.button("New event").clicked() {
+                self.begin_new_local_event();
+            }
 
             ui.separator();
 
@@ -3351,6 +3481,71 @@ impl EphemerisApp {
             ui.separator();
             ui.small("Taria updates read the configured Resourcearium filesystem directly");
         });
+
+        if self.new_local_event.is_some() {
+            let timezone_name = self.state.display_timezone.clone();
+            let mut save = false;
+            let mut cancel = false;
+            ui.group(|ui| {
+                ui.strong("New local event");
+                ui.small(format!(
+                    "Timed events use display timezone {timezone_name}. Recurrence and richer metadata can be added after creation."
+                ));
+                let draft = self.new_local_event.as_mut().expect("checked above");
+                ui.add(
+                    egui::TextEdit::singleline(&mut draft.title)
+                        .hint_text("Title")
+                        .desired_width(260.0),
+                );
+                ui.add(
+                    egui::TextEdit::multiline(&mut draft.description)
+                        .desired_rows(2)
+                        .hint_text("Description (optional)")
+                        .desired_width(320.0),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.date)
+                            .hint_text("YYYY-MM-DD")
+                            .desired_width(110.0),
+                    );
+                    ui.checkbox(&mut draft.all_day, "All day");
+                    if !draft.all_day {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut draft.start_time)
+                                .hint_text("HH:MM")
+                                .desired_width(75.0),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut draft.duration_minutes)
+                                .hint_text("minutes")
+                                .desired_width(80.0),
+                        );
+                        ui.small("min");
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            !draft.title.trim().is_empty(),
+                            egui::Button::new("Create event"),
+                        )
+                        .clicked()
+                    {
+                        save = true;
+                    }
+                    if ui.small_button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+            if save {
+                self.save_new_local_event();
+            } else if cancel {
+                self.new_local_event = None;
+                self.last_error = None;
+            }
+        }
 
         if let Some(message) = self.last_message.as_deref() {
             ui.colored_label(Color32::LIGHT_GREEN, message);
@@ -10834,6 +11029,52 @@ fn status_color(status: EventStatus) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_local_event_time_preserves_all_day_and_timezone_semantics() {
+        let mut all_day = NewLocalEventDraft::for_date(
+            NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+        );
+        all_day.all_day = true;
+        let (time, date) =
+            parse_new_local_event_time(&all_day, chrono_tz::America::Mexico_City)
+                .expect("all day");
+        assert_eq!(date, NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"));
+        assert!(matches!(time, TimeSpec::AllDay { .. }));
+
+        let timed = NewLocalEventDraft::for_date(
+            NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+        );
+        let (time, _) =
+            parse_new_local_event_time(&timed, chrono_tz::America::Mexico_City)
+                .expect("timed event");
+        assert!(matches!(
+            time,
+            TimeSpec::Instant {
+                source_timezone: Some(ref timezone),
+                ..
+            } if timezone == "America/Mexico_City"
+        ));
+    }
+
+    #[test]
+    fn new_local_event_time_rejects_invalid_duration_and_ambiguous_wall_time() {
+        let mut invalid = NewLocalEventDraft::for_date(
+            NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+        );
+        invalid.duration_minutes = "0".to_string();
+        assert!(
+            parse_new_local_event_time(&invalid, chrono_tz::America::Mexico_City).is_err()
+        );
+
+        let mut ambiguous = NewLocalEventDraft::for_date(
+            NaiveDate::from_ymd_opt(2026, 11, 1).expect("date"),
+        );
+        ambiguous.start_time = "01:30".to_string();
+        assert!(
+            parse_new_local_event_time(&ambiguous, chrono_tz::America::New_York).is_err()
+        );
+    }
 
     #[test]
     fn event_details_numeric_parsers_are_strict_and_blank_aware() {
