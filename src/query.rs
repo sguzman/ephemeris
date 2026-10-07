@@ -531,6 +531,7 @@ pub enum TextField {
     Jurisdiction,
     Institution,
     Location,
+    Participants,
     Renderability,
     UpstreamEventRef,
     UpstreamReconciledKey,
@@ -542,7 +543,7 @@ pub enum TextField {
 }
 
 impl TextField {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Title,
         Self::RawTitle,
         Self::Description,
@@ -551,6 +552,7 @@ impl TextField {
         Self::Jurisdiction,
         Self::Institution,
         Self::Location,
+        Self::Participants,
         Self::Renderability,
         Self::UpstreamEventRef,
         Self::UpstreamReconciledKey,
@@ -571,6 +573,7 @@ impl TextField {
             Self::Jurisdiction => "Jurisdiction",
             Self::Institution => "Institution",
             Self::Location => "Location",
+            Self::Participants => "Participants",
             Self::Renderability => "Renderability",
             Self::UpstreamEventRef => "Upstream event ref",
             Self::UpstreamReconciledKey => "Reconciled key",
@@ -675,6 +678,7 @@ pub enum PresenceField {
     Jurisdiction,
     Institution,
     Location,
+    Participants,
     Renderability,
     Confidence,
     TimeUncertainty,
@@ -690,7 +694,7 @@ pub enum PresenceField {
 }
 
 impl PresenceField {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Source,
         Self::RawTitle,
         Self::Description,
@@ -699,6 +703,7 @@ impl PresenceField {
         Self::Jurisdiction,
         Self::Institution,
         Self::Location,
+        Self::Participants,
         Self::Renderability,
         Self::Confidence,
         Self::TimeUncertainty,
@@ -723,6 +728,7 @@ impl PresenceField {
             Self::Jurisdiction => "Jurisdiction",
             Self::Institution => "Institution",
             Self::Location => "Location",
+            Self::Participants => "Participants",
             Self::Renderability => "Renderability",
             Self::Confidence => "Confidence",
             Self::TimeUncertainty => "Temporal uncertainty",
@@ -752,6 +758,11 @@ fn text_values(event: &TemporalEvent, field: TextField) -> Vec<&str> {
             .location
             .as_ref()
             .map_or_else(Vec::new, |location| location.text_values().collect()),
+        TextField::Participants => event
+            .participants
+            .iter()
+            .flat_map(crate::domain::EventParticipant::text_values)
+            .collect(),
         TextField::Renderability => event.renderability.iter().map(String::as_str).collect(),
         TextField::UpstreamEventRef => event
             .upstream_event_ref
@@ -918,6 +929,7 @@ fn field_exists(event: &TemporalEvent, field: PresenceField) -> bool {
         PresenceField::Jurisdiction => event.jurisdiction.is_some(),
         PresenceField::Institution => event.institution.is_some(),
         PresenceField::Location => event.location.is_some(),
+        PresenceField::Participants => !event.participants.is_empty(),
         PresenceField::Renderability => event.renderability.is_some(),
         PresenceField::Confidence => event.confidence.is_some(),
         PresenceField::TimeUncertainty => event.time_uncertainty.is_some(),
@@ -1731,6 +1743,38 @@ mod tests {
         };
 
         assert!(query.matches(&event(), &test_context()));
+    }
+
+    #[test]
+    fn structured_participants_are_queryable_by_text_and_presence() {
+        let mut participated = event();
+        let mut participant = crate::domain::EventParticipant::new("Ada Lovelace");
+        participant.role = Some("speaker".to_string());
+        participant.participant_type = Some("person".to_string());
+        participant.entity_ref = Some("person:ada-lovelace".to_string());
+        participated.participants.push(participant);
+
+        let name = QueryPredicate::Text {
+            field: TextField::Participants,
+            operator: TextOperator::Contains,
+            value: "lovelace".to_string(),
+            case_sensitive: false,
+        };
+        let role = QueryPredicate::Text {
+            field: TextField::Participants,
+            operator: TextOperator::Equals,
+            value: "speaker".to_string(),
+            case_sensitive: false,
+        };
+        let present = QueryPredicate::Exists {
+            field: PresenceField::Participants,
+            exists: true,
+        };
+
+        assert!(name.matches(&participated, &test_context()));
+        assert!(role.matches(&participated, &test_context()));
+        assert!(present.matches(&participated, &test_context()));
+        assert!(!present.matches(&event(), &test_context()));
     }
 
     #[test]
