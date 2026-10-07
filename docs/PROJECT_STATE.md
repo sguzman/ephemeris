@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`ab516b76aae5c1f8efd9b8ac7d1950ded5b77885`
+`44e42f8441a7219ddb0436171572f4023ebc1fc8`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **485 library tests** pass
+- **489 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -106,7 +106,7 @@ The application can detect a local Resourcearium checkout and run **Update Taria
 
 ## Immediate frontier
 
-The versioned native JSON interchange boundary is implemented and verified. Version 1 exports and merges canonical `TemporalSource` and `TemporalEvent` records with UUIDs, timestamps, recurrence, time semantics, and arbitrary properties intact. Validation rejects duplicate IDs/external refs/source-record identities, dangling source references, unsupported format versions, and invalid recurrence. Import is transactional and merge-only. CLI import/export and GUI drag/drop are available through the explicit `.ephemeris.json` suffix. This is a canonical sources/events snapshot, not a full SQLite backup: saved views, refresh history, Taria release tables, and auxiliary alias tables remain outside v1.
+The versioned native JSON interchange boundary is implemented and verified. Current **v2** snapshots preserve canonical `TemporalSource`, `TemporalEvent`, `EventRelation`, `EventCollection`, and ordered/unordered collection-membership records with stable UUIDs, timestamps, recurrence, time semantics, and arbitrary properties. Version 1 sources/events-only snapshots remain readable. Validation rejects duplicate identities, dangling topology references, duplicate semantic relations, malformed sequence positions, unsupported versions, and invalid recurrence. Import is transactional and merge-only at the corpus level; membership lists are authoritative only for collections explicitly present in the imported v2 snapshot. CLI import/export and GUI drag/drop use the explicit `.ephemeris.json` suffix. Saved views, refresh history, Taria release tables, and auxiliary alias tables remain outside this snapshot boundary.
 
 Strict CSV v1 projection/import is now implemented and verified. CSV files become first-class `SourceKind::Csv` sources with stable file/source identity and required per-row `record_key` identity. The schema supports non-recurring exact instants, floating date-times, explicit all-day values, date-only values, and scalar event metadata. Refresh updates matching rows in place and retains rows absent from later snapshots. Source-scoped export is available from the CLI and GUI, and empty exports retain a valid schema header.
 
@@ -120,9 +120,9 @@ Event relations and collections/sequences now have a canonical external topology
 
 User-facing topology inspection and core editing are now implemented. The event inspector resolves recurrence occurrences back to their canonical event, shows collection/sequence membership and incoming/outgoing relation edges with counterpart titles, and allows local collection membership changes, collection/sequence creation, bounded relation-target search, typed incoming/outgoing relation creation, and relation deletion. These edits remain Ephemeris-local even when the underlying event source is read-only.
 
-The remaining collection/sequence ergonomics boundary is **ordered membership reordering and broader collection management**; after that the canonical JSON interchange format should grow a topology-aware version so first-class relations/collections are not omitted from canonical exports.
+The event-topology milestone is now substantially complete. Ordered sequence reordering, broader collection management (rename/description, collection↔sequence conversion, deletion without deleting events), and topology-aware canonical JSON v2 are implemented and verified.
 
-The long-horizon domain roadmap then returns to uncertainty, duplicate/entity resolution, richer provenance records, and annotations.
+The next canonical-model frontier is **temporal uncertainty**: represent approximate/estimated temporal knowledge without confusing it with coarse precision (`Month`/`Year`), lifecycle state (`tentative`/`estimated`/`projected`), or general event confidence. After that come duplicate/entity resolution, richer provenance records, and annotations.
 
 ## Documentation roles
 
