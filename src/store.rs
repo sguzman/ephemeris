@@ -7349,7 +7349,7 @@ mod tests {
         let mut conn = store_v24.conn;
         migrate(&mut conn).expect("migrate");
         let store = TemporalStore { conn, path: None };
-        assert_eq!(store.schema_version().expect("version"), 26);
+        assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
         assert_eq!(
             store
                 .event_by_id(event.id)
