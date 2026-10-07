@@ -4712,6 +4712,12 @@ impl EphemerisApp {
             })
             .cloned()
             .collect::<Vec<_>>();
+        let annotation_rows = self
+            .event_annotations
+            .iter()
+            .filter(|annotation| annotation.event_id == canonical_id)
+            .cloned()
+            .collect::<Vec<_>>();
         let mut topology_action = None;
         let mut refresh_relation_search = false;
         let mut refresh_identity_search = false;
@@ -5363,6 +5369,72 @@ impl EphemerisApp {
                     .clicked()
                 {
                     topology_action = Some(TopologyInspectorAction::AddIdentityAssessment);
+                }
+            });
+
+            ui.separator();
+            ui.strong("Annotations");
+            ui.small(
+                "User-owned metadata stored separately from source-backed event fields; source refresh does not overwrite it.",
+            );
+            for annotation in &annotation_rows {
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&annotation.kind).strong());
+                        if ui
+                            .small_button("Delete")
+                            .on_hover_text(
+                                "Delete this annotation only; the event and source record remain intact",
+                            )
+                            .clicked()
+                        {
+                            topology_action =
+                                Some(TopologyInspectorAction::DeleteAnnotation(annotation.id));
+                        }
+                    });
+                    let value = serde_json::to_string_pretty(&annotation.value)
+                        .unwrap_or_else(|_| "<invalid JSON value>".to_string());
+                    ui.monospace(value);
+                });
+            }
+
+            ui.collapsing("New annotation", |ui| {
+                ui.small(
+                    "Values are explicit JSON: quote text strings, or use true/false, numbers, arrays, or objects.",
+                );
+                egui::ComboBox::from_id_salt(("annotation-kind", canonical_id))
+                    .selected_text(if self.annotation_new_kind.trim().is_empty() {
+                        "Annotation kind…"
+                    } else {
+                        self.annotation_new_kind.as_str()
+                    })
+                    .show_ui(ui, |ui| {
+                        for kind in &self.event_annotation_kinds {
+                            ui.selectable_value(
+                                &mut self.annotation_new_kind,
+                                kind.clone(),
+                                kind,
+                            );
+                        }
+                    });
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.annotation_new_kind)
+                        .hint_text("note, watched, rating, custom_tag, ..."),
+                );
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.annotation_new_value)
+                        .desired_rows(3)
+                        .hint_text("\"Review this source discrepancy\""),
+                );
+                if ui
+                    .add_enabled(
+                        !self.annotation_new_kind.trim().is_empty()
+                            && !self.annotation_new_value.trim().is_empty(),
+                        egui::Button::new("Create annotation"),
+                    )
+                    .clicked()
+                {
+                    topology_action = Some(TopologyInspectorAction::AddAnnotation);
                 }
             });
 
