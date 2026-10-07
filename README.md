@@ -122,6 +122,24 @@ The GUI source inspector also exposes an editable export path and **Export ICS**
 
 Refresh is identity-aware. Unchanged records stay unchanged, changed records update in place, and records absent from a later snapshot are retained unless the source semantics explicitly justify removal or cancellation.
 
+### Canonical JSON
+
+Ephemeris also has a versioned native interchange format for canonical sources and events. It preserves source/event UUIDs, timestamps, recurrence, time semantics, and arbitrary properties; it is a canonical-data snapshot, not a full SQLite backup of saved views, refresh history, or Taria release tables.
+
+Export the current canonical sources/events:
+
+```bash
+cargo run --bin ephemeris-export -- --canonical-json snapshot.ephemeris.json
+```
+
+Merge a snapshot back into the canonical store:
+
+```bash
+cargo run --bin ephemeris-import -- snapshot.ephemeris.json
+```
+
+A `.ephemeris.json` snapshot can also be dropped onto the running application. Import is transactional and merge-only: matching UUIDs update, new UUIDs are created, and records absent from the snapshot are not implicitly deleted.
+
 ## Verify
 
 ```bash
