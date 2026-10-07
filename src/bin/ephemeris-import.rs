@@ -72,8 +72,7 @@ fn main() -> anyhow::Result<()> {
         );
         println!(
             "Collection memberships: {} replaced  {} unchanged",
-            report.collection_memberships_replaced,
-            report.collection_memberships_unchanged
+            report.collection_memberships_replaced, report.collection_memberships_unchanged
         );
         return Ok(());
     }
