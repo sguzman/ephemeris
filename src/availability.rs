@@ -98,6 +98,13 @@ pub fn availability_for_materialized_date_window(
     availability_for_materialized_events(events, display_timezone, window_start_utc, window_end_utc)
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AvailabilityWindow {
+    display_timezone: Tz,
+    start_utc: DateTime<Utc>,
+    end_utc: DateTime<Utc>,
+}
+
 pub fn availability_for_materialized_events(
     events: &[TemporalEvent],
     display_timezone: Tz,
@@ -108,6 +115,11 @@ pub fn availability_for_materialized_events(
         return Ok(AvailabilityResult::default());
     }
 
+    let window = AvailabilityWindow {
+        display_timezone,
+        start_utc: window_start_utc,
+        end_utc: window_end_utc,
+    };
     let mut result = AvailabilityResult::default();
     for event in events {
         let occurrence = EventOccurrence {
@@ -127,9 +139,7 @@ pub fn availability_for_materialized_events(
             &event.normalized_title,
             event.availability.blocks_time(),
             &occurrence,
-            display_timezone,
-            window_start_utc,
-            window_end_utc,
+            window,
         );
     }
     finish_availability(result, window_start_utc, window_end_utc)
@@ -156,6 +166,11 @@ pub fn availability_for_events(
         .checked_add_days(Days::new(2))
         .unwrap_or(NaiveDate::MAX);
 
+    let window = AvailabilityWindow {
+        display_timezone,
+        start_utc: window_start_utc,
+        end_utc: window_end_utc,
+    };
     let mut result = AvailabilityResult::default();
     for event in events {
         let occurrences = event
@@ -171,9 +186,7 @@ pub fn availability_for_events(
                 &event.normalized_title,
                 event.availability.blocks_time(),
                 &occurrence,
-                display_timezone,
-                window_start_utc,
-                window_end_utc,
+                window,
             );
         }
     }
@@ -187,9 +200,7 @@ fn append_occurrence(
     event_title: &str,
     blocks_time: bool,
     occurrence: &EventOccurrence,
-    display_timezone: Tz,
-    window_start_utc: DateTime<Utc>,
-    window_end_utc: DateTime<Utc>,
+    window: AvailabilityWindow,
 ) {
     if !blocks_time {
         return;
@@ -197,10 +208,10 @@ fn append_occurrence(
     let Some(kind) = busy_kind(occurrence.status) else {
         return;
     };
-    match occurrence_interval_utc(occurrence, display_timezone) {
+    match occurrence_interval_utc(occurrence, window.display_timezone) {
         Ok(Some((start_utc, end_utc))) => {
-            let clipped_start = start_utc.max(window_start_utc);
-            let clipped_end = end_utc.min(window_end_utc);
+            let clipped_start = start_utc.max(window.start_utc);
+            let clipped_end = end_utc.min(window.end_utc);
             if clipped_end > clipped_start {
                 result.busy.push(BusyInterval {
                     event_id,
