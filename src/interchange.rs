@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{TemporalEvent, TemporalSource};
+use crate::domain::{
+    EventCollection, EventCollectionMember, EventRelation, TemporalEvent, TemporalSource,
+};
 use crate::store::{CanonicalSnapshotMergeResult, TemporalStore};
 
 pub const CANONICAL_SNAPSHOT_FORMAT: &str = "ephemeris.canonical_snapshot";
-pub const CANONICAL_SNAPSHOT_VERSION: u32 = 1;
+pub const CANONICAL_SNAPSHOT_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalJsonSnapshot {
@@ -16,12 +18,21 @@ pub struct CanonicalJsonSnapshot {
     pub version: u32,
     pub sources: Vec<TemporalSource>,
     pub events: Vec<TemporalEvent>,
+    #[serde(default)]
+    pub relations: Vec<EventRelation>,
+    #[serde(default)]
+    pub collections: Vec<EventCollection>,
+    #[serde(default)]
+    pub collection_members: Vec<EventCollectionMember>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalJsonExportReport {
     pub source_count: usize,
     pub event_count: usize,
+    pub relation_count: usize,
+    pub collection_count: usize,
+    pub collection_member_count: usize,
     pub output_path: PathBuf,
 }
 
@@ -29,14 +40,25 @@ impl CanonicalJsonSnapshot {
     pub fn from_store(store: &TemporalStore) -> anyhow::Result<Self> {
         let mut sources = store.list_sources()?;
         let mut events = store.list_events()?;
+        let mut relations = store.list_event_relations()?;
+        let mut collections = store.list_event_collections()?;
+        let mut collection_members = store.list_event_collection_members()?;
         sources.sort_by_key(|source| source.id);
         events.sort_by_key(|event| event.id);
+        relations.sort_by_key(|relation| relation.id);
+        collections.sort_by_key(|collection| collection.id);
+        collection_members.sort_by_key(|member| {
+            (member.collection_id, member.position, member.event_id)
+        });
 
         let snapshot = Self {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
             version: CANONICAL_SNAPSHOT_VERSION,
             sources,
             events,
+            relations,
+            collections,
+            collection_members,
         };
         snapshot.validate()?;
         Ok(snapshot)
@@ -49,11 +71,20 @@ impl CanonicalJsonSnapshot {
                 self.format
             ));
         }
-        if self.version != CANONICAL_SNAPSHOT_VERSION {
+        if !(1..=CANONICAL_SNAPSHOT_VERSION).contains(&self.version) {
             return Err(anyhow!(
-                "unsupported Ephemeris canonical snapshot version {}; expected {}",
+                "unsupported Ephemeris canonical snapshot version {}; supported versions are 1..={}",
                 self.version,
                 CANONICAL_SNAPSHOT_VERSION
+            ));
+        }
+        if self.version == 1
+            && (!self.relations.is_empty()
+                || !self.collections.is_empty()
+                || !self.collection_members.is_empty())
+        {
+            return Err(anyhow!(
+                "canonical snapshot version 1 cannot contain topology records"
             ));
         }
 
@@ -102,6 +133,118 @@ impl CanonicalJsonSnapshot {
                 .with_context(|| format!("event {} has invalid recurrence", event.id))?;
         }
 
+        if self.version >= 2 {
+            let mut collection_ids = HashSet::new();
+            for collection in &self.collections {
+                collection
+                    .validate()
+                    .with_context(|| format!("collection {} is invalid", collection.id))?;
+                if !collection_ids.insert(collection.id) {
+                    return Err(anyhow!("duplicate event collection UUID {}", collection.id));
+                }
+            }
+
+            let mut relation_ids = HashSet::new();
+            let mut relation_semantics = BTreeSet::new();
+            for relation in &self.relations {
+                relation
+                    .validate()
+                    .with_context(|| format!("relation {} is invalid", relation.id))?;
+                if !relation_ids.insert(relation.id) {
+                    return Err(anyhow!("duplicate event relation UUID {}", relation.id));
+                }
+                if !event_ids.contains(&relation.from_event_id)
+                    || !event_ids.contains(&relation.to_event_id)
+                {
+                    return Err(anyhow!(
+                        "relation {} references an event that is not present in the snapshot",
+                        relation.id
+                    ));
+                }
+                if !relation_semantics.insert((
+                    relation.from_event_id,
+                    relation.to_event_id,
+                    relation.relation_type.as_str(),
+                )) {
+                    return Err(anyhow!(
+                        "duplicate semantic event relation {} -> {} / {:?}",
+                        relation.from_event_id,
+                        relation.to_event_id,
+                        relation.relation_type
+                    ));
+                }
+            }
+
+            let mut member_pairs = HashSet::new();
+            let mut members_by_collection = std::collections::BTreeMap::<
+                uuid::Uuid,
+                Vec<&EventCollectionMember>,
+            >::new();
+            for member in &self.collection_members {
+                if !collection_ids.contains(&member.collection_id) {
+                    return Err(anyhow!(
+                        "collection member references collection {} that is not present in the snapshot",
+                        member.collection_id
+                    ));
+                }
+                if !event_ids.contains(&member.event_id) {
+                    return Err(anyhow!(
+                        "collection member references event {} that is not present in the snapshot",
+                        member.event_id
+                    ));
+                }
+                if !member_pairs.insert((member.collection_id, member.event_id)) {
+                    return Err(anyhow!(
+                        "duplicate collection membership {} / {}",
+                        member.collection_id,
+                        member.event_id
+                    ));
+                }
+                members_by_collection
+                    .entry(member.collection_id)
+                    .or_default()
+                    .push(member);
+            }
+
+            for collection in &self.collections {
+                let members = members_by_collection
+                    .get(&collection.id)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                if collection.ordered {
+                    let mut positions = members
+                        .iter()
+                        .map(|member| {
+                            member.position.ok_or_else(|| {
+                                anyhow!(
+                                    "ordered collection {} has a member without a position",
+                                    collection.id
+                                )
+                            })
+                        })
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+                    positions.sort_unstable();
+                    let expected = (0..positions.len())
+                        .map(|index| {
+                            u32::try_from(index)
+                                .context("ordered collection position cannot fit in u32")
+                        })
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+                    if positions != expected {
+                        return Err(anyhow!(
+                            "ordered collection {} positions must be contiguous from zero",
+                            collection.id
+                        ));
+                    }
+                } else if members.iter().any(|member| member.position.is_some()) {
+                    return Err(anyhow!(
+                        "unordered collection {} cannot contain member positions",
+                        collection.id
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -124,7 +267,17 @@ pub fn import_canonical_json_snapshot(
     snapshot: &CanonicalJsonSnapshot,
 ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
     snapshot.validate()?;
-    store.merge_canonical_snapshot(&snapshot.sources, &snapshot.events)
+    if snapshot.version == 1 {
+        store.merge_canonical_snapshot(&snapshot.sources, &snapshot.events)
+    } else {
+        store.merge_canonical_snapshot_with_topology(
+            &snapshot.sources,
+            &snapshot.events,
+            &snapshot.relations,
+            &snapshot.collections,
+            &snapshot.collection_members,
+        )
+    }
 }
 
 pub fn import_canonical_json_file(
@@ -150,6 +303,9 @@ pub fn export_canonical_json_file(
     Ok(CanonicalJsonExportReport {
         source_count: snapshot.sources.len(),
         event_count: snapshot.events.len(),
+        relation_count: snapshot.relations.len(),
+        collection_count: snapshot.collections.len(),
+        collection_member_count: snapshot.collection_members.len(),
         output_path,
     })
 }
@@ -226,6 +382,9 @@ mod tests {
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source],
             events: vec![event],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
         };
 
         let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
@@ -242,6 +401,9 @@ mod tests {
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source.clone()],
             events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
         };
         let store = TemporalStore::open_in_memory().expect("store");
 
@@ -280,6 +442,9 @@ mod tests {
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source.clone()],
             events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
         };
         import_canonical_json_snapshot(&store, &initial).expect("initial merge");
 
@@ -292,6 +457,9 @@ mod tests {
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![changed_source.clone()],
             events: vec![changed_event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
         };
 
         let report = import_canonical_json_snapshot(&store, &changed).expect("changed merge");
@@ -323,6 +491,9 @@ mod tests {
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source.clone()],
             events: vec![dangling],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
         };
         assert!(dangling_snapshot.validate().is_err());
 
@@ -334,6 +505,9 @@ mod tests {
             version: CANONICAL_SNAPSHOT_VERSION,
             sources: vec![source],
             events: vec![event, duplicate],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
         };
         assert!(duplicate_snapshot.validate().is_err());
     }
@@ -345,8 +519,84 @@ mod tests {
             version: CANONICAL_SNAPSHOT_VERSION + 1,
             sources: Vec::new(),
             events: Vec::new(),
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
         };
         assert!(snapshot.validate().is_err());
+    }
+
+    #[test]
+    fn canonical_snapshot_v1_remains_readable_without_topology() {
+        let source = fixture_source();
+        let event = fixture_event(&source);
+        let raw = serde_json::json!({
+            "format": CANONICAL_SNAPSHOT_FORMAT,
+            "version": 1,
+            "sources": [source],
+            "events": [event],
+        })
+        .to_string();
+
+        let parsed = parse_canonical_json_snapshot(&raw).expect("parse v1");
+        assert_eq!(parsed.version, 1);
+        assert!(parsed.relations.is_empty());
+        assert!(parsed.collections.is_empty());
+        assert!(parsed.collection_members.is_empty());
+    }
+
+    #[test]
+    fn canonical_snapshot_v2_roundtrips_topology() {
+        let source = fixture_source();
+        let first = fixture_event(&source);
+        let mut second = fixture_event(&source);
+        second.id = Uuid::new_v4();
+        second.source_record_key = Some("snapshot-event-2".to_string());
+        second.normalized_title = "Second snapshot event".to_string();
+
+        let relation = EventRelation::new(first.id, second.id, "precedes");
+        let collection = EventCollection::new("Sequence", true);
+        let members = vec![
+            EventCollectionMember {
+                collection_id: collection.id,
+                event_id: second.id,
+                position: Some(0),
+            },
+            EventCollectionMember {
+                collection_id: collection.id,
+                event_id: first.id,
+                position: Some(1),
+            },
+        ];
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: CANONICAL_SNAPSHOT_VERSION,
+            sources: vec![source],
+            events: vec![first.clone(), second.clone()],
+            relations: vec![relation.clone()],
+            collections: vec![collection.clone()],
+            collection_members: members.clone(),
+        };
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let report = import_canonical_json_snapshot(&store, &snapshot).expect("merge topology");
+        assert_eq!(report.relations_created, 1);
+        assert_eq!(report.collections_created, 1);
+        assert_eq!(report.collection_memberships_replaced, 1);
+        assert_eq!(store.list_event_relations().expect("relations"), vec![relation]);
+        assert_eq!(
+            store.list_event_collections().expect("collections"),
+            vec![collection.clone()]
+        );
+        assert_eq!(
+            store.event_collection_members(collection.id).expect("members"),
+            members
+        );
+
+        let exported = CanonicalJsonSnapshot::from_store(&store).expect("snapshot");
+        assert_eq!(exported.relations.len(), 1);
+        assert_eq!(exported.collections.len(), 1);
+        assert_eq!(exported.collection_members.len(), 2);
     }
 
     #[test]
@@ -362,6 +612,9 @@ mod tests {
         let report = export_canonical_json_file(&store, &output).expect("export");
         assert_eq!(report.source_count, 1);
         assert_eq!(report.event_count, 1);
+        assert_eq!(report.relation_count, 0);
+        assert_eq!(report.collection_count, 0);
+        assert_eq!(report.collection_member_count, 0);
 
         let raw = std::fs::read_to_string(&output).expect("read");
         let parsed = parse_canonical_json_snapshot(&raw).expect("parse");
