@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`ae77e4c46b7d1c0968358e266dfe80c2c0476ffb`
+`5ddac1ea560583a481ecdc3c6d3738c31c781f9b`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **462 library tests** pass
+- **464 library tests** pass
 - **4 CLI tests** pass
 
 ## What works now
@@ -85,6 +85,8 @@ HTTP, HTTPS, `webcal://`, and `webcals://` feeds are supported as optional remot
 
 Remote subscriptions can be added from the CLI or GUI and refreshed from the source inspector. Their refresh attempts use the same durable refresh-attempt store as local ICS while remaining visually separated from Taria release history. Success, failure, incomplete/interrupted state, target, timestamps, and summaries survive application restart.
 
+Remote refresh is conditional when the server supplies HTTP validators. Ephemeris persists ETag / Last-Modified metadata, sends If-None-Match / If-Modified-Since on later refreshes, and treats HTTP 304 as a successful not-modified refresh without re-downloading, reparsing, or rewriting canonical events. CLI and GUI surfaces report that state explicitly.
+
 ### Taria
 
 Filesystem-first Taria integration remains the richer upstream path.
@@ -95,12 +97,13 @@ The application can detect a local Resourcearium checkout and run **Update Taria
 
 ## Immediate frontier
 
-The next interoperability slice is **conditional remote-calendar refresh**: persist and reuse HTTP validators such as ETag / Last-Modified so unchanged Webcal feeds can return 304 without re-downloading and reparsing the entire calendar.
+The next interoperability slice is a **versioned native JSON interchange format** for lossless canonical event exchange outside the SQLite store. This gives scripts, backups, and other Taria-family tools a stable machine-readable boundary before introducing deliberately lossy CSV views.
 
 After that, the Phase 9 priorities are:
 
-- broader external formats where useful
+- CSV projection/import for tabular workflows where the temporal subset is representable
 - richer remote-source refresh policy and diagnostics
+- JSCalendar/jCal where their ecosystem value justifies the extra semantic surface
 - CalDAV only if its synchronization value justifies the added state machine
 
 The long-horizon domain roadmap then returns to event relations, collections/sequences, uncertainty, and duplicate/entity resolution.
