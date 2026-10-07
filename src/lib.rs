@@ -1,4 +1,5 @@
 pub mod app;
+pub mod availability;
 pub mod calendar;
 pub mod csv;
 pub mod domain;
