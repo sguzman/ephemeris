@@ -3274,10 +3274,13 @@ impl EphemerisApp {
     fn save_managed_canonical_entity(&mut self) {
         let result = (|| -> anyhow::Result<CanonicalEntity> {
             let mut entity = match self.entity_manage_id {
-                Some(entity_id) => self
-                    .store
-                    .canonical_entity_by_id(entity_id)?
-                    .ok_or_else(|| anyhow::anyhow!("canonical entity {entity_id} no longer exists"))?,
+                Some(entity_id) => {
+                    self.store
+                        .canonical_entity_by_id(entity_id)?
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("canonical entity {entity_id} no longer exists")
+                        })?
+                }
                 None => CanonicalEntity::new(self.entity_manage_name.trim()),
             };
 
@@ -3293,8 +3296,10 @@ impl EphemerisApp {
 
         match result {
             Ok(entity) => {
-                self.last_message =
-                    Some(format!("Saved canonical entity {:?}.", entity.canonical_name));
+                self.last_message = Some(format!(
+                    "Saved canonical entity {:?}.",
+                    entity.canonical_name
+                ));
                 self.last_error = None;
                 self.entity_manage_id = Some(entity.id);
                 self.reload_or_report();
