@@ -4601,10 +4601,10 @@ fn decode_event_revision(row: &Row<'_>) -> rusqlite::Result<EventRevision> {
     let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
     let event_id =
         Uuid::parse_str(&row.get::<_, String>("event_id")?).map_err(to_sql_decode_error)?;
-    let recorded_at = parse_datetime(&row.get::<_, String>("recorded_at")?)
-        .map_err(to_sql_decode_error)?;
-    let event_updated_at = parse_datetime(&row.get::<_, String>("event_updated_at")?)
-        .map_err(to_sql_decode_error)?;
+    let recorded_at =
+        parse_datetime(&row.get::<_, String>("recorded_at")?).map_err(to_sql_decode_error)?;
+    let event_updated_at =
+        parse_datetime(&row.get::<_, String>("event_updated_at")?).map_err(to_sql_decode_error)?;
     let event = serde_json::from_str::<TemporalEvent>(&row.get::<_, String>("snapshot_json")?)
         .map_err(to_sql_decode_error)?;
     Ok(EventRevision {
@@ -5661,7 +5661,9 @@ mod tests {
 
         store.upsert_event(&event).expect("unchanged event");
         assert_eq!(
-            store.event_revisions(event.id).expect("unchanged revisions"),
+            store
+                .event_revisions(event.id)
+                .expect("unchanged revisions"),
             first_revisions
         );
 
@@ -5698,7 +5700,9 @@ mod tests {
             .expect("delete event");
         assert!(store.event_by_id(event.id).expect("event query").is_none());
         assert_eq!(
-            store.event_revisions(event.id).expect("history after delete"),
+            store
+                .event_revisions(event.id)
+                .expect("history after delete"),
             revisions
         );
     }
