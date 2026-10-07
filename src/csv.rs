@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, anyhow};
 use ::csv as csv_crate;
+use anyhow::{Context, anyhow};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, SecondsFormat, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
@@ -330,7 +330,10 @@ fn parse_time(
     match kind.trim() {
         "instant" => Ok(TimeSpec::Instant {
             start_utc: parse_instant(start)?,
-            end_utc: end.filter(|value| !value.is_empty()).map(parse_instant).transpose()?,
+            end_utc: end
+                .filter(|value| !value.is_empty())
+                .map(parse_instant)
+                .transpose()?,
             source_timezone,
         }),
         "floating" => Ok(TimeSpec::Floating {
@@ -436,8 +439,7 @@ fn format_floating(value: NaiveDateTime) -> String {
 }
 
 fn parse_date(value: &str) -> anyhow::Result<NaiveDate> {
-    NaiveDate::parse_from_str(value, "%Y-%m-%d")
-        .with_context(|| format!("invalid DATE {value:?}"))
+    NaiveDate::parse_from_str(value, "%Y-%m-%d").with_context(|| format!("invalid DATE {value:?}"))
 }
 
 fn validate_timezone(value: Option<&str>) -> anyhow::Result<()> {
@@ -531,9 +533,7 @@ mod tests {
                 "all-day",
                 TimeSpec::AllDay {
                     start: NaiveDate::from_ymd_opt(2026, 10, 9).expect("date"),
-                    end_exclusive: Some(
-                        NaiveDate::from_ymd_opt(2026, 10, 10).expect("end date"),
-                    ),
+                    end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 10).expect("end date")),
                 },
             ),
             simple_event(
@@ -608,10 +608,12 @@ mod tests {
         let second =
             import_csv_text(&store, reduced, "csv:test:missing", None, "Fixture").expect("refresh");
         assert_eq!(second.retained_missing, 1);
-        assert!(store
-            .event_by_source_record(first.source_id, "b")
-            .expect("query")
-            .is_some());
+        assert!(
+            store
+                .event_by_source_record(first.source_id, "b")
+                .expect("query")
+                .is_some()
+        );
     }
 
     #[test]
