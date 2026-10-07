@@ -4774,6 +4774,12 @@ impl EphemerisApp {
             .filter(|annotation| annotation.event_id == canonical_id)
             .cloned()
             .collect::<Vec<_>>();
+        let provenance_rows = self
+            .event_provenance_records
+            .iter()
+            .filter(|record| record.event_id == canonical_id)
+            .cloned()
+            .collect::<Vec<_>>();
         let mut topology_action = None;
         let mut refresh_relation_search = false;
         let mut refresh_identity_search = false;
@@ -5425,6 +5431,86 @@ impl EphemerisApp {
                     .clicked()
                 {
                     topology_action = Some(TopologyInspectorAction::AddIdentityAssessment);
+                }
+            });
+
+            ui.separator();
+            ui.strong("Structured provenance");
+            ui.small(
+                "Typed assertion/source/provenance references stored separately from source-backed event fields and legacy raw ref arrays.",
+            );
+            if provenance_rows.is_empty() {
+                ui.small("No structured provenance records.");
+            }
+            for record in &provenance_rows {
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(record.role.as_str()).strong());
+                        if ui
+                            .small_button("Delete")
+                            .on_hover_text(
+                                "Delete this provenance record only; the event and linked source remain intact",
+                            )
+                            .clicked()
+                        {
+                            topology_action =
+                                Some(TopologyInspectorAction::DeleteProvenance(record.id));
+                        }
+                    });
+                    ui.monospace(&record.reference);
+                    if let Some(source_id) = record.source_id {
+                        let source_label = self
+                            .sources
+                            .iter()
+                            .find(|source| source.id == source_id)
+                            .map_or_else(|| source_id.to_string(), |source| source.name.clone());
+                        inspector_row(ui, "Source", &source_label);
+                    }
+                    if let Some(note) = record.note.as_deref() {
+                        ui.label(note);
+                    }
+                    if record
+                        .properties
+                        .as_object()
+                        .is_some_and(|properties| !properties.is_empty())
+                    {
+                        ui.monospace(
+                            serde_json::to_string_pretty(&record.properties)
+                                .unwrap_or_else(|_| "<invalid properties>".to_string()),
+                        );
+                    }
+                });
+            }
+
+            ui.collapsing("New provenance record", |ui| {
+                egui::ComboBox::from_id_salt(("provenance-role", canonical_id))
+                    .selected_text(self.provenance_new_role.as_str())
+                    .show_ui(ui, |ui| {
+                        for role in EventProvenanceRole::ALL {
+                            ui.selectable_value(
+                                &mut self.provenance_new_role,
+                                role,
+                                role.as_str(),
+                            );
+                        }
+                    });
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.provenance_new_reference)
+                        .hint_text("Reference / URI / assertion identifier"),
+                );
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.provenance_new_note)
+                        .desired_rows(2)
+                        .hint_text("Optional note"),
+                );
+                if ui
+                    .add_enabled(
+                        !self.provenance_new_reference.trim().is_empty(),
+                        egui::Button::new("Create provenance record"),
+                    )
+                    .clicked()
+                {
+                    topology_action = Some(TopologyInspectorAction::AddProvenance);
                 }
             });
 
