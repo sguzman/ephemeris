@@ -50,6 +50,17 @@ pub struct CanonicalSnapshotMergeResult {
     pub annotations_unchanged: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct CanonicalSnapshotMergeInput<'a> {
+    pub sources: &'a [TemporalSource],
+    pub events: &'a [TemporalEvent],
+    pub relations: &'a [EventRelation],
+    pub collections: &'a [EventCollection],
+    pub collection_members: &'a [EventCollectionMember],
+    pub identity_assessments: &'a [EventIdentityAssessment],
+    pub annotations: &'a [EventAnnotation],
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TariaReleaseRecord {
     pub release_id: String,
@@ -2554,7 +2565,15 @@ impl TemporalStore {
         sources: &[TemporalSource],
         events: &[TemporalEvent],
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
-        self.merge_canonical_snapshot_with_annotations(sources, events, &[], &[], &[], &[], &[])
+        self.merge_canonical_snapshot_records(CanonicalSnapshotMergeInput {
+            sources,
+            events,
+            relations: &[],
+            collections: &[],
+            collection_members: &[],
+            identity_assessments: &[],
+            annotations: &[],
+        })
     }
 
     pub fn merge_canonical_snapshot_with_topology(
@@ -2565,15 +2584,15 @@ impl TemporalStore {
         collections: &[EventCollection],
         collection_members: &[EventCollectionMember],
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
-        self.merge_canonical_snapshot_with_annotations(
+        self.merge_canonical_snapshot_records(CanonicalSnapshotMergeInput {
             sources,
             events,
             relations,
             collections,
             collection_members,
-            &[],
-            &[],
-        )
+            identity_assessments: &[],
+            annotations: &[],
+        })
     }
 
     pub fn merge_canonical_snapshot_with_identity(
@@ -2585,27 +2604,30 @@ impl TemporalStore {
         collection_members: &[EventCollectionMember],
         identity_assessments: &[EventIdentityAssessment],
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
-        self.merge_canonical_snapshot_with_annotations(
+        self.merge_canonical_snapshot_records(CanonicalSnapshotMergeInput {
             sources,
             events,
             relations,
             collections,
             collection_members,
             identity_assessments,
-            &[],
-        )
+            annotations: &[],
+        })
     }
 
-    pub fn merge_canonical_snapshot_with_annotations(
+    pub fn merge_canonical_snapshot_records(
         &self,
-        sources: &[TemporalSource],
-        events: &[TemporalEvent],
-        relations: &[EventRelation],
-        collections: &[EventCollection],
-        collection_members: &[EventCollectionMember],
-        identity_assessments: &[EventIdentityAssessment],
-        annotations: &[EventAnnotation],
+        input: CanonicalSnapshotMergeInput<'_>,
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
+        let CanonicalSnapshotMergeInput {
+            sources,
+            events,
+            relations,
+            collections,
+            collection_members,
+            identity_assessments,
+            annotations,
+        } = input;
         let tx = self
             .conn
             .unchecked_transaction()
