@@ -632,21 +632,13 @@ impl TemporalStore {
     pub fn upsert_notification_rule(&self, rule: &NotificationRule) -> anyhow::Result<()> {
         rule.validate().context("invalid notification rule")?;
         let (target_kind, event_id, saved_view_id) = match rule.target {
-            NotificationTarget::Event { event_id } => (
-                "event",
-                Some(event_id.to_string()),
-                None,
-            ),
-            NotificationTarget::SavedView { saved_view_id } => (
-                "saved_view",
-                None,
-                Some(saved_view_id.to_string()),
-            ),
+            NotificationTarget::Event { event_id } => ("event", Some(event_id.to_string()), None),
+            NotificationTarget::SavedView { saved_view_id } => {
+                ("saved_view", None, Some(saved_view_id.to_string()))
+            }
         };
         let (trigger_kind, lead_minutes) = match rule.trigger {
-            NotificationTrigger::BeforeStart { minutes } => {
-                ("before_start", i64::from(minutes))
-            }
+            NotificationTrigger::BeforeStart { minutes } => ("before_start", i64::from(minutes)),
         };
         let properties_json = serde_json::to_string(&rule.properties)
             .context("failed to encode notification rule properties")?;
@@ -5777,29 +5769,26 @@ fn decode_notification_rule(row: &Row<'_>) -> rusqlite::Result<NotificationRule>
     let target_kind: String = row.get("target_kind")?;
     let event_id: Option<String> = row.get("event_id")?;
     let saved_view_id: Option<String> = row.get("saved_view_id")?;
-    let target = match target_kind.as_str() {
-        "event" => NotificationTarget::Event {
-            event_id: Uuid::parse_str(
-                event_id
-                    .as_deref()
-                    .ok_or_else(|| to_sql_decode_error("event notification rule lacks event_id"))?,
-            )
-            .map_err(to_sql_decode_error)?,
-        },
-        "saved_view" => NotificationTarget::SavedView {
-            saved_view_id: Uuid::parse_str(
-                saved_view_id.as_deref().ok_or_else(|| {
+    let target =
+        match target_kind.as_str() {
+            "event" => NotificationTarget::Event {
+                event_id: Uuid::parse_str(event_id.as_deref().ok_or_else(|| {
+                    to_sql_decode_error("event notification rule lacks event_id")
+                })?)
+                .map_err(to_sql_decode_error)?,
+            },
+            "saved_view" => NotificationTarget::SavedView {
+                saved_view_id: Uuid::parse_str(saved_view_id.as_deref().ok_or_else(|| {
                     to_sql_decode_error("saved-view notification rule lacks saved_view_id")
-                })?,
-            )
-            .map_err(to_sql_decode_error)?,
-        },
-        other => {
-            return Err(to_sql_decode_error(format!(
-                "invalid notification target kind {other:?}"
-            )));
-        }
-    };
+                })?)
+                .map_err(to_sql_decode_error)?,
+            },
+            other => {
+                return Err(to_sql_decode_error(format!(
+                    "invalid notification target kind {other:?}"
+                )));
+            }
+        };
 
     let trigger_kind: String = row.get("trigger_kind")?;
     let raw_lead_minutes: i64 = row.get("lead_minutes")?;
@@ -7007,10 +6996,7 @@ mod tests {
                 .expect("view rules"),
             vec![view_rule.clone()]
         );
-        assert_eq!(
-            store.list_notification_rules().expect("rules").len(),
-            2
-        );
+        assert_eq!(store.list_notification_rules().expect("rules").len(), 2);
 
         let duplicate = NotificationRule::for_event(event.id, "Duplicate semantic trigger", 15);
         assert!(
@@ -7044,10 +7030,12 @@ mod tests {
                 .expect("event rule after cascade")
                 .is_none()
         );
-        assert!(store
-            .notification_rule_by_id(view_rule.id)
-            .expect("view rule remains")
-            .is_some());
+        assert!(
+            store
+                .notification_rule_by_id(view_rule.id)
+                .expect("view rule remains")
+                .is_some()
+        );
 
         store.delete_saved_view(view.id).expect("delete view");
         assert!(
@@ -7087,10 +7075,7 @@ mod tests {
         tx.pragma_update(None, "user_version", 24).expect("set v24");
         tx.commit().expect("commit v24");
 
-        let store_v24 = TemporalStore {
-            conn,
-            path: None,
-        };
+        let store_v24 = TemporalStore { conn, path: None };
         let event = TemporalEvent::new(
             "Pre-v25 event",
             TimeSpec::DateOnly {
@@ -7135,10 +7120,7 @@ mod tests {
         store
             .upsert_notification_rule(&rule)
             .expect("notification after migration");
-        assert_eq!(
-            store.list_notification_rules().expect("rules"),
-            vec![rule]
-        );
+        assert_eq!(store.list_notification_rules().expect("rules"), vec![rule]);
     }
 
     #[test]
