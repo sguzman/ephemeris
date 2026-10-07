@@ -16,9 +16,9 @@ use crate::calendar::{
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
     EventCollection, EventCollectionMember, EventIdentityAssessment, EventIdentityState,
-    EventRelation, EventStatus, RecurrenceFrequency,
-    RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule,
-    RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
+    EventRelation, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
+    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
+    TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
@@ -4309,10 +4309,7 @@ impl EphemerisApp {
         }
     }
 
-    fn create_identity_assessment_for_event(
-        &mut self,
-        event_id: Uuid,
-    ) -> anyhow::Result<()> {
+    fn create_identity_assessment_for_event(&mut self, event_id: Uuid) -> anyhow::Result<()> {
         let target_id = self
             .identity_target_id
             .ok_or_else(|| anyhow::anyhow!("choose an identity comparison target"))?;
@@ -4333,7 +4330,9 @@ impl EphemerisApp {
                 self.identity_confidence_text
                     .trim()
                     .parse::<f32>()
-                    .map_err(|_| anyhow::anyhow!("identity confidence must be a number in 0..=1"))?,
+                    .map_err(|_| {
+                        anyhow::anyhow!("identity confidence must be a number in 0..=1")
+                    })?,
             )
         };
         assessment.rationale = if self.identity_rationale.trim().is_empty() {
