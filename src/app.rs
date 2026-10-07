@@ -1463,6 +1463,7 @@ pub struct EphemerisApp {
     taria_current_source_ids: BTreeSet<Uuid>,
     event_memberships: HashMap<Uuid, EventMembership>,
     canonical_entities: Vec<CanonicalEntity>,
+    canonical_entity_usage: HashMap<Uuid, Vec<(Uuid, String)>>,
     event_collections: Vec<EventCollection>,
     event_collection_members: Vec<EventCollectionMember>,
     event_relations: Vec<EventRelation>,
@@ -1568,6 +1569,7 @@ impl EphemerisApp {
             taria_current_source_ids: BTreeSet::new(),
             event_memberships: HashMap::new(),
             canonical_entities: Vec::new(),
+            canonical_entity_usage: HashMap::new(),
             event_collections: Vec::new(),
             event_collection_members: Vec::new(),
             event_relations: Vec::new(),
@@ -2736,6 +2738,7 @@ impl EphemerisApp {
                 .insert(record.reference.clone());
         }
         self.canonical_entities = self.store.list_canonical_entities()?;
+        self.canonical_entity_usage = self.store.canonical_entity_event_usage()?;
         for (event_id, entities) in self.store.resolved_canonical_entities_by_event()? {
             let membership = self.event_memberships.entry(event_id).or_default();
             for entity in entities {
@@ -3442,6 +3445,22 @@ impl EphemerisApp {
                         .find(|entity| entity.id == entity_id)
                 {
                     ui.small(format!("Local ref: {}", entity.local_reference()));
+                    let usage = self
+                        .canonical_entity_usage
+                        .get(&entity_id)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]);
+                    ui.small(format!(
+                        "Resolved participant usage: {} canonical event{}",
+                        usage.len(),
+                        if usage.len() == 1 { "" } else { "s" }
+                    ));
+                    for (_, title) in usage.iter().take(8) {
+                        ui.small(format!("• {title}"));
+                    }
+                    if usage.len() > 8 {
+                        ui.small(format!("… and {} more", usage.len() - 8));
+                    }
                 }
                 ui.add(
                     egui::TextEdit::singleline(&mut self.entity_manage_name)
