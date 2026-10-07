@@ -84,6 +84,12 @@ fn main() -> anyhow::Result<()> {
             "Annotations: {} created  {} updated  {} unchanged",
             report.annotations_created, report.annotations_updated, report.annotations_unchanged
         );
+        println!(
+            "Provenance records: {} created  {} updated  {} unchanged",
+            report.provenance_records_created,
+            report.provenance_records_updated,
+            report.provenance_records_unchanged
+        );
         return Ok(());
     }
 
