@@ -1551,6 +1551,116 @@ impl TemporalStore {
         })
     }
 
+    pub fn resolved_canonical_entities_by_event(
+        &self,
+    ) -> anyhow::Result<HashMap<Uuid, Vec<CanonicalEntity>>> {
+        let entities = self.list_canonical_entities()?;
+        let bindings = self.list_participant_entity_bindings()?;
+        let events = self.list_events()?;
+
+        let entities_by_id = entities
+            .iter()
+            .cloned()
+            .map(|entity| (entity.id, entity))
+            .collect::<HashMap<_, _>>();
+
+        let mut entity_ids_by_reference = HashMap::new();
+        let mut entity_ids_by_label = HashMap::<String, Vec<Uuid>>::new();
+        for entity in &entities {
+            entity_ids_by_reference.insert(entity.local_reference(), entity.id);
+            for reference in &entity.external_refs {
+                entity_ids_by_reference.insert(reference.clone(), entity.id);
+            }
+
+            for label in std::iter::once(entity.canonical_name.as_str())
+                .chain(entity.aliases.iter().map(String::as_str))
+            {
+                let key = normalize_entity_alias(label);
+                let ids = entity_ids_by_label.entry(key).or_default();
+                if !ids.contains(&entity.id) {
+                    ids.push(entity.id);
+                }
+            }
+        }
+
+        let binding_entity_ids = bindings
+            .into_iter()
+            .map(|binding| {
+                (
+                    (binding.event_id, binding.participant_key),
+                    binding.entity_id,
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let mut resolved = HashMap::new();
+        for event in events {
+            let mut entity_ids = BTreeSet::new();
+            for participant in &event.participants {
+                let key = participant_entity_binding_key(participant);
+                if let Some(entity_id) =
+                    binding_entity_ids.get(&(event.id, key)).copied()
+                {
+                    if entities_by_id.contains_key(&entity_id) {
+                        entity_ids.insert(entity_id);
+                    }
+                    continue;
+                }
+
+                if let Some(reference) = participant.entity_ref.as_deref() {
+                    if let Some(entity_id) = entity_ids_by_reference.get(reference).copied() {
+                        entity_ids.insert(entity_id);
+                    }
+                    continue;
+                }
+
+                let label_key = normalize_entity_alias(&participant.name);
+                let mut candidates = entity_ids_by_label
+                    .get(&label_key)
+                    .cloned()
+                    .unwrap_or_default();
+
+                if let Some(participant_type) = participant.participant_type.as_deref() {
+                    let typed = candidates
+                        .iter()
+                        .copied()
+                        .filter(|entity_id| {
+                            entities_by_id
+                                .get(entity_id)
+                                .and_then(|entity| entity.entity_type.as_deref())
+                                .is_some_and(|entity_type| {
+                                    entity_type.eq_ignore_ascii_case(participant_type)
+                                })
+                        })
+                        .collect::<Vec<_>>();
+                    if !typed.is_empty() {
+                        candidates = typed;
+                    }
+                }
+
+                if let [entity_id] = candidates.as_slice() {
+                    entity_ids.insert(*entity_id);
+                }
+            }
+
+            if !entity_ids.is_empty() {
+                let mut event_entities = entity_ids
+                    .into_iter()
+                    .filter_map(|entity_id| entities_by_id.get(&entity_id).cloned())
+                    .collect::<Vec<_>>();
+                event_entities.sort_by(|left, right| {
+                    left.canonical_name
+                        .to_lowercase()
+                        .cmp(&right.canonical_name.to_lowercase())
+                        .then_with(|| left.id.cmp(&right.id))
+                });
+                resolved.insert(event.id, event_entities);
+            }
+        }
+
+        Ok(resolved)
+    }
+
     pub fn canonical_entities_by_exact_label(
         &self,
         label: &str,
