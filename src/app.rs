@@ -1488,6 +1488,7 @@ pub struct EphemerisApp {
     entity_manage_type: String,
     entity_manage_aliases: String,
     entity_manage_external_refs: String,
+    entity_merge_target_id: Option<Uuid>,
     event_provenance_records: Vec<EventProvenanceRecord>,
     event_revision_event_id: Option<Uuid>,
     event_revisions: Vec<EventRevision>,
@@ -1592,6 +1593,7 @@ impl EphemerisApp {
             entity_manage_type: String::new(),
             entity_manage_aliases: String::new(),
             entity_manage_external_refs: String::new(),
+            entity_merge_target_id: None,
             event_provenance_records: Vec::new(),
             event_revision_event_id: None,
             event_revisions: Vec::new(),
@@ -3260,6 +3262,7 @@ impl EphemerisApp {
             self.entity_manage_type = entity.entity_type.unwrap_or_default();
             self.entity_manage_aliases = entity.aliases.join("\n");
             self.entity_manage_external_refs = entity.external_refs.join("\n");
+            self.entity_merge_target_id = None;
         }
     }
 
@@ -3269,6 +3272,7 @@ impl EphemerisApp {
         self.entity_manage_type.clear();
         self.entity_manage_aliases.clear();
         self.entity_manage_external_refs.clear();
+        self.entity_merge_target_id = None;
     }
 
     fn save_managed_canonical_entity(&mut self) {
@@ -3308,6 +3312,32 @@ impl EphemerisApp {
             Err(error) => {
                 self.last_message = None;
                 self.last_error = Some(format!("Canonical entity save failed: {error:#}"));
+            }
+        }
+    }
+
+    fn merge_managed_canonical_entity(&mut self) {
+        let (Some(source_id), Some(target_id)) =
+            (self.entity_manage_id, self.entity_merge_target_id)
+        else {
+            return;
+        };
+
+        match self.store.merge_canonical_entities(target_id, source_id) {
+            Ok(merged) => {
+                self.last_message = Some(format!(
+                    "Merged canonical entity into {:?}. Participant bindings and references were preserved.",
+                    merged.canonical_name
+                ));
+                self.last_error = None;
+                self.entity_manage_id = Some(merged.id);
+                self.entity_merge_target_id = None;
+                self.reload_or_report();
+                self.begin_canonical_entity_edit(merged.id);
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Canonical entity merge failed: {error:#}"));
             }
         }
     }
@@ -3458,6 +3488,64 @@ impl EphemerisApp {
                         self.begin_new_canonical_entity();
                     }
                 });
+
+                if let Some(source_id) = self.entity_manage_id {
+                    ui.separator();
+                    ui.strong("Merge entity");
+                    ui.small(
+                        "Merge this entity into another canonical entity. Aliases, external refs, and local participant bindings transfer; conflicting types or opaque properties are rejected.",
+                    );
+
+                    let targets = self
+                        .canonical_entities
+                        .iter()
+                        .filter(|entity| entity.id != source_id)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let selected = self
+                        .entity_merge_target_id
+                        .and_then(|target_id| {
+                            targets
+                                .iter()
+                                .find(|entity| entity.id == target_id)
+                                .map(|entity| {
+                                    entity.entity_type.as_deref().map_or_else(
+                                        || entity.canonical_name.clone(),
+                                        |kind| format!("{} · {kind}", entity.canonical_name),
+                                    )
+                                })
+                        })
+                        .unwrap_or_else(|| "Select merge target…".to_string());
+
+                    egui::ComboBox::from_id_salt(("canonical-entity-merge-target", source_id))
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            for entity in &targets {
+                                let label = entity.entity_type.as_deref().map_or_else(
+                                    || entity.canonical_name.clone(),
+                                    |kind| format!("{} · {kind}", entity.canonical_name),
+                                );
+                                ui.selectable_value(
+                                    &mut self.entity_merge_target_id,
+                                    Some(entity.id),
+                                    label,
+                                );
+                            }
+                        });
+
+                    if ui
+                        .add_enabled(
+                            self.entity_merge_target_id.is_some(),
+                            egui::Button::new("Merge current into target"),
+                        )
+                        .on_hover_text(
+                            "The current entity is deleted after its aliases, refs, and local bindings are transferred. Source participant text is never rewritten.",
+                        )
+                        .clicked()
+                    {
+                        self.merge_managed_canonical_entity();
+                    }
+                }
             }
         });
     }
