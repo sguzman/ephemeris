@@ -15,7 +15,8 @@ use crate::calendar::{
 };
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
-    EventCollection, EventRelation, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
+    EventCollection, EventCollectionMember, EventRelation, EventStatus, RecurrenceFrequency,
+    RecurrenceOccurrenceOrigin,
     RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
     TemporalSource, TimeSpec,
 };
@@ -1400,6 +1401,8 @@ enum RecurrenceEditorAction {
 enum TopologyInspectorAction {
     AddToCollection(Uuid),
     RemoveFromCollection(Uuid),
+    MoveCollectionMemberUp(Uuid),
+    MoveCollectionMemberDown(Uuid),
     CreateCollection,
     AddRelation,
     DeleteRelation(Uuid),
@@ -1423,6 +1426,7 @@ pub struct EphemerisApp {
     taria_current_source_ids: BTreeSet<Uuid>,
     event_memberships: HashMap<Uuid, EventMembership>,
     event_collections: Vec<EventCollection>,
+    event_collection_members: Vec<EventCollectionMember>,
     event_relations: Vec<EventRelation>,
     event_relation_titles: HashMap<Uuid, String>,
     event_relation_types: Vec<String>,
@@ -1489,6 +1493,7 @@ impl EphemerisApp {
             taria_current_source_ids: BTreeSet::new(),
             event_memberships: HashMap::new(),
             event_collections: Vec::new(),
+            event_collection_members: Vec::new(),
             event_relations: Vec::new(),
             event_relation_titles: HashMap::new(),
             event_relation_types: Vec::new(),
@@ -2557,6 +2562,7 @@ impl EphemerisApp {
                 .extend(topology.incoming_relation_types);
         }
         self.event_collections = self.store.list_event_collections()?;
+        self.event_collection_members = self.store.list_event_collection_members()?;
         self.event_relations = self.store.list_event_relations()?;
         self.event_relation_types = self
             .event_relations
@@ -4167,6 +4173,12 @@ impl EphemerisApp {
             TopologyInspectorAction::RemoveFromCollection(collection_id) => {
                 self.remove_event_from_collection(event_id, collection_id)
             }
+            TopologyInspectorAction::MoveCollectionMemberUp(collection_id) => {
+                self.move_event_in_collection(event_id, collection_id, -1)
+            }
+            TopologyInspectorAction::MoveCollectionMemberDown(collection_id) => {
+                self.move_event_in_collection(event_id, collection_id, 1)
+            }
             TopologyInspectorAction::CreateCollection => self.create_collection_for_event(event_id),
             TopologyInspectorAction::AddRelation => self.create_relation_for_event(event_id),
             TopologyInspectorAction::DeleteRelation(relation_id) => {
@@ -4221,6 +4233,40 @@ impl EphemerisApp {
         self.store
             .replace_event_collection_members(collection_id, &event_ids)?;
         self.last_message = Some("Removed event from collection.".to_string());
+        Ok(())
+    }
+
+    fn move_event_in_collection(
+        &mut self,
+        event_id: Uuid,
+        collection_id: Uuid,
+        offset: isize,
+    ) -> anyhow::Result<()> {
+        let collection = self
+            .store
+            .event_collection_by_id(collection_id)?
+            .ok_or_else(|| anyhow::anyhow!("event collection {collection_id} does not exist"))?;
+        if !collection.ordered {
+            anyhow::bail!("collection {:?} is not an ordered sequence", collection.name);
+        }
+
+        let members = self.store.event_collection_members(collection_id)?;
+        let Some(index) = members.iter().position(|member| member.event_id == event_id) else {
+            anyhow::bail!("event {event_id} is not in collection {collection_id}");
+        };
+        let target = index.saturating_add_signed(offset);
+        if target >= members.len() || target == index {
+            return Ok(());
+        }
+
+        let mut event_ids = members
+            .into_iter()
+            .map(|member| member.event_id)
+            .collect::<Vec<_>>();
+        event_ids.swap(index, target);
+        self.store
+            .replace_event_collection_members(collection_id, &event_ids)?;
+        self.last_message = Some(format!("Moved event within sequence {:?}.", collection.name));
         Ok(())
     }
 
@@ -4303,7 +4349,23 @@ impl EphemerisApp {
             .event_collections
             .iter()
             .filter(|collection| collection_ids.contains(&collection.id))
-            .map(|collection| (collection.id, collection.name.clone(), collection.ordered))
+            .map(|collection| {
+                let ordered_members = self
+                    .event_collection_members
+                    .iter()
+                    .filter(|member| collection.ordered && member.collection_id == collection.id)
+                    .collect::<Vec<_>>();
+                let position = ordered_members
+                    .iter()
+                    .position(|member| member.event_id == canonical_id);
+                (
+                    collection.id,
+                    collection.name.clone(),
+                    collection.ordered,
+                    position,
+                    ordered_members.len(),
+                )
+            })
             .collect::<Vec<_>>();
         let available_collections = self
             .event_collections
@@ -4572,10 +4634,38 @@ impl EphemerisApp {
             ui.separator();
             ui.strong("Topology");
 
-            for (collection_id, collection_name, ordered) in &collection_rows {
+            for (collection_id, collection_name, ordered, position, member_count) in &collection_rows {
                 ui.horizontal(|ui| {
                     ui.label(if *ordered { "Sequence" } else { "Collection" });
                     ui.label(collection_name);
+                    if *ordered
+                        && let Some(position) = *position
+                    {
+                        ui.label(format!("#{}", position + 1));
+                        if ui
+                            .add_enabled(
+                                position > 0,
+                                egui::Button::new("↑").small(),
+                            )
+                            .on_hover_text("Move earlier in sequence")
+                            .clicked()
+                        {
+                            topology_action =
+                                Some(TopologyInspectorAction::MoveCollectionMemberUp(*collection_id));
+                        }
+                        if ui
+                            .add_enabled(
+                                position + 1 < *member_count,
+                                egui::Button::new("↓").small(),
+                            )
+                            .on_hover_text("Move later in sequence")
+                            .clicked()
+                        {
+                            topology_action = Some(
+                                TopologyInspectorAction::MoveCollectionMemberDown(*collection_id),
+                            );
+                        }
+                    }
                     if ui
                         .small_button("Remove")
                         .on_hover_text("Remove this event from the collection")
