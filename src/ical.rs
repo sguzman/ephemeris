@@ -7,8 +7,9 @@ use chrono_tz::Tz;
 use serde_json::json;
 
 use crate::domain::{
-    EventStatus, RecurrenceError, RecurrenceFrequency, RecurrenceOrdinalWeekday,
-    RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TimeSpec,
+    AvailabilityBehavior, EventStatus, RecurrenceError, RecurrenceFrequency,
+    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday,
+    TemporalEvent, TimeSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -525,6 +526,20 @@ pub fn export_temporal_event(
                 .and_then(|source| source.status.as_ref())
                 .map_or_else(Vec::new, |property| property.parameters.clone()),
         }),
+        transparency: match event.availability {
+            AvailabilityBehavior::Free => Some(IcalProperty {
+                value: AvailabilityBehavior::Free,
+                parameters: template
+                    .as_ref()
+                    .and_then(|source| source.transparency.as_ref())
+                    .map_or_else(Vec::new, |property| property.parameters.clone()),
+            }),
+            AvailabilityBehavior::Busy => template
+                .as_ref()
+                .and_then(|source| source.transparency.as_ref())
+                .filter(|property| property.value == AvailabilityBehavior::Busy)
+                .cloned(),
+        },
         sequence: template
             .as_ref()
             .and_then(|source| source.sequence.as_ref())
@@ -590,6 +605,7 @@ pub fn export_temporal_event(
                 value: IcalVeventStatus::Cancelled,
                 parameters: Vec::new(),
             }),
+            transparency: master.transparency.clone(),
             sequence: master.sequence.clone(),
             rrule: None,
             rdates: Vec::new(),
@@ -897,6 +913,7 @@ pub struct IcalVevent {
     pub summary: Option<IcalProperty<String>>,
     pub description: Option<IcalProperty<String>>,
     pub status: Option<IcalProperty<IcalVeventStatus>>,
+    pub transparency: Option<IcalProperty<AvailabilityBehavior>>,
     pub sequence: Option<IcalProperty<u32>>,
     pub rrule: Option<IcalProperty<RecurrenceRule>>,
     pub rdates: Vec<TimeSpec>,
@@ -919,6 +936,7 @@ pub fn parse_vevent(raw: &str) -> Result<IcalVevent, IcalRecurrenceError> {
     let mut summary = None;
     let mut description = None;
     let mut status = None;
+    let mut transparency = None;
     let mut sequence = None;
     let mut rrule = None;
     let mut rdate_lines = Vec::new();
@@ -935,6 +953,7 @@ pub fn parse_vevent(raw: &str) -> Result<IcalVevent, IcalRecurrenceError> {
             "SUMMARY" => set_unique_content_line(&mut summary, line)?,
             "DESCRIPTION" => set_unique_content_line(&mut description, line)?,
             "STATUS" => set_unique_content_line(&mut status, line)?,
+            "TRANSP" => set_unique_content_line(&mut transparency, line)?,
             "SEQUENCE" => set_unique_content_line(&mut sequence, line)?,
             "RRULE" => set_unique_content_line(&mut rrule, line)?,
             "RDATE" => rdate_lines.push(line),
@@ -969,6 +988,7 @@ pub fn parse_vevent(raw: &str) -> Result<IcalVevent, IcalRecurrenceError> {
     let summary = summary.map(parse_text_property).transpose()?;
     let description = description.map(parse_text_property).transpose()?;
     let status = status.map(parse_status_property).transpose()?;
+    let transparency = transparency.map(parse_transparency_property).transpose()?;
     let sequence = sequence.map(parse_sequence_property).transpose()?;
     let rrule = rrule.map(parse_rrule_property).transpose()?;
 
@@ -994,6 +1014,7 @@ pub fn parse_vevent(raw: &str) -> Result<IcalVevent, IcalRecurrenceError> {
         summary,
         description,
         status,
+        transparency,
         sequence,
         rrule,
         rdates,
@@ -1064,6 +1085,17 @@ pub fn format_vevent(event: &IcalVevent) -> Result<String, IcalRecurrenceError> 
             value: status.value.as_str().to_string(),
         });
     }
+    if let Some(transparency) = &event.transparency {
+        lines.push(IcalContentLine {
+            name: "TRANSP".to_string(),
+            parameters: transparency.parameters.clone(),
+            value: match transparency.value {
+                AvailabilityBehavior::Busy => "OPAQUE",
+                AvailabilityBehavior::Free => "TRANSPARENT",
+            }
+            .to_string(),
+        });
+    }
     if let Some(sequence) = &event.sequence {
         lines.push(IcalContentLine {
             name: "SEQUENCE".to_string(),
@@ -1120,6 +1152,10 @@ impl IcalVevent {
             .as_ref()
             .map(|property| property.value.clone());
         event.status = canonical_status(self.status.as_ref().map(|property| property.value));
+        event.availability = self
+            .transparency
+            .as_ref()
+            .map_or(AvailabilityBehavior::Busy, |property| property.value);
         event.recurrence = recurrence;
         event.properties = json!({
             "ical": {
@@ -1313,6 +1349,18 @@ fn ensure_detached_temporal_override_is_representable(
         }
     }
 
+    if let Some(transparency) = detached.transparency.as_ref() {
+        let master_transparency = master
+            .transparency
+            .as_ref()
+            .map_or(AvailabilityBehavior::Busy, |value| value.value);
+        if transparency.value != master_transparency {
+            return Err(IcalRecurrenceError::UnsupportedDetachedOverride(
+                "occurrence-specific TRANSP".to_string(),
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -1373,6 +1421,25 @@ fn parse_status_property(
     })
 }
 
+fn parse_transparency_property(
+    line: IcalContentLine,
+) -> Result<IcalProperty<AvailabilityBehavior>, IcalRecurrenceError> {
+    let value = match line.value.trim().to_ascii_uppercase().as_str() {
+        "OPAQUE" => AvailabilityBehavior::Busy,
+        "TRANSPARENT" => AvailabilityBehavior::Free,
+        _ => {
+            return Err(IcalRecurrenceError::InvalidPropertyValue {
+                property: "TRANSP",
+                value: line.value,
+            });
+        }
+    };
+    Ok(IcalProperty {
+        value,
+        parameters: line.parameters,
+    })
+}
+
 fn parse_sequence_property(
     line: IcalContentLine,
 ) -> Result<IcalProperty<u32>, IcalRecurrenceError> {
@@ -1413,6 +1480,7 @@ fn is_reserved_typed_vevent_property(name: &str) -> bool {
             | "SUMMARY"
             | "DESCRIPTION"
             | "STATUS"
+            | "TRANSP"
             | "SEQUENCE"
             | "RRULE"
             | "RDATE"
@@ -2936,6 +3004,95 @@ and continues here\r\nSUMMARY:Example\r\n";
         assert!(matches!(
             unfold_ical_content_lines(" orphan continuation\r\n"),
             Err(IcalRecurrenceError::InvalidContentLine(_))
+        ));
+    }
+
+    #[test]
+    fn vevent_transparency_maps_to_canonical_availability_and_roundtrips() {
+        let transparent = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:free@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "DTSTART:20261008T090000Z\r\n",
+            "DTEND:20261008T100000Z\r\n",
+            "TRANSP:TRANSPARENT\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("transparent VEVENT");
+        assert_eq!(
+            transparent
+                .transparency
+                .as_ref()
+                .map(|property| property.value),
+            Some(AvailabilityBehavior::Free)
+        );
+        let canonical = transparent.canonical_event().expect("canonical event");
+        assert_eq!(canonical.availability, AvailabilityBehavior::Free);
+
+        let exported = export_temporal_event(&canonical).expect("export");
+        assert_eq!(
+            exported[0]
+                .transparency
+                .as_ref()
+                .map(|property| property.value),
+            Some(AvailabilityBehavior::Free)
+        );
+        assert!(format_vevent(&exported[0])
+            .expect("format")
+            .contains("TRANSP:TRANSPARENT\r\n"));
+    }
+
+    #[test]
+    fn vevent_absent_transparency_defaults_busy_and_explicit_opaque_is_preserved() {
+        let absent = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:busy-absent@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "DTSTART:20261008T090000Z\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("VEVENT");
+        assert!(absent.transparency.is_none());
+        assert_eq!(
+            absent.canonical_event().expect("canonical").availability,
+            AvailabilityBehavior::Busy
+        );
+
+        let opaque = parse_vevent(concat!(
+            "BEGIN:VEVENT\r\n",
+            "UID:busy-explicit@example.com\r\n",
+            "DTSTAMP:20261007T120000Z\r\n",
+            "DTSTART:20261008T090000Z\r\n",
+            "TRANSP:OPAQUE\r\n",
+            "END:VEVENT\r\n"
+        ))
+        .expect("opaque VEVENT");
+        let canonical = opaque.canonical_event().expect("canonical");
+        let exported = export_temporal_event(&canonical).expect("export");
+        assert_eq!(
+            exported[0]
+                .transparency
+                .as_ref()
+                .map(|property| property.value),
+            Some(AvailabilityBehavior::Busy)
+        );
+    }
+
+    #[test]
+    fn vevent_rejects_invalid_transparency_value() {
+        assert!(matches!(
+            parse_vevent(concat!(
+                "BEGIN:VEVENT\r\n",
+                "UID:bad-transp@example.com\r\n",
+                "DTSTAMP:20261007T120000Z\r\n",
+                "DTSTART:20261008T090000Z\r\n",
+                "TRANSP:MAYBE\r\n",
+                "END:VEVENT\r\n"
+            )),
+            Err(IcalRecurrenceError::InvalidPropertyValue {
+                property: "TRANSP",
+                ..
+            })
         ));
     }
 
