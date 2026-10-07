@@ -11,13 +11,13 @@ use uuid::Uuid;
 use crate::calendar::CalendarLayout;
 use crate::domain::{
     EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
-    EventIdentityState, EventProvenanceRecord, EventProvenanceRole, EventRelation, EventStatus,
-    RecurrenceRule, SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
+    EventIdentityState, EventLocation, EventProvenanceRecord, EventProvenanceRole, EventRelation,
+    EventStatus, RecurrenceRule, SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
     TimeUncertainty,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 20;
+const SCHEMA_VERSION: i64 = 21;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -3475,6 +3475,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         create_event_annotation_schema_current(&tx)?;
         create_event_provenance_schema_current(&tx)?;
         create_event_revision_schema_current(&tx)?;
+        add_event_location_column(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -3573,6 +3574,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 19 {
         migrate_v19_to_v20(conn)?;
+        current = 20;
+    }
+
+    if current == 20 {
+        migrate_v20_to_v21(conn)?;
     }
 
     Ok(())
@@ -4020,6 +4026,11 @@ fn create_event_identity_schema_current(conn: &Connection) -> anyhow::Result<()>
     .context("failed to create event identity assessment schema")
 }
 
+fn add_event_location_column(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch("ALTER TABLE temporal_events ADD COLUMN location_json TEXT;")
+        .context("failed to add event location column")
+}
+
 fn create_event_revision_schema_current(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -4086,6 +4097,17 @@ fn create_event_annotation_schema_current(conn: &Connection) -> anyhow::Result<(
         "#,
     )
     .context("failed to create event annotation schema")
+}
+
+fn migrate_v20_to_v21(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v20 to v21 migration")?;
+    add_event_location_column(&tx)?;
+    tx.pragma_update(None, "user_version", 21)
+        .context("failed to set schema version 21")?;
+    tx.commit()
+        .context("failed to commit v20 to v21 schema migration")
 }
 
 fn migrate_v19_to_v20(conn: &mut Connection) -> anyhow::Result<()> {
