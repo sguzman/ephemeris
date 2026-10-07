@@ -1776,7 +1776,9 @@ impl TemporalStore {
         external_refs.insert(source.local_reference());
         merged.external_refs = external_refs.into_iter().collect();
         merged.updated_at = Utc::now();
-        merged.validate().context("merged canonical entity is invalid")?;
+        merged
+            .validate()
+            .context("merged canonical entity is invalid")?;
 
         let owns_transaction = self.conn.is_autocommit();
         if owns_transaction {
@@ -6920,7 +6922,11 @@ mod tests {
         assert_eq!(merged.id, target.id);
         assert!(merged.aliases.contains(&"Augusta Ada King".to_string()));
         assert!(merged.aliases.contains(&"Ada King".to_string()));
-        assert!(merged.external_refs.contains(&"source:ada-king".to_string()));
+        assert!(
+            merged
+                .external_refs
+                .contains(&"source:ada-king".to_string())
+        );
         assert!(merged.external_refs.contains(&source_local_ref));
         assert!(
             store
@@ -6970,10 +6976,12 @@ mod tests {
                 .to_string()
                 .contains("conflicting types")
         );
-        assert!(store
-            .canonical_entity_by_id(organization.id)
-            .expect("organization after rejected merge")
-            .is_some());
+        assert!(
+            store
+                .canonical_entity_by_id(organization.id)
+                .expect("organization after rejected merge")
+                .is_some()
+        );
 
         let mut compatible = CanonicalEntity::new("Ada Person Two");
         compatible.entity_type = Some("person".to_string());
@@ -7146,10 +7154,7 @@ mod tests {
             .resolved_canonical_entities_by_event()
             .expect("bulk resolution");
         assert_eq!(resolved.get(&first.id), Some(&vec![person.clone()]));
-        assert_eq!(
-            resolved.get(&second.id),
-            Some(&vec![organization.clone()])
-        );
+        assert_eq!(resolved.get(&second.id), Some(&vec![organization.clone()]));
 
         store
             .unbind_event_participant_entity(second.id, 0)
