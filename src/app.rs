@@ -16,8 +16,8 @@ use crate::calendar::{
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
     EventCollection, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
-    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday,
-    TemporalEvent, TemporalSource, TimeSpec,
+    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
+    TemporalSource, TimeSpec,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
@@ -25,8 +25,8 @@ use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
     RelationDirection, RgbColor, SavedView, SortDirection, SortField, SortRule, TableColumn,
-    TemporalKind, TextField, TextOperator, matches_composed_or_overlay_with_saved_views_and_membership,
-    saved_view_reference_cycle,
+    TemporalKind, TextField, TextOperator,
+    matches_composed_or_overlay_with_saved_views_and_membership, saved_view_reference_cycle,
 };
 use crate::state::PersistedUiState;
 use crate::store::{
@@ -6270,7 +6270,9 @@ fn render_query_predicate_editor(
             relation_type,
             direction,
         } => {
-            ui.small("Matches canonical directed event relations; direction is relative to the event.");
+            ui.small(
+                "Matches canonical directed event relations; direction is relative to the event.",
+            );
             ui.horizontal_wrapped(|ui| {
                 egui::ComboBox::from_id_salt(("advanced-relation-type", path))
                     .selected_text(if relation_type.is_empty() {
