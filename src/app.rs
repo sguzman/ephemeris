@@ -3231,10 +3231,7 @@ impl EphemerisApp {
             .collect::<Vec<_>>();
         let extra = titles.len().saturating_sub(4);
         titles.truncate(4);
-        let mut message = format!(
-            "Scheduling conflict with {}.",
-            titles.join(", ")
-        );
+        let mut message = format!("Scheduling conflict with {}.", titles.join(", "));
         if extra != 0 {
             message.push_str(&format!(" +{extra} more."));
         }
