@@ -6657,7 +6657,7 @@ mod tests {
         let source = TemporalSource::new(
             "Read-only fixture",
             SourceKind::Json,
-            SourceAuthority::Imported,
+            SourceAuthority::Unknown,
         );
         store.upsert_source(&source).expect("source");
 
