@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`5ddac1ea560583a481ecdc3c6d3738c31c781f9b`
+`f8a5fa8d471e4510fcbc59fa370be44ea45be9b9`
 
 At that checkpoint:
 
@@ -26,8 +26,9 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **464 library tests** pass
-- **4 CLI tests** pass
+- **471 library tests** pass
+- **4 export-CLI tests** pass
+- **1 import-CLI test** passes
 
 ## What works now
 
@@ -97,11 +98,12 @@ The application can detect a local Resourcearium checkout and run **Update Taria
 
 ## Immediate frontier
 
-The next interoperability slice is a **versioned native JSON interchange format** for lossless canonical event exchange outside the SQLite store. This gives scripts, backups, and other Taria-family tools a stable machine-readable boundary before introducing deliberately lossy CSV views.
+The versioned native JSON interchange boundary is implemented and verified. Version 1 exports and merges canonical `TemporalSource` and `TemporalEvent` records with UUIDs, timestamps, recurrence, time semantics, and arbitrary properties intact. Validation rejects duplicate IDs/external refs/source-record identities, dangling source references, unsupported format versions, and invalid recurrence. Import is transactional and merge-only. CLI import/export and GUI drag/drop are available through the explicit `.ephemeris.json` suffix. This is a canonical sources/events snapshot, not a full SQLite backup: saved views, refresh history, Taria release tables, and auxiliary alias tables remain outside v1.
+
+The next interoperability slice is **CSV projection/import for a deliberately representable tabular subset**. CSV must not silently flatten recurrence, imprecise time, or other semantics it cannot round-trip.
 
 After that, the Phase 9 priorities are:
 
-- CSV projection/import for tabular workflows where the temporal subset is representable
 - richer remote-source refresh policy and diagnostics
 - JSCalendar/jCal where their ecosystem value justifies the extra semantic surface
 - CalDAV only if its synchronization value justifies the added state machine
