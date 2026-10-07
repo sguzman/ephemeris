@@ -8,8 +8,8 @@ use serde_json::json;
 
 use crate::domain::{
     AvailabilityBehavior, EventStatus, RecurrenceError, RecurrenceFrequency,
-    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday,
-    TemporalEvent, TimeSpec,
+    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
+    TimeSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3037,9 +3037,11 @@ and continues here\r\nSUMMARY:Example\r\n";
                 .map(|property| property.value),
             Some(AvailabilityBehavior::Free)
         );
-        assert!(format_vevent(&exported[0])
-            .expect("format")
-            .contains("TRANSP:TRANSPARENT\r\n"));
+        assert!(
+            format_vevent(&exported[0])
+                .expect("format")
+                .contains("TRANSP:TRANSPARENT\r\n")
+        );
     }
 
     #[test]
