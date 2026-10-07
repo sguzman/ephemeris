@@ -1678,7 +1678,7 @@ impl EventTimeEditDraft {
                 };
                 let local = start_utc.with_timezone(&edit_timezone);
                 let duration_minutes = end_utc.map_or_else(String::new, |end| {
-                    (*end - *start_utc).num_minutes().to_string()
+                    (end - *start_utc).num_minutes().to_string()
                 });
                 Ok(Self {
                     event_id: event.id,
