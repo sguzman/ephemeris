@@ -1580,9 +1580,8 @@ impl fmt::Display for EventLocationError {
             Self::EmptyTextField(field) => {
                 write!(formatter, "event location field {field} cannot be blank")
             }
-            Self::IncompleteCoordinates => {
-                formatter.write_str("event location coordinates require both latitude and longitude")
-            }
+            Self::IncompleteCoordinates => formatter
+                .write_str("event location coordinates require both latitude and longitude"),
             Self::InvalidLatitude => {
                 formatter.write_str("event location latitude must be finite and within -90..=90")
             }
