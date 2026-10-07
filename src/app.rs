@@ -15,7 +15,8 @@ use crate::calendar::{
 };
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
-    EventCollection, EventCollectionMember, EventRelation, EventStatus, RecurrenceFrequency,
+    EventCollection, EventCollectionMember, EventIdentityState, EventRelation, EventStatus,
+    RecurrenceFrequency,
     RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule,
     RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
@@ -2577,6 +2578,19 @@ impl EphemerisApp {
             membership
                 .incoming_relation_types
                 .extend(topology.incoming_relation_types);
+        }
+        for assessment in self.store.list_event_identity_assessments()? {
+            let state = assessment.state.as_str().to_string();
+            self.event_memberships
+                .entry(assessment.left_event_id)
+                .or_default()
+                .identity_states
+                .insert(state.clone());
+            self.event_memberships
+                .entry(assessment.right_event_id)
+                .or_default()
+                .identity_states
+                .insert(state);
         }
         self.event_collections = self.store.list_event_collections()?;
         self.event_collection_members = self.store.list_event_collection_members()?;
@@ -6399,10 +6413,11 @@ enum QueryPredicateKind {
     ProjectedCalendarMembership,
     CollectionMembership,
     RelationType,
+    IdentityStateAnyOf,
 }
 
 impl QueryPredicateKind {
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 14] = [
         Self::Text,
         Self::TextAnyOf,
         Self::StatusAnyOf,
@@ -6416,6 +6431,7 @@ impl QueryPredicateKind {
         Self::ProjectedCalendarMembership,
         Self::CollectionMembership,
         Self::RelationType,
+        Self::IdentityStateAnyOf,
     ];
 
     const fn label(self) -> &'static str {
@@ -6433,6 +6449,7 @@ impl QueryPredicateKind {
             Self::ProjectedCalendarMembership => "Taria projected calendar membership",
             Self::CollectionMembership => "Event collection membership",
             Self::RelationType => "Event relation type",
+            Self::IdentityStateAnyOf => "Event identity state",
         }
     }
 }
@@ -6523,6 +6540,9 @@ fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
             relation_type: String::new(),
             direction: RelationDirection::Either,
         },
+        QueryPredicateKind::IdentityStateAnyOf => QueryPredicate::IdentityStateAnyOf {
+            values: vec![EventIdentityState::Candidate],
+        },
     }
 }
 
@@ -6543,6 +6563,7 @@ fn query_predicate_kind(predicate: &QueryPredicate) -> QueryPredicateKind {
         }
         QueryPredicate::CollectionMembership { .. } => QueryPredicateKind::CollectionMembership,
         QueryPredicate::RelationType { .. } => QueryPredicateKind::RelationType,
+        QueryPredicate::IdentityStateAnyOf { .. } => QueryPredicateKind::IdentityStateAnyOf,
     }
 }
 
@@ -7001,6 +7022,24 @@ fn render_query_predicate_editor(
             changed |= ui
                 .add(egui::TextEdit::singleline(relation_type).hint_text("causes, precedes, ..."))
                 .changed();
+        }
+        QueryPredicate::IdentityStateAnyOf { values } => {
+            ui.small(
+                "Matches external duplicate/entity-resolution assessments without changing event fields.",
+            );
+            ui.horizontal_wrapped(|ui| {
+                for state in EventIdentityState::ALL {
+                    let mut selected = values.contains(&state);
+                    if ui.checkbox(&mut selected, state.as_str()).changed() {
+                        if selected {
+                            values.push(state);
+                        } else {
+                            values.retain(|value| *value != state);
+                        }
+                        changed = true;
+                    }
+                }
+            });
         }
     }
 
