@@ -129,7 +129,12 @@ impl CanonicalJsonSnapshot {
                 "canonical snapshot versions before 6 cannot contain structured event locations"
             ));
         }
-        if self.version < 7 && self.events.iter().any(|event| !event.participants.is_empty()) {
+        if self.version < 7
+            && self
+                .events
+                .iter()
+                .any(|event| !event.participants.is_empty())
+        {
             return Err(anyhow!(
                 "canonical snapshot versions before 7 cannot contain structured event participants"
             ));
@@ -507,8 +512,7 @@ mod tests {
     use crate::domain::{
         EventAnnotation, EventIdentityAssessment, EventIdentityState, EventLocation,
         EventParticipant, EventProvenanceRecord, EventProvenanceRole, RecurrenceFrequency,
-        RecurrenceRule,
-        SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
+        RecurrenceRule, SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
     };
 
     fn fixture_source() -> TemporalSource {
