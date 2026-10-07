@@ -64,7 +64,9 @@ pub fn availability_for_events(
     for event in events {
         let occurrences = event
             .occurrences_in_window(start_date, end_exclusive, display_timezone)
-            .map_err(|error| anyhow::anyhow!("failed to expand availability event {}: {error}", event.id))?;
+            .map_err(|error| {
+                anyhow::anyhow!("failed to expand availability event {}: {error}", event.id)
+            })?;
 
         for occurrence in occurrences {
             let Some(kind) = busy_kind(occurrence.status) else {
@@ -191,12 +193,12 @@ fn occurrence_interval_utc(
 
     match &occurrence.time {
         TimeSpec::Instant {
-            start_utc,
-            end_utc,
-            ..
+            start_utc, end_utc, ..
         } => {
             let Some(end_utc) = end_utc else {
-                return Err("exact instant has no end, so free/busy duration is undefined".to_string());
+                return Err(
+                    "exact instant has no end, so free/busy duration is undefined".to_string(),
+                );
             };
             if end_utc <= start_utc {
                 return Err("exact instant has a non-positive duration".to_string());
@@ -209,7 +211,9 @@ fn occurrence_interval_utc(
             source_timezone,
         } => {
             let Some(end) = end else {
-                return Err("floating event has no end, so free/busy duration is undefined".to_string());
+                return Err(
+                    "floating event has no end, so free/busy duration is undefined".to_string(),
+                );
             };
             if end <= start {
                 return Err("floating event has a non-positive duration".to_string());
@@ -218,8 +222,9 @@ fn occurrence_interval_utc(
                 .as_deref()
                 .and_then(|raw| raw.parse::<Tz>().ok())
                 .unwrap_or(display_timezone);
-            let start_utc = resolve_local(timezone, *start)
-                .ok_or_else(|| "floating start falls in a nonexistent local interval".to_string())?;
+            let start_utc = resolve_local(timezone, *start).ok_or_else(|| {
+                "floating start falls in a nonexistent local interval".to_string()
+            })?;
             let end_utc = resolve_local(timezone, *end)
                 .ok_or_else(|| "floating end falls in a nonexistent local interval".to_string())?;
             if end_utc <= start_utc {
@@ -233,9 +238,9 @@ fn occurrence_interval_utc(
         } => {
             let end_date = match end_exclusive {
                 Some(value) => *value,
-                None => start
-                    .checked_add_days(Days::new(1))
-                    .ok_or_else(|| "all-day event end overflows supported date range".to_string())?,
+                None => start.checked_add_days(Days::new(1)).ok_or_else(|| {
+                    "all-day event end overflows supported date range".to_string()
+                })?,
             };
             if end_date <= *start {
                 return Err("all-day event has a non-positive duration".to_string());
@@ -246,10 +251,12 @@ fn occurrence_interval_utc(
             let end_local = end_date
                 .and_hms_opt(0, 0, 0)
                 .ok_or_else(|| "invalid all-day end".to_string())?;
-            let start_utc = resolve_local(display_timezone, start_local)
-                .ok_or_else(|| "all-day start midnight is not representable in display timezone".to_string())?;
-            let end_utc = resolve_local(display_timezone, end_local)
-                .ok_or_else(|| "all-day end midnight is not representable in display timezone".to_string())?;
+            let start_utc = resolve_local(display_timezone, start_local).ok_or_else(|| {
+                "all-day start midnight is not representable in display timezone".to_string()
+            })?;
+            let end_utc = resolve_local(display_timezone, end_local).ok_or_else(|| {
+                "all-day end midnight is not representable in display timezone".to_string()
+            })?;
             if end_utc <= start_utc {
                 return Err("all-day event resolves to a non-positive UTC duration".to_string());
             }
@@ -435,13 +442,9 @@ mod tests {
             .expect("resolved")
             .with_timezone(&Utc);
 
-        let result = availability_for_events(
-            &[all_day, date_only],
-            timezone,
-            local_start,
-            local_end,
-        )
-        .expect("availability");
+        let result =
+            availability_for_events(&[all_day, date_only], timezone, local_start, local_end)
+                .expect("availability");
         assert_eq!(result.busy.len(), 1);
         assert_eq!(result.busy[0].start_utc, local_start);
         assert_eq!(result.busy[0].end_utc, local_end);
