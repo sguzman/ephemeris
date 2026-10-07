@@ -1745,6 +1745,7 @@ impl EventTimeEditDraft {
                 duration_minutes: end
                     .map_or_else(String::new, |end| (end - *start).num_minutes().to_string()),
                 end_date: String::new(),
+                conflict_confirmation: None,
             }),
             TimeSpec::AllDay {
                 start,
