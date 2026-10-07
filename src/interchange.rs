@@ -14,7 +14,7 @@ use crate::store::{
 };
 
 pub const CANONICAL_SNAPSHOT_FORMAT: &str = "ephemeris.canonical_snapshot";
-pub const CANONICAL_SNAPSHOT_VERSION: u32 = 9;
+pub const CANONICAL_SNAPSHOT_VERSION: u32 = 10;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalJsonSnapshot {
@@ -163,6 +163,15 @@ impl CanonicalJsonSnapshot {
         if self.version < 9 && !self.participant_entity_bindings.is_empty() {
             return Err(anyhow!(
                 "canonical snapshot versions before 9 cannot contain participant entity bindings"
+            ));
+        }
+        if self.version < 10
+            && self.events.iter().any(|event| {
+                event.availability != crate::domain::AvailabilityBehavior::Busy
+            })
+        {
+            return Err(anyhow!(
+                "canonical snapshot versions before 10 cannot contain non-busy event availability"
             ));
         }
 
@@ -662,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_snapshot_v9_preserves_participant_entity_bindings_losslessly() {
+    fn canonical_snapshot_v10_preserves_participant_entity_bindings_losslessly() {
         let source = fixture_source();
         let mut entity = CanonicalEntity::new("Ada Lovelace");
         entity.entity_type = Some("person".to_string());
@@ -680,7 +689,7 @@ mod tests {
             .expect("binding");
 
         let snapshot = CanonicalJsonSnapshot::from_store(&store).expect("snapshot");
-        assert_eq!(snapshot.version, 9);
+        assert_eq!(snapshot.version, 10);
         assert_eq!(snapshot.participant_entity_bindings, vec![binding.clone()]);
 
         let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
@@ -696,6 +705,38 @@ mod tests {
                 .expect("target bindings"),
             vec![binding]
         );
+    }
+
+    #[test]
+    fn canonical_snapshot_v10_preserves_free_event_availability() {
+        let source = fixture_source();
+        let mut event = fixture_event(&source);
+        event.availability = crate::domain::AvailabilityBehavior::Free;
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: 10,
+            sources: vec![source],
+            entities: Vec::new(),
+            events: vec![event.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
+            annotations: Vec::new(),
+            provenance_records: Vec::new(),
+            participant_entity_bindings: Vec::new(),
+        };
+
+        let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
+        let decoded = parse_canonical_json_snapshot(&encoded).expect("decode");
+        assert_eq!(
+            decoded.events[0].availability,
+            crate::domain::AvailabilityBehavior::Free
+        );
+
+        let mut legacy = snapshot;
+        legacy.version = 9;
+        assert!(legacy.validate().is_err());
     }
 
     #[test]
