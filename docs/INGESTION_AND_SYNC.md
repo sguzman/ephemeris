@@ -85,11 +85,13 @@ CLI import/export and GUI drag/drop/refresh/export are implemented. CSV file imp
 
 ### Native canonical JSON
 
-The versioned `ephemeris.canonical_snapshot` JSON format is the lossless interchange boundary for canonical sources/events outside SQLite. Version 1 contains `TemporalSource` and `TemporalEvent` records, preserving UUIDs, timestamps, recurrence, time semantics, and arbitrary properties. Validation rejects duplicate UUIDs, duplicate source external refs, duplicate source-record identities, dangling source references, unsupported versions, and invalid recurrence.
+The versioned `ephemeris.canonical_snapshot` JSON format is the lossless interchange boundary for the canonical corpus outside SQLite. Version 1 remains readable and contains `TemporalSource` and `TemporalEvent` records. Current version 2 adds `EventRelation`, `EventCollection`, and `EventCollectionMember`, preserving directed topology and ordered sequence positions as first-class data.
 
-Snapshot import is transactional and merge-only: new UUIDs are created, matching UUIDs are updated or left unchanged, and records absent from the snapshot are not implicitly deleted. The explicit `.ephemeris.json` suffix keeps this path distinct from Taria's JSON artifacts. CLI import/export and GUI drag/drop are implemented.
+Validation rejects duplicate UUIDs, duplicate source external refs, duplicate source-record identities, dangling source/event/relation/collection references, duplicate semantic relations, duplicate memberships, malformed ordered positions, topology records in version 1, unsupported versions, and invalid recurrence.
 
-This format is not a complete SQLite backup. Saved views, refresh history, Taria release tables, and auxiliary alias/membership tables are outside v1.
+Snapshot import is transactional. New UUIDs are created and matching UUIDs are updated or left unchanged; unrelated local corpus records are not implicitly deleted. For each collection explicitly present in a v2 snapshot, however, its imported membership list is authoritative for that collection, so stale local memberships in that collection are removed while unrelated collections and events survive. The explicit `.ephemeris.json` suffix keeps this path distinct from Taria's JSON artifacts. CLI import/export and GUI drag/drop are implemented.
+
+This format is not a complete SQLite backup. Saved views, refresh history, Taria release tables, source-import alias tables, and other operational state remain outside the canonical snapshot boundary.
 
 Each adapter stage should provide diagnostics.
 
