@@ -43,6 +43,9 @@ pub struct EventMembership {
     pub annotation_kinds: BTreeSet<String>,
     pub provenance_roles: BTreeSet<String>,
     pub provenance_references: BTreeSet<String>,
+    pub canonical_entity_ids: BTreeSet<Uuid>,
+    pub canonical_entity_names: BTreeSet<String>,
+    pub canonical_entity_types: BTreeSet<String>,
 }
 
 impl EventMembership {
@@ -83,6 +86,16 @@ impl EventMembership {
 
     pub fn has_provenance_reference(&self, reference: &str) -> bool {
         self.provenance_references.contains(reference)
+    }
+
+    pub fn has_canonical_entity(&self, entity_id: Uuid) -> bool {
+        self.canonical_entity_ids.contains(&entity_id)
+    }
+
+    pub fn has_canonical_entity_type(&self, entity_type: &str) -> bool {
+        self.canonical_entity_types
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(entity_type))
     }
 }
 
@@ -342,6 +355,12 @@ pub enum QueryPredicate {
     ProvenanceReference {
         reference: String,
     },
+    CanonicalEntityMembership {
+        entity_id: Uuid,
+    },
+    CanonicalEntityType {
+        entity_type: String,
+    },
 }
 
 impl QueryPredicate {
@@ -468,6 +487,11 @@ impl QueryPredicate {
             Self::ProvenanceReference { reference } => {
                 membership.is_some_and(|membership| membership.has_provenance_reference(reference))
             }
+            Self::CanonicalEntityMembership { entity_id } => membership
+                .is_some_and(|membership| membership.has_canonical_entity(*entity_id)),
+            Self::CanonicalEntityType { entity_type } => membership.is_some_and(|membership| {
+                membership.has_canonical_entity_type(entity_type)
+            }),
         }
     }
 }
@@ -2325,6 +2349,65 @@ mod tests {
             Some(&membership)
         ));
         assert!(!missing_query.matches_with_membership(&event, &test_context(), Some(&membership)));
+    }
+
+    #[test]
+    fn canonical_entity_predicates_use_resolved_participant_context() {
+        let event = event();
+        let person_id = Uuid::new_v4();
+        let organization_id = Uuid::new_v4();
+        let mut membership = EventMembership::default();
+        membership.canonical_entity_ids.insert(person_id);
+        membership.canonical_entity_ids.insert(organization_id);
+        membership
+            .canonical_entity_names
+            .insert("Ada Lovelace".to_string());
+        membership
+            .canonical_entity_types
+            .insert("person".to_string());
+        membership
+            .canonical_entity_types
+            .insert("organization".to_string());
+
+        let entity_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(
+                QueryPredicate::CanonicalEntityMembership {
+                    entity_id: person_id,
+                },
+            )),
+            ..EventQuery::default()
+        };
+        let missing_entity_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(
+                QueryPredicate::CanonicalEntityMembership {
+                    entity_id: Uuid::new_v4(),
+                },
+            )),
+            ..EventQuery::default()
+        };
+        let type_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(QueryPredicate::CanonicalEntityType {
+                entity_type: "PERSON".to_string(),
+            })),
+            ..EventQuery::default()
+        };
+
+        assert!(!entity_query.matches(&event, &test_context()));
+        assert!(entity_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+        assert!(!missing_entity_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+        assert!(type_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
     }
 
     #[test]
