@@ -15,8 +15,8 @@ use crate::calendar::{
 };
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
-    EventCollection, EventCollectionMember, EventIdentityAssessment, EventIdentityState,
-    EventRelation, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
+    EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
+    EventIdentityState, EventRelation, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
     RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
     TemporalSource, TimeSpec, TimeUncertainty,
 };
@@ -1411,6 +1411,8 @@ enum TopologyInspectorAction {
     SetIdentityState(Uuid, EventIdentityState),
     DeleteIdentityAssessment(Uuid),
     AddIdentityAssessment,
+    AddAnnotation,
+    DeleteAnnotation(Uuid),
 }
 
 pub struct EphemerisApp {
@@ -1437,6 +1439,10 @@ pub struct EphemerisApp {
     event_relation_types: Vec<String>,
     event_identity_assessments: Vec<EventIdentityAssessment>,
     event_identity_titles: HashMap<Uuid, String>,
+    event_annotations: Vec<EventAnnotation>,
+    event_annotation_kinds: Vec<String>,
+    annotation_new_kind: String,
+    annotation_new_value: String,
     identity_search: String,
     identity_candidates: Vec<(Uuid, String)>,
     identity_target_id: Option<Uuid>,
@@ -1516,6 +1522,10 @@ impl EphemerisApp {
             event_relation_types: Vec::new(),
             event_identity_assessments: Vec::new(),
             event_identity_titles: HashMap::new(),
+            event_annotations: Vec::new(),
+            event_annotation_kinds: Vec::new(),
+            annotation_new_kind: "note".to_string(),
+            annotation_new_value: String::new(),
             identity_search: String::new(),
             identity_candidates: Vec::new(),
             identity_target_id: None,
@@ -2611,6 +2621,21 @@ impl EphemerisApp {
                 .identity_states
                 .insert(state);
         }
+        self.event_annotations = self.store.list_event_annotations()?;
+        self.event_annotation_kinds = self
+            .event_annotations
+            .iter()
+            .map(|annotation| annotation.kind.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        for annotation in &self.event_annotations {
+            self.event_memberships
+                .entry(annotation.event_id)
+                .or_default()
+                .annotation_kinds
+                .insert(annotation.kind.clone());
+        }
         self.event_collections = self.store.list_event_collections()?;
         self.event_collection_members = self.store.list_event_collection_members()?;
         self.event_relations = self.store.list_event_relations()?;
@@ -3155,6 +3180,7 @@ impl EphemerisApp {
             calendars: self.taria_calendar_choices.clone(),
             collections: self.event_collections.clone(),
             relation_types: self.event_relation_types.clone(),
+            annotation_kinds: self.event_annotation_kinds.clone(),
         };
         ui.separator();
 
@@ -4214,6 +4240,8 @@ impl EphemerisApp {
         self.identity_new_state = EventIdentityState::Candidate;
         self.identity_confidence_text.clear();
         self.identity_rationale.clear();
+        self.annotation_new_kind = "note".to_string();
+        self.annotation_new_value.clear();
     }
 
     fn refresh_topology_relation_candidates(&mut self, event_id: Uuid) {
@@ -4295,6 +4323,11 @@ impl EphemerisApp {
             TopologyInspectorAction::AddIdentityAssessment => {
                 self.create_identity_assessment_for_event(event_id)
             }
+            TopologyInspectorAction::AddAnnotation => self.create_annotation_for_event(event_id),
+            TopologyInspectorAction::DeleteAnnotation(annotation_id) => self
+                .store
+                .delete_event_annotation(annotation_id)
+                .map(|_| ()),
         };
 
         match result {
@@ -4307,6 +4340,25 @@ impl EphemerisApp {
                 self.last_error = Some(format!("Inspector edit failed: {error:#}"));
             }
         }
+    }
+
+    fn create_annotation_for_event(&mut self, event_id: Uuid) -> anyhow::Result<()> {
+        let kind = self.annotation_new_kind.trim();
+        if kind.is_empty() {
+            anyhow::bail!("annotation kind is empty");
+        }
+        let raw_value = self.annotation_new_value.trim();
+        if raw_value.is_empty() {
+            anyhow::bail!("annotation value is empty; enter JSON such as \"note text\", true, or 5");
+        }
+        let value = serde_json::from_str(raw_value)
+            .map_err(|error| anyhow::anyhow!("annotation value must be valid JSON: {error}"))?;
+        let annotation = EventAnnotation::new(event_id, kind, value);
+        self.store.upsert_event_annotation(&annotation)?;
+        self.annotation_new_kind = "note".to_string();
+        self.annotation_new_value.clear();
+        self.last_message = Some("Created user annotation.".to_string());
+        Ok(())
     }
 
     fn create_identity_assessment_for_event(&mut self, event_id: Uuid) -> anyhow::Result<()> {
@@ -5505,6 +5557,7 @@ struct MembershipPredicateOptions {
     calendars: Vec<TariaProjectedCalendarChoice>,
     collections: Vec<EventCollection>,
     relation_types: Vec<String>,
+    annotation_kinds: Vec<String>,
 }
 
 fn render_contextual_week_start(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft) {
@@ -6687,10 +6740,11 @@ enum QueryPredicateKind {
     CollectionMembership,
     RelationType,
     IdentityStateAnyOf,
+    AnnotationKind,
 }
 
 impl QueryPredicateKind {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 15] = [
         Self::Text,
         Self::TextAnyOf,
         Self::StatusAnyOf,
@@ -6705,6 +6759,7 @@ impl QueryPredicateKind {
         Self::CollectionMembership,
         Self::RelationType,
         Self::IdentityStateAnyOf,
+        Self::AnnotationKind,
     ];
 
     const fn label(self) -> &'static str {
@@ -6723,6 +6778,7 @@ impl QueryPredicateKind {
             Self::CollectionMembership => "Event collection membership",
             Self::RelationType => "Event relation type",
             Self::IdentityStateAnyOf => "Event identity state",
+            Self::AnnotationKind => "Annotation kind",
         }
     }
 }
@@ -6816,6 +6872,9 @@ fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
         QueryPredicateKind::IdentityStateAnyOf => QueryPredicate::IdentityStateAnyOf {
             values: vec![EventIdentityState::Candidate],
         },
+        QueryPredicateKind::AnnotationKind => QueryPredicate::AnnotationKind {
+            kind: String::new(),
+        },
     }
 }
 
@@ -6837,6 +6896,7 @@ fn query_predicate_kind(predicate: &QueryPredicate) -> QueryPredicateKind {
         QueryPredicate::CollectionMembership { .. } => QueryPredicateKind::CollectionMembership,
         QueryPredicate::RelationType { .. } => QueryPredicateKind::RelationType,
         QueryPredicate::IdentityStateAnyOf { .. } => QueryPredicateKind::IdentityStateAnyOf,
+        QueryPredicate::AnnotationKind { .. } => QueryPredicateKind::AnnotationKind,
     }
 }
 
@@ -7313,6 +7373,25 @@ fn render_query_predicate_editor(
                     }
                 }
             });
+        }
+        QueryPredicate::AnnotationKind { kind } => {
+            ui.small("Matches user-owned event annotations without changing source-backed fields.");
+            egui::ComboBox::from_id_salt(("advanced-annotation-kind", path))
+                .selected_text(if kind.is_empty() {
+                    "Select annotation kind…"
+                } else {
+                    kind.as_str()
+                })
+                .show_ui(ui, |ui| {
+                    for candidate in &membership_options.annotation_kinds {
+                        changed |= ui
+                            .selectable_value(kind, candidate.clone(), candidate)
+                            .changed();
+                    }
+                });
+            changed |= ui
+                .add(egui::TextEdit::singleline(kind).hint_text("note, watched, rating, ..."))
+                .changed();
         }
     }
 
