@@ -5643,6 +5643,198 @@ mod tests {
     }
 
     #[test]
+    fn event_revisions_append_only_on_canonical_change_and_survive_event_delete() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let event = TemporalEvent::new(
+            "Initial title",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+
+        store.upsert_event(&event).expect("initial event");
+        let first_revisions = store.event_revisions(event.id).expect("initial revisions");
+        assert_eq!(first_revisions.len(), 1);
+        assert_eq!(first_revisions[0].event, event);
+
+        store.upsert_event(&event).expect("unchanged event");
+        assert_eq!(
+            store.event_revisions(event.id).expect("unchanged revisions"),
+            first_revisions
+        );
+
+        let mut updated = event.clone();
+        updated.normalized_title = "Updated title".to_string();
+        updated.updated_at = Utc::now();
+        store.upsert_event(&updated).expect("updated event");
+
+        let revisions = store.event_revisions(event.id).expect("revisions");
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(revisions[0].event.normalized_title, "Initial title");
+        assert_eq!(revisions[1].event.normalized_title, "Updated title");
+        assert_eq!(
+            store
+                .latest_event_revision(event.id)
+                .expect("latest revision query")
+                .expect("latest revision"),
+            revisions[1]
+        );
+        assert_eq!(
+            store
+                .event_revision_by_id(revisions[0].id)
+                .expect("revision by id")
+                .expect("revision"),
+            revisions[0]
+        );
+
+        store
+            .conn
+            .execute(
+                "DELETE FROM temporal_events WHERE id = ?1",
+                params![event.id.to_string()],
+            )
+            .expect("delete event");
+        assert!(store.event_by_id(event.id).expect("event query").is_none());
+        assert_eq!(
+            store.event_revisions(event.id).expect("history after delete"),
+            revisions
+        );
+    }
+
+    #[test]
+    fn import_refresh_records_one_revision_per_real_change() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let source = TemporalSource::new("Feed", SourceKind::Ics, SourceAuthority::Official);
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+
+        let mut first = TemporalEvent::new(
+            "Initial",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        first.source_record_key = Some("uid-history".to_string());
+        let initial = store
+            .import_batch(&source, std::slice::from_mut(&mut first))
+            .expect("initial import");
+        assert_eq!(initial.created, 1);
+
+        let canonical = store
+            .event_by_source_record(source.id, "uid-history")
+            .expect("event query")
+            .expect("event");
+        assert_eq!(
+            store
+                .event_revisions(canonical.id)
+                .expect("initial history")
+                .len(),
+            1
+        );
+
+        let mut unchanged = TemporalEvent::new(
+            "Initial",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        unchanged.source_record_key = Some("uid-history".to_string());
+        let unchanged_result = store
+            .import_batch(&source, std::slice::from_mut(&mut unchanged))
+            .expect("unchanged refresh");
+        assert_eq!(unchanged_result.unchanged, 1);
+        assert_eq!(
+            store
+                .event_revisions(canonical.id)
+                .expect("history after unchanged refresh")
+                .len(),
+            1
+        );
+
+        let mut changed = TemporalEvent::new(
+            "Changed",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        changed.source_record_key = Some("uid-history".to_string());
+        let changed_result = store
+            .import_batch(&source, std::slice::from_mut(&mut changed))
+            .expect("changed refresh");
+        assert_eq!(changed_result.updated, 1);
+
+        let revisions = store
+            .event_revisions(canonical.id)
+            .expect("history after changed refresh");
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(revisions[0].event.normalized_title, "Initial");
+        assert_eq!(revisions[1].event.normalized_title, "Changed");
+    }
+
+    #[test]
+    fn v19_migration_adds_event_revision_history_without_rewriting_events() {
+        let mut conn = Connection::open_in_memory().expect("connection");
+        configure_connection(&conn).expect("configure");
+
+        let tx = conn.transaction().expect("schema transaction");
+        create_schema_v2(&tx).expect("base schema");
+        add_event_recurrence_column(&tx).expect("recurrence column");
+        create_saved_views_schema_current(&tx).expect("saved views");
+        create_taria_release_schema_current(&tx).expect("taria schema");
+        create_refresh_history_schema_current(&tx).expect("refresh schema");
+        create_event_relation_collection_schema_current(&tx).expect("topology schema");
+        add_event_uncertainty_column(&tx).expect("uncertainty column");
+        create_event_identity_schema_current(&tx).expect("identity schema");
+        create_event_annotation_schema_current(&tx).expect("annotation schema");
+        create_event_provenance_schema_current(&tx).expect("provenance schema");
+        tx.pragma_update(None, "user_version", 19).expect("set v19");
+        tx.commit().expect("commit v19 schema");
+
+        let event_id = Uuid::new_v4();
+        conn.execute(
+            r#"
+            INSERT INTO temporal_events (
+                id,
+                assertion_refs_json, source_refs_json, provenance_refs_json,
+                normalized_title, status,
+                time_kind, start_date,
+                tags_json, properties_json,
+                created_at, updated_at
+            ) VALUES (?1, '[]', '[]', '[]', ?2, 'scheduled', 'date_only', ?3, '[]', '{}', ?4, ?4)
+            "#,
+            params![
+                event_id.to_string(),
+                "Pre-v20 event",
+                "2026-10-07",
+                "2026-10-07T00:00:00Z",
+            ],
+        )
+        .expect("insert v19 event");
+
+        migrate(&mut conn).expect("migrate to current");
+        let store = TemporalStore { conn, path: None };
+        assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+        assert_eq!(
+            store
+                .event_by_id(event_id)
+                .expect("event query")
+                .expect("event")
+                .normalized_title,
+            "Pre-v20 event"
+        );
+        assert!(
+            store
+                .event_revisions(event_id)
+                .expect("revision history")
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn event_provenance_records_roundtrip_enforce_semantic_uniqueness_and_fk_behavior() {
         let store = TemporalStore::open_in_memory().expect("store");
         let source = TemporalSource::new("Archive", SourceKind::Json, SourceAuthority::Official);
