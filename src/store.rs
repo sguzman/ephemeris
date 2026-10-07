@@ -1086,6 +1086,256 @@ impl TemporalStore {
         Ok(changed != 0)
     }
 
+    pub fn upsert_canonical_entity(&self, entity: &CanonicalEntity) -> anyhow::Result<()> {
+        entity.validate().context("invalid canonical entity")?;
+        let properties_json = serde_json::to_string(&entity.properties)
+            .context("failed to encode canonical entity properties")?;
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .context("failed to begin canonical entity transaction")?;
+
+        let result = (|| -> anyhow::Result<()> {
+            tx.execute(
+                r#"
+                INSERT INTO canonical_entities (
+                    id, canonical_name, entity_type, properties_json, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(id) DO UPDATE SET
+                    canonical_name = excluded.canonical_name,
+                    entity_type = excluded.entity_type,
+                    properties_json = excluded.properties_json,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    entity.id.to_string(),
+                    entity.canonical_name,
+                    entity.entity_type,
+                    properties_json,
+                    entity.created_at.to_rfc3339(),
+                    entity.updated_at.to_rfc3339(),
+                ],
+            )
+            .context("failed to upsert canonical entity")?;
+
+            tx.execute(
+                "DELETE FROM canonical_entity_aliases WHERE entity_id = ?1",
+                params![entity.id.to_string()],
+            )
+            .context("failed to replace canonical entity aliases")?;
+            for alias in &entity.aliases {
+                tx.execute(
+                    r#"
+                    INSERT INTO canonical_entity_aliases (entity_id, alias, alias_key)
+                    VALUES (?1, ?2, ?3)
+                    "#,
+                    params![
+                        entity.id.to_string(),
+                        alias,
+                        normalize_entity_alias(alias),
+                    ],
+                )
+                .with_context(|| format!("failed to add canonical entity alias {alias:?}"))?;
+            }
+
+            tx.execute(
+                "DELETE FROM canonical_entity_external_refs WHERE entity_id = ?1",
+                params![entity.id.to_string()],
+            )
+            .context("failed to replace canonical entity external references")?;
+            for external_ref in &entity.external_refs {
+                tx.execute(
+                    r#"
+                    INSERT INTO canonical_entity_external_refs (external_ref, entity_id)
+                    VALUES (?1, ?2)
+                    "#,
+                    params![external_ref.trim(), entity.id.to_string()],
+                )
+                .with_context(|| {
+                    format!(
+                        "failed to claim canonical entity external reference {external_ref:?}"
+                    )
+                })?;
+            }
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                tx.commit()
+                    .context("failed to commit canonical entity transaction")?;
+                Ok(())
+            }
+            Err(error) => {
+                let _ = tx.rollback();
+                Err(error)
+            }
+        }
+    }
+
+    pub fn canonical_entity_by_id(&self, id: Uuid) -> anyhow::Result<Option<CanonicalEntity>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, canonical_name, entity_type, properties_json, created_at, updated_at
+            FROM canonical_entities
+            WHERE id = ?1
+            "#,
+        )?;
+        let Some(mut entity) = stmt
+            .query_row(params![id.to_string()], decode_canonical_entity)
+            .optional()
+            .context("failed to query canonical entity by id")?
+        else {
+            return Ok(None);
+        };
+        self.populate_canonical_entity_edges(&mut entity)?;
+        Ok(Some(entity))
+    }
+
+    pub fn canonical_entity_by_reference(
+        &self,
+        reference: &str,
+    ) -> anyhow::Result<Option<CanonicalEntity>> {
+        if let Some(id) = CanonicalEntity::parse_local_reference(reference) {
+            return self.canonical_entity_by_id(id);
+        }
+
+        let entity_id: Option<String> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT entity_id
+                FROM canonical_entity_external_refs
+                WHERE external_ref = ?1
+                "#,
+                params![reference.trim()],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("failed to resolve canonical entity external reference")?;
+        match entity_id {
+            Some(raw) => {
+                let id = Uuid::parse_str(&raw)
+                    .with_context(|| format!("invalid canonical entity id {raw:?}"))?;
+                self.canonical_entity_by_id(id)
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_canonical_entities(&self) -> anyhow::Result<Vec<CanonicalEntity>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, canonical_name, entity_type, properties_json, created_at, updated_at
+            FROM canonical_entities
+            ORDER BY canonical_name COLLATE NOCASE, id
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut entities = Vec::new();
+        while let Some(row) = rows.next()? {
+            entities.push(decode_canonical_entity(row)?);
+        }
+        drop(rows);
+        drop(stmt);
+        for entity in &mut entities {
+            self.populate_canonical_entity_edges(entity)?;
+        }
+        Ok(entities)
+    }
+
+    pub fn search_canonical_entities(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<CanonicalEntity>> {
+        let query = query.trim();
+        if query.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(limit).context("entity search limit is too large")?;
+        let alias_query = normalize_entity_alias(query);
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT DISTINCT e.id, e.canonical_name
+            FROM canonical_entities e
+            LEFT JOIN canonical_entity_aliases a ON a.entity_id = e.id
+            LEFT JOIN canonical_entity_external_refs r ON r.entity_id = e.id
+            WHERE instr(lower(e.canonical_name), lower(?1)) > 0
+               OR instr(lower(COALESCE(e.entity_type, '')), lower(?1)) > 0
+               OR instr(a.alias_key, ?2) > 0
+               OR instr(lower(COALESCE(r.external_ref, '')), lower(?1)) > 0
+            ORDER BY
+                CASE WHEN lower(e.canonical_name) = lower(?1) THEN 0 ELSE 1 END,
+                e.canonical_name COLLATE NOCASE,
+                e.id
+            LIMIT ?3
+            "#,
+        )?;
+        let mut rows = stmt.query(params![query, alias_query, limit])?;
+        let mut ids = Vec::new();
+        while let Some(row) = rows.next()? {
+            let raw: String = row.get(0)?;
+            ids.push(
+                Uuid::parse_str(&raw)
+                    .with_context(|| format!("invalid canonical entity id {raw:?}"))?,
+            );
+        }
+        drop(rows);
+        drop(stmt);
+
+        let mut entities = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(entity) = self.canonical_entity_by_id(id)? {
+                entities.push(entity);
+            }
+        }
+        Ok(entities)
+    }
+
+    pub fn delete_canonical_entity(&self, id: Uuid) -> anyhow::Result<bool> {
+        let changed = self
+            .conn
+            .execute(
+                "DELETE FROM canonical_entities WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .context("failed to delete canonical entity")?;
+        Ok(changed != 0)
+    }
+
+    fn populate_canonical_entity_edges(&self, entity: &mut CanonicalEntity) -> anyhow::Result<()> {
+        let mut alias_stmt = self.conn.prepare(
+            r#"
+            SELECT alias
+            FROM canonical_entity_aliases
+            WHERE entity_id = ?1
+            ORDER BY alias COLLATE NOCASE
+            "#,
+        )?;
+        let aliases = alias_stmt
+            .query_map(params![entity.id.to_string()], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to load canonical entity aliases")?;
+
+        let mut refs_stmt = self.conn.prepare(
+            r#"
+            SELECT external_ref
+            FROM canonical_entity_external_refs
+            WHERE entity_id = ?1
+            ORDER BY external_ref
+            "#,
+        )?;
+        let external_refs = refs_stmt
+            .query_map(params![entity.id.to_string()], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to load canonical entity external references")?;
+
+        entity.aliases = aliases;
+        entity.external_refs = external_refs;
+        Ok(())
+    }
+
     pub fn upsert_event_relation(&self, relation: &EventRelation) -> anyhow::Result<()> {
         relation.validate().context("invalid event relation")?;
         let properties_json = serde_json::to_string(&relation.properties)
@@ -4770,6 +5020,25 @@ fn decode_event_revision(row: &Row<'_>) -> rusqlite::Result<EventRevision> {
         recorded_at,
         event_updated_at,
         event,
+    })
+}
+
+fn normalize_entity_alias(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+fn decode_canonical_entity(row: &Row<'_>) -> rusqlite::Result<CanonicalEntity> {
+    Ok(CanonicalEntity {
+        id: Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?,
+        canonical_name: row.get("canonical_name")?,
+        entity_type: row.get("entity_type")?,
+        aliases: Vec::new(),
+        external_refs: Vec::new(),
+        properties: decode_json_value(row, "properties_json")?,
+        created_at: parse_datetime(&row.get::<_, String>("created_at")?)
+            .map_err(to_sql_decode_error)?,
+        updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)
+            .map_err(to_sql_decode_error)?,
     })
 }
 
