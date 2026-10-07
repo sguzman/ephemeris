@@ -1455,6 +1455,33 @@ impl TemporalStore {
     }
 
     pub fn upsert_event(&self, event: &TemporalEvent) -> anyhow::Result<()> {
+        let owns_transaction = self.conn.is_autocommit();
+        if owns_transaction {
+            self.conn
+                .execute_batch("BEGIN IMMEDIATE")
+                .context("failed to begin temporal event upsert transaction")?;
+        }
+
+        let result = self.upsert_event_with_revision(event);
+        match result {
+            Ok(()) => {
+                if owns_transaction {
+                    self.conn
+                        .execute_batch("COMMIT")
+                        .context("failed to commit temporal event upsert transaction")?;
+                }
+                Ok(())
+            }
+            Err(error) => {
+                if owns_transaction {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn upsert_event_with_revision(&self, event: &TemporalEvent) -> anyhow::Result<()> {
         let previous = self.event_by_id(event.id)?;
 
         event
