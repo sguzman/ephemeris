@@ -487,11 +487,11 @@ impl QueryPredicate {
             Self::ProvenanceReference { reference } => {
                 membership.is_some_and(|membership| membership.has_provenance_reference(reference))
             }
-            Self::CanonicalEntityMembership { entity_id } => membership
-                .is_some_and(|membership| membership.has_canonical_entity(*entity_id)),
-            Self::CanonicalEntityType { entity_type } => membership.is_some_and(|membership| {
-                membership.has_canonical_entity_type(entity_type)
-            }),
+            Self::CanonicalEntityMembership { entity_id } => {
+                membership.is_some_and(|membership| membership.has_canonical_entity(*entity_id))
+            }
+            Self::CanonicalEntityType { entity_type } => membership
+                .is_some_and(|membership| membership.has_canonical_entity_type(entity_type)),
         }
     }
 }
@@ -2393,21 +2393,13 @@ mod tests {
         };
 
         assert!(!entity_query.matches(&event, &test_context()));
-        assert!(entity_query.matches_with_membership(
-            &event,
-            &test_context(),
-            Some(&membership)
-        ));
+        assert!(entity_query.matches_with_membership(&event, &test_context(), Some(&membership)));
         assert!(!missing_entity_query.matches_with_membership(
             &event,
             &test_context(),
             Some(&membership)
         ));
-        assert!(type_query.matches_with_membership(
-            &event,
-            &test_context(),
-            Some(&membership)
-        ));
+        assert!(type_query.matches_with_membership(&event, &test_context(), Some(&membership)));
     }
 
     #[test]
