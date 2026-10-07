@@ -340,8 +340,7 @@ mod tests {
 
     use super::*;
     use crate::domain::{
-        RecurrenceFrequency, RecurrenceRule, SourceAuthority, SourceKind, TimeSpec,
-        TimeUncertainty,
+        RecurrenceFrequency, RecurrenceRule, SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
     };
 
     fn fixture_source() -> TemporalSource {
