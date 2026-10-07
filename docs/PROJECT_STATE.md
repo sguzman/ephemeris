@@ -1,6 +1,6 @@
 # Project State
 
-Last verified implementation milestone: 2026-10-06.
+Last verified implementation milestone: 2026-10-07.
 
 ## Current status
 
@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`b40046840a6e506843e45c41ccef4e71c36354aa`
+`b53bf2d2d830dc52c7894d8b21fcb63d3c94d935`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **548 library tests** pass
+- **594 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -134,7 +134,13 @@ Canonical entity resolution is now a verified Phase-2 subsystem. Schema v23 intr
 
 The UI now exposes participant resolution on read-only as well as editable events, a searchable/editable canonical entity registry, guarded entity merge, reverse event-usage visibility, and saved-view predicates by stable canonical entity UUID or entity type. Merges transfer aliases, external refs, old local refs, and local bindings while rejecting incompatible entity types or conflicting opaque properties. Canonical JSON v9 preserves the local binding layer losslessly.
 
-With the canonical temporal core now including durable reusable entity identity, the next product frontier moves into **Phase 10 personal scheduling completeness**, beginning with richer local event creation/editing while retaining the existing specialized editors for recurrence and other temporal semantics.
+Phase 10 personal scheduling is now materially underway. Canonical events have explicit Busy/Free availability behavior persisted in schema v27 and mapped to iCalendar TRANSP; the free/busy engine respects that behavior across recurrence materialization, reports skipped unsupported temporal shapes, finds candidate slots inside persisted personal work-hour/workday preferences, and can prefill local event creation directly from a free interval or suggested slot.
+
+Reminder workflows are already end-to-end in-app: event- and saved-view-targeted before-start rules persist in SQLite, recurrence-aware evaluation materializes due occurrences, deliveries deduplicate durably, active reminders survive restart, and users can dismiss them from the reminder center.
+
+Local authoring is also broader now. Quick-create captures description, event type, domain, lifecycle status, and Busy/Free behavior in addition to date/time. Writable non-recurring exact, floating, all-day, and date-only events have a canonical time editor that preserves their temporal kind and source clock context; recurring masters and uncertain placements are deliberately blocked rather than mutated unsafely. Writable events can also add/edit/remove the full structured location object, including venue/address/locality/region/postal/country, paired coordinates, and virtual URL, with canonical validation.
+
+The next Phase 10 frontier is **deeper personal scheduling workflow** on top of these verified primitives: reminder follow-up behavior such as durable snooze, attendee/invitation semantics where they provide real value, and richer scheduling assistance without weakening local-first canonical semantics.
 
 ## Documentation roles
 
