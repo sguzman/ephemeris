@@ -778,6 +778,99 @@ impl TemporalStore {
         Ok(changed != 0)
     }
 
+    pub fn record_notification_delivery(
+        &self,
+        delivery: &NotificationDelivery,
+    ) -> anyhow::Result<bool> {
+        let changed = self
+            .conn
+            .execute(
+                r#"
+                INSERT OR IGNORE INTO notification_deliveries (
+                    id, rule_id, event_id, occurrence_id,
+                    rule_name, event_title,
+                    trigger_at_utc, starts_at_utc, lead_minutes,
+                    delivered_at, dismissed_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                "#,
+                params![
+                    delivery.id.to_string(),
+                    delivery.rule_id.to_string(),
+                    delivery.event_id.to_string(),
+                    delivery.occurrence_id.to_string(),
+                    delivery.rule_name,
+                    delivery.event_title,
+                    delivery.trigger_at_utc.to_rfc3339(),
+                    delivery.starts_at_utc.to_rfc3339(),
+                    i64::from(delivery.lead_minutes),
+                    delivery.delivered_at.to_rfc3339(),
+                    delivery.dismissed_at.map(|value| value.to_rfc3339()),
+                ],
+            )
+            .context("failed to record notification delivery")?;
+        Ok(changed != 0)
+    }
+
+    pub fn notification_delivery_by_id(
+        &self,
+        id: Uuid,
+    ) -> anyhow::Result<Option<NotificationDelivery>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, rule_id, event_id, occurrence_id,
+                rule_name, event_title,
+                trigger_at_utc, starts_at_utc, lead_minutes,
+                delivered_at, dismissed_at
+            FROM notification_deliveries
+            WHERE id = ?1
+            "#,
+        )?;
+        stmt.query_row(params![id.to_string()], decode_notification_delivery)
+            .optional()
+            .context("failed to query notification delivery by id")
+    }
+
+    pub fn active_notification_deliveries(&self) -> anyhow::Result<Vec<NotificationDelivery>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, rule_id, event_id, occurrence_id,
+                rule_name, event_title,
+                trigger_at_utc, starts_at_utc, lead_minutes,
+                delivered_at, dismissed_at
+            FROM notification_deliveries
+            WHERE dismissed_at IS NULL
+            ORDER BY delivered_at DESC, id
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut deliveries = Vec::new();
+        while let Some(row) = rows.next()? {
+            deliveries.push(decode_notification_delivery(row)?);
+        }
+        Ok(deliveries)
+    }
+
+    pub fn dismiss_notification_delivery(
+        &self,
+        id: Uuid,
+        dismissed_at: DateTime<Utc>,
+    ) -> anyhow::Result<bool> {
+        let changed = self
+            .conn
+            .execute(
+                r#"
+                UPDATE notification_deliveries
+                SET dismissed_at = ?2
+                WHERE id = ?1 AND dismissed_at IS NULL
+                "#,
+                params![id.to_string(), dismissed_at.to_rfc3339()],
+            )
+            .context("failed to dismiss notification delivery")?;
+        Ok(changed != 0)
+    }
+
     pub fn list_saved_views(&self) -> anyhow::Result<Vec<SavedView>> {
         let mut stmt = self.conn.prepare(
             r#"
@@ -5812,6 +5905,40 @@ fn event_select_sql(suffix: &str) -> String {
         {suffix}
         "#
     )
+}
+
+fn decode_notification_delivery(row: &Row<'_>) -> rusqlite::Result<NotificationDelivery> {
+    let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
+    let rule_id =
+        Uuid::parse_str(&row.get::<_, String>("rule_id")?).map_err(to_sql_decode_error)?;
+    let event_id =
+        Uuid::parse_str(&row.get::<_, String>("event_id")?).map_err(to_sql_decode_error)?;
+    let occurrence_id =
+        Uuid::parse_str(&row.get::<_, String>("occurrence_id")?).map_err(to_sql_decode_error)?;
+    let lead_minutes = u32::try_from(row.get::<_, i64>("lead_minutes")?)
+        .map_err(to_sql_decode_error)?;
+    let dismissed_at = row
+        .get::<_, Option<String>>("dismissed_at")?
+        .map(|value| parse_datetime(&value))
+        .transpose()
+        .map_err(to_sql_decode_error)?;
+
+    Ok(NotificationDelivery {
+        id,
+        rule_id,
+        event_id,
+        occurrence_id,
+        rule_name: row.get("rule_name")?,
+        event_title: row.get("event_title")?,
+        trigger_at_utc: parse_datetime(&row.get::<_, String>("trigger_at_utc")?)
+            .map_err(to_sql_decode_error)?,
+        starts_at_utc: parse_datetime(&row.get::<_, String>("starts_at_utc")?)
+            .map_err(to_sql_decode_error)?,
+        lead_minutes,
+        delivered_at: parse_datetime(&row.get::<_, String>("delivered_at")?)
+            .map_err(to_sql_decode_error)?,
+        dismissed_at,
+    })
 }
 
 fn decode_notification_rule(row: &Row<'_>) -> rusqlite::Result<NotificationRule> {
