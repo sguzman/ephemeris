@@ -1360,11 +1360,7 @@ pub struct NotificationRule {
 }
 
 impl NotificationRule {
-    pub fn for_event(
-        event_id: Uuid,
-        name: impl Into<String>,
-        lead_minutes: u32,
-    ) -> Self {
+    pub fn for_event(event_id: Uuid, name: impl Into<String>, lead_minutes: u32) -> Self {
         Self::new(
             NotificationTarget::Event { event_id },
             name,
@@ -1374,11 +1370,7 @@ impl NotificationRule {
         )
     }
 
-    pub fn for_saved_view(
-        saved_view_id: Uuid,
-        name: impl Into<String>,
-        lead_minutes: u32,
-    ) -> Self {
+    pub fn for_saved_view(saved_view_id: Uuid, name: impl Into<String>, lead_minutes: u32) -> Self {
         Self::new(
             NotificationTarget::SavedView { saved_view_id },
             name,
