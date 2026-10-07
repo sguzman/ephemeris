@@ -3346,10 +3346,7 @@ fn i64_to_u64(value: i64, label: &str) -> anyhow::Result<u64> {
     u64::try_from(value).with_context(|| format!("{label} cannot be represented as u64"))
 }
 
-fn event_changed_for_revision(
-    previous: Option<&TemporalEvent>,
-    current: &TemporalEvent,
-) -> bool {
+fn event_changed_for_revision(previous: Option<&TemporalEvent>, current: &TemporalEvent) -> bool {
     let Some(previous) = previous else {
         return true;
     };
