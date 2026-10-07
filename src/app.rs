@@ -12694,6 +12694,62 @@ mod tests {
     }
 
     #[test]
+    fn event_location_edit_roundtrips_structured_fields_and_removal() {
+        let mut event = TemporalEvent::new(
+            "Located",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        event.location = Some(EventLocation {
+            name: Some("Library".to_string()),
+            address: Some("123 Main".to_string()),
+            locality: Some("Ameca".to_string()),
+            region: Some("Jalisco".to_string()),
+            postal_code: Some("46600".to_string()),
+            country: Some("Mexico".to_string()),
+            latitude: Some(20.548),
+            longitude: Some(-104.045),
+            virtual_url: None,
+        });
+
+        let draft = EventLocationEditDraft::from_event(&event);
+        assert_eq!(draft.name, "Library");
+        assert_eq!(draft.locality, "Ameca");
+        assert_eq!(
+            draft.parsed_location().expect("location"),
+            event.location
+        );
+
+        let empty = EventLocationEditDraft {
+            event_id: event.id,
+            ..EventLocationEditDraft::default()
+        };
+        assert_eq!(empty.parsed_location().expect("empty"), None);
+    }
+
+    #[test]
+    fn event_location_edit_requires_paired_bounded_coordinates() {
+        let mut draft = EventLocationEditDraft {
+            event_id: Uuid::new_v4(),
+            name: "Place".to_string(),
+            ..EventLocationEditDraft::default()
+        };
+        draft.latitude = "20.0".to_string();
+        assert!(draft.parsed_location().is_err());
+
+        draft.longitude = "-104.0".to_string();
+        assert!(draft.parsed_location().is_ok());
+
+        draft.latitude = "91".to_string();
+        assert!(draft.parsed_location().is_err());
+
+        draft.latitude = "NaN".to_string();
+        assert!(draft.parsed_location().is_err());
+    }
+
+    #[test]
     fn event_details_numeric_parsers_are_strict_and_blank_aware() {
         assert_eq!(
             parse_optional_confidence("").expect("blank confidence"),
