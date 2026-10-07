@@ -39,6 +39,9 @@ fn main() -> anyhow::Result<()> {
         println!("Exported Ephemeris canonical JSON snapshot");
         println!("Sources: {}", report.source_count);
         println!("Events: {}", report.event_count);
+        println!("Relations: {}", report.relation_count);
+        println!("Collections: {}", report.collection_count);
+        println!("Collection memberships: {}", report.collection_member_count);
         println!("Output: {}", report.output_path.display());
         return Ok(());
     }
