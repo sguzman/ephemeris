@@ -122,13 +122,8 @@ fn evaluate_rule_for_event(
     window_end_utc: DateTime<Utc>,
     evaluation: &mut NotificationEvaluation,
 ) -> anyhow::Result<()> {
-    let (lead_minutes, occurrences) = notification_occurrences_for_rule(
-        rule,
-        event,
-        context,
-        window_start_utc,
-        window_end_utc,
-    )?;
+    let (lead_minutes, occurrences) =
+        notification_occurrences_for_rule(rule, event, context, window_start_utc, window_end_utc)?;
     for occurrence in occurrences {
         schedule_occurrence(
             rule,
@@ -156,13 +151,8 @@ fn evaluate_rule_for_saved_view_event(
     window_end_utc: DateTime<Utc>,
     evaluation: &mut NotificationEvaluation,
 ) -> anyhow::Result<()> {
-    let (lead_minutes, occurrences) = notification_occurrences_for_rule(
-        rule,
-        event,
-        context,
-        window_start_utc,
-        window_end_utc,
-    )?;
+    let (lead_minutes, occurrences) =
+        notification_occurrences_for_rule(rule, event, context, window_start_utc, window_end_utc)?;
 
     for occurrence in occurrences {
         let mut materialized = event.clone();
@@ -248,8 +238,7 @@ fn schedule_occurrence(
         return Ok(());
     }
 
-    let Some(starts_at_utc) =
-        notification_start_utc(&occurrence.time, context.display_timezone)
+    let Some(starts_at_utc) = notification_start_utc(&occurrence.time, context.display_timezone)
     else {
         evaluation.skipped.push(NotificationSkip {
             rule_id: rule.id,
@@ -577,9 +566,7 @@ mod tests {
             EventQuery {
                 expression: Some(QueryExpr::Predicate(QueryPredicate::DateOverlaps {
                     start: Some(NaiveDate::from_ymd_opt(2026, 10, 8).expect("start date")),
-                    end_exclusive: Some(
-                        NaiveDate::from_ymd_opt(2026, 10, 9).expect("end date"),
-                    ),
+                    end_exclusive: Some(NaiveDate::from_ymd_opt(2026, 10, 9).expect("end date")),
                     include_imprecise: false,
                 })),
                 ..EventQuery::default()
