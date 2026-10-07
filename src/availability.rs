@@ -41,6 +41,73 @@ pub struct AvailabilityResult {
     pub skipped: Vec<AvailabilitySkip>,
 }
 
+pub fn availability_for_materialized_date_window(
+    events: &[TemporalEvent],
+    display_timezone: Tz,
+    start_date: NaiveDate,
+    end_exclusive: NaiveDate,
+) -> anyhow::Result<AvailabilityResult> {
+    let start_local = start_date
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow::anyhow!("invalid availability window start date"))?;
+    let end_local = end_exclusive
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow::anyhow!("invalid availability window end date"))?;
+    let window_start_utc = resolve_local(display_timezone, start_local).ok_or_else(|| {
+        anyhow::anyhow!(
+            "availability window start midnight is not representable in {display_timezone}"
+        )
+    })?;
+    let window_end_utc = resolve_local(display_timezone, end_local).ok_or_else(|| {
+        anyhow::anyhow!(
+            "availability window end midnight is not representable in {display_timezone}"
+        )
+    })?;
+
+    availability_for_materialized_events(
+        events,
+        display_timezone,
+        window_start_utc,
+        window_end_utc,
+    )
+}
+
+pub fn availability_for_materialized_events(
+    events: &[TemporalEvent],
+    display_timezone: Tz,
+    window_start_utc: DateTime<Utc>,
+    window_end_utc: DateTime<Utc>,
+) -> anyhow::Result<AvailabilityResult> {
+    if window_end_utc <= window_start_utc {
+        return Ok(AvailabilityResult::default());
+    }
+
+    let mut result = AvailabilityResult::default();
+    for event in events {
+        let occurrence = EventOccurrence {
+            id: event.id,
+            event_id: event.id,
+            recurrence_index: None,
+            origin: crate::domain::RecurrenceOccurrenceOrigin::Rule,
+            original_time: event.time.clone(),
+            time: event.time.clone(),
+            status: event.status,
+            override_applied: false,
+            cancelled_by_override: false,
+        };
+        append_occurrence(
+            &mut result,
+            event.id,
+            &event.normalized_title,
+            &occurrence,
+            display_timezone,
+            window_start_utc,
+            window_end_utc,
+        );
+    }
+    finish_availability(result, window_start_utc, window_end_utc)
+}
+
 pub fn availability_for_events(
     events: &[TemporalEvent],
     display_timezone: Tz,
@@ -71,33 +138,58 @@ pub fn availability_for_events(
             })?;
 
         for occurrence in occurrences {
-            let Some(kind) = busy_kind(occurrence.status) else {
-                continue;
-            };
-            match occurrence_interval_utc(&occurrence, display_timezone) {
-                Ok(Some((start_utc, end_utc))) => {
-                    let clipped_start = start_utc.max(window_start_utc);
-                    let clipped_end = end_utc.min(window_end_utc);
-                    if clipped_end > clipped_start {
-                        result.busy.push(BusyInterval {
-                            event_id: event.id,
-                            occurrence_id: occurrence.id,
-                            event_title: event.normalized_title.clone(),
-                            start_utc: clipped_start,
-                            end_utc: clipped_end,
-                            kind,
-                        });
-                    }
-                }
-                Ok(None) => {}
-                Err(reason) => result.skipped.push(AvailabilitySkip {
-                    event_id: event.id,
-                    reason,
-                }),
-            }
+            append_occurrence(
+                &mut result,
+                event.id,
+                &event.normalized_title,
+                &occurrence,
+                display_timezone,
+                window_start_utc,
+                window_end_utc,
+            );
         }
     }
 
+    finish_availability(result, window_start_utc, window_end_utc)
+}
+
+fn append_occurrence(
+    result: &mut AvailabilityResult,
+    event_id: Uuid,
+    event_title: &str,
+    occurrence: &EventOccurrence,
+    display_timezone: Tz,
+    window_start_utc: DateTime<Utc>,
+    window_end_utc: DateTime<Utc>,
+) {
+    let Some(kind) = busy_kind(occurrence.status) else {
+        return;
+    };
+    match occurrence_interval_utc(occurrence, display_timezone) {
+        Ok(Some((start_utc, end_utc))) => {
+            let clipped_start = start_utc.max(window_start_utc);
+            let clipped_end = end_utc.min(window_end_utc);
+            if clipped_end > clipped_start {
+                result.busy.push(BusyInterval {
+                    event_id,
+                    occurrence_id: occurrence.id,
+                    event_title: event_title.to_string(),
+                    start_utc: clipped_start,
+                    end_utc: clipped_end,
+                    kind,
+                });
+            }
+        }
+        Ok(None) => {}
+        Err(reason) => result.skipped.push(AvailabilitySkip { event_id, reason }),
+    }
+}
+
+fn finish_availability(
+    mut result: AvailabilityResult,
+    window_start_utc: DateTime<Utc>,
+    window_end_utc: DateTime<Utc>,
+) -> anyhow::Result<AvailabilityResult> {
     result.busy.sort_by_key(|interval| {
         (
             interval.start_utc,
@@ -288,6 +380,61 @@ mod tests {
 
     use super::*;
     use crate::domain::{RecurrenceFrequency, RecurrenceOverride, RecurrenceRule};
+
+    #[test]
+    fn materialized_events_do_not_reexpand_attached_recurrence() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 15, 0, 0)
+            .single()
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "Materialized occurrence",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        let mut recurrence = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        recurrence.count = Some(3);
+        event.recurrence = Some(recurrence);
+
+        let result = availability_for_materialized_events(
+            &[event],
+            chrono_tz::UTC,
+            start - Duration::hours(1),
+            start + Duration::days(4),
+        )
+        .expect("availability");
+
+        assert_eq!(result.busy.len(), 1);
+        assert_eq!(result.busy[0].start_utc, start);
+    }
+
+    #[test]
+    fn materialized_date_window_uses_display_timezone_midnights() {
+        let timezone = chrono_tz::America::Mexico_City;
+        let day = NaiveDate::from_ymd_opt(2026, 10, 8).expect("day");
+        let next_day = day.checked_add_days(Days::new(1)).expect("next day");
+        let event = TemporalEvent::new(
+            "All day",
+            TimeSpec::AllDay {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+
+        let result = availability_for_materialized_date_window(
+            &[event],
+            timezone,
+            day,
+            next_day,
+        )
+        .expect("availability");
+
+        assert_eq!(result.busy.len(), 1);
+        assert!(result.free.is_empty());
+    }
 
     #[test]
     fn exact_intervals_merge_into_free_gaps() {
