@@ -314,6 +314,12 @@ fn event_into_row(event: &TemporalEvent) -> anyhow::Result<CsvEventRow> {
             event.id
         ));
     }
+    if !event.participants.is_empty() {
+        return Err(anyhow!(
+            "event {} has structured participants, which Ephemeris CSV v1 cannot represent",
+            event.id
+        ));
+    }
     if event.time_uncertainty.is_some() {
         return Err(anyhow!(
             "event {} has temporal uncertainty, which Ephemeris CSV v1 cannot represent",
@@ -720,6 +726,19 @@ mod tests {
         );
         recurrence.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
         assert!(format_csv_events(&[recurrence]).is_err());
+
+        let mut participants = simple_event(
+            "Participants",
+            "participants",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        participants
+            .participants
+            .push(crate::domain::EventParticipant::new("Ada Lovelace"));
+        assert!(format_csv_events(&[participants]).is_err());
 
         let month = simple_event(
             "Month precision",
