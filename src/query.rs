@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::calendar::{CalendarLayout, CalendarView};
-use crate::domain::{EventIdentityState, EventStatus, TemporalEvent, TimeSpec, TimeUncertainty};
+use crate::domain::{
+    EventIdentityState, EventProvenanceRole, EventStatus, TemporalEvent, TimeSpec, TimeUncertainty,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct QueryContext {
@@ -39,6 +41,8 @@ pub struct EventMembership {
     pub incoming_relation_types: BTreeSet<String>,
     pub identity_states: BTreeSet<String>,
     pub annotation_kinds: BTreeSet<String>,
+    pub provenance_roles: BTreeSet<String>,
+    pub provenance_references: BTreeSet<String>,
 }
 
 impl EventMembership {
@@ -71,6 +75,14 @@ impl EventMembership {
 
     pub fn has_annotation_kind(&self, kind: &str) -> bool {
         self.annotation_kinds.contains(kind)
+    }
+
+    pub fn has_provenance_role(&self, role: EventProvenanceRole) -> bool {
+        self.provenance_roles.contains(role.as_str())
+    }
+
+    pub fn has_provenance_reference(&self, reference: &str) -> bool {
+        self.provenance_references.contains(reference)
     }
 }
 
@@ -324,6 +336,12 @@ pub enum QueryPredicate {
     AnnotationKind {
         annotation_kind: String,
     },
+    ProvenanceRoleAnyOf {
+        values: Vec<EventProvenanceRole>,
+    },
+    ProvenanceReference {
+        reference: String,
+    },
 }
 
 impl QueryPredicate {
@@ -442,6 +460,13 @@ impl QueryPredicate {
             Self::AnnotationKind { annotation_kind } => {
                 membership.is_some_and(|membership| membership.has_annotation_kind(annotation_kind))
             }
+            Self::ProvenanceRoleAnyOf { values } => membership.is_some_and(|membership| {
+                values
+                    .iter()
+                    .any(|role| membership.has_provenance_role(*role))
+            }),
+            Self::ProvenanceReference { reference } => membership
+                .is_some_and(|membership| membership.has_provenance_reference(reference)),
         }
     }
 }
@@ -2122,6 +2147,63 @@ mod tests {
         assert!(!note_query.matches(&event, &test_context()));
         assert!(note_query.matches_with_membership(&event, &test_context(), Some(&membership)));
         assert!(!missing_query.matches_with_membership(&event, &test_context(), Some(&membership)));
+    }
+
+    #[test]
+    fn structured_provenance_predicates_use_external_context() {
+        let event = event();
+        let mut membership = EventMembership::default();
+        membership
+            .provenance_roles
+            .insert(EventProvenanceRole::Source.as_str().to_string());
+        membership
+            .provenance_references
+            .insert("https://example.org/source/42".to_string());
+
+        let role_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(
+                QueryPredicate::ProvenanceRoleAnyOf {
+                    values: vec![
+                        EventProvenanceRole::Assertion,
+                        EventProvenanceRole::Source,
+                    ],
+                },
+            )),
+            ..EventQuery::default()
+        };
+        let reference_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(
+                QueryPredicate::ProvenanceReference {
+                    reference: "https://example.org/source/42".to_string(),
+                },
+            )),
+            ..EventQuery::default()
+        };
+        let missing_query = EventQuery {
+            expression: Some(QueryExpr::Predicate(
+                QueryPredicate::ProvenanceRoleAnyOf {
+                    values: vec![EventProvenanceRole::Provenance],
+                },
+            )),
+            ..EventQuery::default()
+        };
+
+        assert!(!role_query.matches(&event, &test_context()));
+        assert!(role_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+        assert!(reference_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
+        assert!(!missing_query.matches_with_membership(
+            &event,
+            &test_context(),
+            Some(&membership)
+        ));
     }
 
     #[test]
