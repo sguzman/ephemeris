@@ -603,15 +603,10 @@ mod tests {
 
         candidate.availability = crate::domain::AvailabilityBehavior::Free;
         assert!(
-            conflicts_for_candidate_event(
-                &[busy],
-                &candidate,
-                chrono_tz::UTC,
-                Some(excluded.id)
-            )
-            .expect("free candidate")
-            .conflicts
-            .is_empty()
+            conflicts_for_candidate_event(&[busy], &candidate, chrono_tz::UTC, Some(excluded.id))
+                .expect("free candidate")
+                .conflicts
+                .is_empty()
         );
     }
 
@@ -642,9 +637,8 @@ mod tests {
             },
         );
 
-        let result =
-            conflicts_for_candidate_event(&[recurring], &candidate, chrono_tz::UTC, None)
-                .expect("conflicts");
+        let result = conflicts_for_candidate_event(&[recurring], &candidate, chrono_tz::UTC, None)
+            .expect("conflicts");
         assert_eq!(result.conflicts.len(), 1);
         assert_eq!(result.conflicts[0].event_title, "Daily busy");
     }
@@ -658,9 +652,7 @@ mod tests {
                 end_exclusive: None,
             },
         );
-        assert!(
-            conflicts_for_candidate_event(&[], &candidate, chrono_tz::UTC, None).is_err()
-        );
+        assert!(conflicts_for_candidate_event(&[], &candidate, chrono_tz::UTC, None).is_err());
     }
 
     #[test]
