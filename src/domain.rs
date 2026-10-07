@@ -1182,7 +1182,9 @@ impl EventIdentityAssessment {
 
     pub fn validate(&self) -> Result<(), EventIdentityAssessmentError> {
         if self.left_event_id == self.right_event_id {
-            return Err(EventIdentityAssessmentError::SameEventId(self.left_event_id));
+            return Err(EventIdentityAssessmentError::SameEventId(
+                self.left_event_id,
+            ));
         }
         if self.left_event_id > self.right_event_id {
             return Err(EventIdentityAssessmentError::NonCanonicalPair {
@@ -1218,9 +1220,8 @@ impl fmt::Display for EventIdentityAssessmentError {
                 formatter,
                 "identity assessment pair must use canonical UUID order: {left} before {right}"
             ),
-            Self::InvalidConfidence => {
-                formatter.write_str("identity assessment confidence must be finite and within 0..=1")
-            }
+            Self::InvalidConfidence => formatter
+                .write_str("identity assessment confidence must be finite and within 0..=1"),
         }
     }
 }
