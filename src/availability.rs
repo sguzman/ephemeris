@@ -1,4 +1,6 @@
-use chrono::{DateTime, Days, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{
+    DateTime, Days, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+};
 use chrono_tz::Tz;
 use uuid::Uuid;
 
@@ -39,6 +41,29 @@ pub struct AvailabilityResult {
     pub busy: Vec<BusyInterval>,
     pub free: Vec<FreeInterval>,
     pub skipped: Vec<AvailabilitySkip>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotSearch {
+    pub duration_minutes: u32,
+    pub step_minutes: u32,
+    pub day_start: NaiveTime,
+    pub day_end: NaiveTime,
+}
+
+impl SlotSearch {
+    pub fn validate(self) -> anyhow::Result<Self> {
+        if self.duration_minutes == 0 {
+            anyhow::bail!("slot duration must be greater than zero minutes");
+        }
+        if self.step_minutes == 0 {
+            anyhow::bail!("slot step must be greater than zero minutes");
+        }
+        if self.day_end <= self.day_start {
+            anyhow::bail!("daily availability end must be later than start");
+        }
+        Ok(self)
+    }
 }
 
 pub fn availability_for_materialized_date_window(
@@ -204,6 +229,73 @@ fn finish_availability(
     result.skipped.dedup();
     result.free = free_intervals_from_busy(&result.busy, window_start_utc, window_end_utc);
     Ok(result)
+}
+
+pub fn suggest_slots(
+    free: &[FreeInterval],
+    timezone: Tz,
+    start_date: NaiveDate,
+    end_exclusive: NaiveDate,
+    search: SlotSearch,
+) -> anyhow::Result<Vec<FreeInterval>> {
+    let search = search.validate()?;
+    if end_exclusive <= start_date {
+        return Ok(Vec::new());
+    }
+
+    let duration = Duration::minutes(i64::from(search.duration_minutes));
+    let step = i64::from(search.step_minutes);
+    let mut slots = Vec::new();
+    let mut date = start_date;
+
+    while date < end_exclusive {
+        let day_start_local = date.and_time(search.day_start);
+        let day_end_local = date.and_time(search.day_end);
+        let day_start_utc = resolve_local(timezone, day_start_local).ok_or_else(|| {
+            anyhow::anyhow!(
+                "daily availability start {} is not representable in {timezone}",
+                day_start_local
+            )
+        })?;
+        let day_end_utc = resolve_local(timezone, day_end_local).ok_or_else(|| {
+            anyhow::anyhow!(
+                "daily availability end {} is not representable in {timezone}",
+                day_end_local
+            )
+        })?;
+        if day_end_utc <= day_start_utc {
+            anyhow::bail!("daily availability window resolves to a non-positive UTC duration");
+        }
+
+        for interval in free {
+            let free_start = interval.start_utc.max(day_start_utc);
+            let free_end = interval.end_utc.min(day_end_utc);
+            if free_end <= free_start {
+                continue;
+            }
+
+            let offset_minutes = (free_start - day_start_utc).num_minutes().max(0);
+            let aligned_steps = (offset_minutes + step - 1) / step;
+            let mut candidate =
+                day_start_utc + Duration::minutes(aligned_steps.saturating_mul(step));
+
+            while candidate + duration <= free_end {
+                slots.push(FreeInterval {
+                    start_utc: candidate,
+                    end_utc: candidate + duration,
+                });
+                candidate += Duration::minutes(step);
+            }
+        }
+
+        date = date
+            .checked_add_days(Days::new(1))
+            .ok_or_else(|| anyhow::anyhow!("slot-search date range overflow"))?;
+    }
+
+    slots.sort_by_key(|slot| (slot.start_utc, slot.end_utc));
+    slots.dedup();
+    Ok(slots)
 }
 
 pub fn free_intervals_from_busy(
@@ -434,6 +526,144 @@ mod tests {
 
         assert_eq!(result.busy.len(), 1);
         assert!(result.free.is_empty());
+    }
+
+    #[test]
+    fn slot_search_aligns_candidates_and_respects_busy_gaps() {
+        let timezone = chrono_tz::UTC;
+        let day = NaiveDate::from_ymd_opt(2026, 10, 8).expect("day");
+        let work_start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("work start");
+        let free = vec![
+            FreeInterval {
+                start_utc: work_start,
+                end_utc: work_start + Duration::hours(1),
+            },
+            FreeInterval {
+                start_utc: work_start + Duration::hours(2),
+                end_utc: work_start + Duration::hours(4),
+            },
+        ];
+        let slots = suggest_slots(
+            &free,
+            timezone,
+            day,
+            day.checked_add_days(Days::new(1)).expect("next day"),
+            SlotSearch {
+                duration_minutes: 60,
+                step_minutes: 30,
+                day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("start"),
+                day_end: NaiveTime::from_hms_opt(17, 0, 0).expect("end"),
+            },
+        )
+        .expect("slots");
+
+        assert_eq!(
+            slots,
+            vec![
+                FreeInterval {
+                    start_utc: work_start,
+                    end_utc: work_start + Duration::hours(1),
+                },
+                FreeInterval {
+                    start_utc: work_start + Duration::hours(2),
+                    end_utc: work_start + Duration::hours(3),
+                },
+                FreeInterval {
+                    start_utc: work_start + Duration::hours(2) + Duration::minutes(30),
+                    end_utc: work_start + Duration::hours(3) + Duration::minutes(30),
+                },
+                FreeInterval {
+                    start_utc: work_start + Duration::hours(3),
+                    end_utc: work_start + Duration::hours(4),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn slot_search_rounds_forward_from_partial_step() {
+        let timezone = chrono_tz::UTC;
+        let day = NaiveDate::from_ymd_opt(2026, 10, 8).expect("day");
+        let free_start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 10, 0)
+            .single()
+            .expect("free start");
+        let slots = suggest_slots(
+            &[FreeInterval {
+                start_utc: free_start,
+                end_utc: free_start + Duration::hours(2),
+            }],
+            timezone,
+            day,
+            day.checked_add_days(Days::new(1)).expect("next day"),
+            SlotSearch {
+                duration_minutes: 30,
+                step_minutes: 30,
+                day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("start"),
+                day_end: NaiveTime::from_hms_opt(17, 0, 0).expect("end"),
+            },
+        )
+        .expect("slots");
+
+        assert_eq!(
+            slots.first().map(|slot| slot.start_utc),
+            Some(
+                Utc.with_ymd_and_hms(2026, 10, 8, 9, 30, 0)
+                    .single()
+                    .expect("first slot")
+            )
+        );
+    }
+
+    #[test]
+    fn slot_search_rejects_invalid_constraints() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 8).expect("day");
+        let next = day.checked_add_days(Days::new(1)).expect("next day");
+        let nine = NaiveTime::from_hms_opt(9, 0, 0).expect("nine");
+        let five = NaiveTime::from_hms_opt(17, 0, 0).expect("five");
+
+        assert!(suggest_slots(
+            &[],
+            chrono_tz::UTC,
+            day,
+            next,
+            SlotSearch {
+                duration_minutes: 0,
+                step_minutes: 30,
+                day_start: nine,
+                day_end: five,
+            },
+        )
+        .is_err());
+        assert!(suggest_slots(
+            &[],
+            chrono_tz::UTC,
+            day,
+            next,
+            SlotSearch {
+                duration_minutes: 30,
+                step_minutes: 0,
+                day_start: nine,
+                day_end: five,
+            },
+        )
+        .is_err());
+        assert!(suggest_slots(
+            &[],
+            chrono_tz::UTC,
+            day,
+            next,
+            SlotSearch {
+                duration_minutes: 30,
+                step_minutes: 30,
+                day_start: five,
+                day_end: nine,
+            },
+        )
+        .is_err());
     }
 
     #[test]
