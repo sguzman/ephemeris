@@ -3523,6 +3523,57 @@ fn decode_source(row: &Row<'_>) -> rusqlite::Result<TemporalSource> {
     })
 }
 
+fn decode_event_relation(row: &Row<'_>) -> rusqlite::Result<EventRelation> {
+    let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
+    let from_event_id =
+        Uuid::parse_str(&row.get::<_, String>("from_event_id")?).map_err(to_sql_decode_error)?;
+    let to_event_id =
+        Uuid::parse_str(&row.get::<_, String>("to_event_id")?).map_err(to_sql_decode_error)?;
+    Ok(EventRelation {
+        id,
+        from_event_id,
+        to_event_id,
+        relation_type: row.get("relation_type")?,
+        properties: decode_json_value(row, "properties_json")?,
+        created_at: parse_datetime(&row.get::<_, String>("created_at")?)
+            .map_err(to_sql_decode_error)?,
+        updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)
+            .map_err(to_sql_decode_error)?,
+    })
+}
+
+fn decode_event_collection(row: &Row<'_>) -> rusqlite::Result<EventCollection> {
+    let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
+    Ok(EventCollection {
+        id,
+        name: row.get("name")?,
+        description: row.get("description")?,
+        ordered: row.get("ordered")?,
+        properties: decode_json_value(row, "properties_json")?,
+        created_at: parse_datetime(&row.get::<_, String>("created_at")?)
+            .map_err(to_sql_decode_error)?,
+        updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)
+            .map_err(to_sql_decode_error)?,
+    })
+}
+
+fn decode_event_collection_member(row: &Row<'_>) -> rusqlite::Result<EventCollectionMember> {
+    let collection_id =
+        Uuid::parse_str(&row.get::<_, String>("collection_id")?).map_err(to_sql_decode_error)?;
+    let event_id =
+        Uuid::parse_str(&row.get::<_, String>("event_id")?).map_err(to_sql_decode_error)?;
+    let raw_position: Option<i64> = row.get("position")?;
+    let position = raw_position
+        .map(u32::try_from)
+        .transpose()
+        .map_err(to_sql_decode_error)?;
+    Ok(EventCollectionMember {
+        collection_id,
+        event_id,
+        position,
+    })
+}
+
 fn decode_event(row: &Row<'_>) -> rusqlite::Result<TemporalEvent> {
     let time_kind: String = row.get("time_kind")?;
     let time = decode_time(row, &time_kind).map_err(to_sql_decode_error)?;
