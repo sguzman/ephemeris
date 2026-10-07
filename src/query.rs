@@ -604,6 +604,7 @@ pub enum PresenceField {
     Institution,
     Renderability,
     Confidence,
+    TimeUncertainty,
     Importance,
     PersonalRelevance,
     UpstreamEventRef,
@@ -616,7 +617,7 @@ pub enum PresenceField {
 }
 
 impl PresenceField {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Source,
         Self::RawTitle,
         Self::Description,
@@ -626,6 +627,7 @@ impl PresenceField {
         Self::Institution,
         Self::Renderability,
         Self::Confidence,
+        Self::TimeUncertainty,
         Self::Importance,
         Self::PersonalRelevance,
         Self::UpstreamEventRef,
@@ -648,6 +650,7 @@ impl PresenceField {
             Self::Institution => "Institution",
             Self::Renderability => "Renderability",
             Self::Confidence => "Confidence",
+            Self::TimeUncertainty => "Temporal uncertainty",
             Self::Importance => "Importance",
             Self::PersonalRelevance => "Personal relevance",
             Self::UpstreamEventRef => "Upstream event ref",
@@ -818,6 +821,7 @@ fn field_exists(event: &TemporalEvent, field: PresenceField) -> bool {
         PresenceField::Institution => event.institution.is_some(),
         PresenceField::Renderability => event.renderability.is_some(),
         PresenceField::Confidence => event.confidence.is_some(),
+        PresenceField::TimeUncertainty => event.time_uncertainty.is_some(),
         PresenceField::Importance => event.importance.is_some(),
         PresenceField::PersonalRelevance => event.personal_relevance.is_some(),
         PresenceField::UpstreamEventRef => event.upstream_event_ref.is_some(),
@@ -1627,6 +1631,30 @@ mod tests {
         };
 
         assert!(query.matches(&event(), &test_context()));
+    }
+
+    #[test]
+    fn temporal_uncertainty_is_queryable_as_independent_presence() {
+        let mut event = event_with_time(TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+            end_exclusive: None,
+        });
+        let context = QueryContext::new(
+            chrono_tz::America::Mexico_City,
+            NaiveDate::from_ymd_opt(2026, 10, 7).expect("today"),
+        );
+        let predicate = QueryPredicate::Exists {
+            field: PresenceField::TimeUncertainty,
+            exists: true,
+        };
+
+        assert!(!predicate.matches(&event, &context));
+        event.time_uncertainty = Some(crate::domain::TimeUncertainty::DateWindow {
+            earliest: NaiveDate::from_ymd_opt(2026, 10, 5).expect("earliest"),
+            latest: NaiveDate::from_ymd_opt(2026, 10, 9).expect("latest"),
+        });
+        assert!(predicate.matches(&event, &context));
+        assert_eq!(event.time.kind_name(), "date_only");
     }
 
     #[test]
