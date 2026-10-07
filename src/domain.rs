@@ -1229,6 +1229,52 @@ impl fmt::Display for EventIdentityAssessmentError {
 impl std::error::Error for EventIdentityAssessmentError {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventAnnotation {
+    pub id: Uuid,
+    pub event_id: Uuid,
+    pub kind: String,
+    pub value: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl EventAnnotation {
+    pub fn new(event_id: Uuid, kind: impl Into<String>, value: Value) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            event_id,
+            kind: kind.into(),
+            value,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), EventAnnotationError> {
+        if self.kind.trim().is_empty() {
+            return Err(EventAnnotationError::EmptyKind);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventAnnotationError {
+    EmptyKind,
+}
+
+impl fmt::Display for EventAnnotationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyKind => formatter.write_str("event annotation kind cannot be empty"),
+        }
+    }
+}
+
+impl std::error::Error for EventAnnotationError {}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventCollection {
     pub id: Uuid,
     pub name: String,
@@ -4607,6 +4653,20 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
+    #[test]
+    fn event_annotation_requires_nonempty_kind() {
+        let event_id = Uuid::new_v4();
+        let annotation = EventAnnotation::new(
+            event_id,
+            "note",
+            serde_json::json!({"text": "Review source discrepancy"}),
+        );
+        assert_eq!(annotation.validate(), Ok(()));
+
+        let empty = EventAnnotation::new(event_id, "   ", serde_json::json!(true));
+        assert_eq!(empty.validate(), Err(EventAnnotationError::EmptyKind));
+    }
 
     #[test]
     fn identity_assessment_canonicalizes_pairs_and_validates_confidence() {
