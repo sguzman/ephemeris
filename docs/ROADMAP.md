@@ -430,8 +430,8 @@ Next Phase 8 work:
 - recurrence-exception source-adapter interoperability for external calendar payloads is bidirectional for the supported RFC subset: RRULE, strict RDATE/EXDATE parse/format, strict RECURRENCE-ID original-slot parse/format, DTSTART/DTEND transport, RFC content-line and VEVENT/VCALENDAR envelopes, typed VEVENT binding, master/detached temporal-exception assembly, canonical TemporalEvent projection, strict VCALENDAR grouping/ingestion, canonical VEVENT/VCALENDAR export, transactional local-ICS source/store import, CLI import, and GUI drag/drop import are implemented; `RANGE=THISANDFUTURE`, occurrence-specific non-temporal overrides, DURATION transport, RDATE-only recurrence, VTIMEZONE, and VALARM remain deliberately unsupported until their canonical/preservation semantics exist; stored-source ICS export and explicit local-source refresh are implemented; non-Taria refresh history/diagnostics are next
 - relations — canonical directed storage/query plus inspector create/delete UI and canonical JSON v2 interchange implemented
 - collections/sequences — canonical ordered/unordered storage/query, inspector membership/create/manage UI, sequence reordering, and canonical JSON v2 interchange implemented
-- uncertainty — next canonical-model frontier
-- duplicate/entity resolution
+- uncertainty — schema-v16 bounded start-placement windows, canonical JSON preservation, inspector visibility, presence queries, and uncertain-start overlap queries implemented; recurring-event uncertainty and richer visualization/editing remain future work
+- duplicate/entity resolution — next canonical-model frontier
 - advanced annotations
 
 ## Phase 9 - External interoperability
