@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::domain::{TemporalEvent, TemporalSource};
 use crate::store::{CanonicalSnapshotMergeResult, TemporalStore};
@@ -181,6 +180,7 @@ fn write_atomically(path: &Path, encoded: &str) -> anyhow::Result<()> {
 mod tests {
     use chrono::{Duration, TimeZone, Utc};
     use serde_json::json;
+    use uuid::Uuid;
 
     use super::*;
     use crate::domain::{
