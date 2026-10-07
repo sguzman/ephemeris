@@ -166,9 +166,10 @@ impl CanonicalJsonSnapshot {
             ));
         }
         if self.version < 10
-            && self.events.iter().any(|event| {
-                event.availability != crate::domain::AvailabilityBehavior::Busy
-            })
+            && self
+                .events
+                .iter()
+                .any(|event| event.availability != crate::domain::AvailabilityBehavior::Busy)
         {
             return Err(anyhow!(
                 "canonical snapshot versions before 10 cannot contain non-busy event availability"
