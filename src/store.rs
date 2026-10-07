@@ -751,6 +751,46 @@ impl TemporalStore {
         Ok(relations)
     }
 
+    pub fn search_event_titles(
+        &self,
+        query: &str,
+        exclude_event_id: Option<Uuid>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(Uuid, String)>> {
+        let query = query.trim();
+        if query.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(limit).context("event search limit is too large")?;
+        let exclude = exclude_event_id.map(|id| id.to_string());
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, normalized_title
+            FROM temporal_events
+            WHERE (
+                instr(lower(normalized_title), lower(?1)) > 0
+                OR instr(lower(COALESCE(upstream_event_ref, '')), lower(?1)) > 0
+                OR instr(lower(COALESCE(source_record_key, '')), lower(?1)) > 0
+            )
+              AND (?2 IS NULL OR id != ?2)
+            ORDER BY
+                CASE WHEN lower(normalized_title) = lower(?1) THEN 0 ELSE 1 END,
+                normalized_title COLLATE NOCASE,
+                id
+            LIMIT ?3
+            "#,
+        )?;
+        let mut rows = stmt.query(params![query, exclude, limit])?;
+        let mut matches = Vec::new();
+        while let Some(row) = rows.next()? {
+            let raw_id: String = row.get(0)?;
+            let id = Uuid::parse_str(&raw_id)
+                .with_context(|| format!("invalid event id in title search: {raw_id}"))?;
+            matches.push((id, row.get(1)?));
+        }
+        Ok(matches)
+    }
+
     pub fn event_relations_for_event(&self, event_id: Uuid) -> anyhow::Result<Vec<EventRelation>> {
         let mut stmt = self.conn.prepare(
             r#"
@@ -4464,6 +4504,45 @@ mod tests {
     fn schema_bootstraps_at_current_version() {
         let store = TemporalStore::open_in_memory().expect("store");
         assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn event_title_search_is_bounded_case_insensitive_and_excludable() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let alpha = TemporalEvent::new(
+            "Alpha Launch",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let mut beta = TemporalEvent::new(
+            "Beta Review",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        beta.upstream_event_ref = Some("alpha-reference".to_string());
+        store.upsert_event(&alpha).expect("alpha");
+        store.upsert_event(&beta).expect("beta");
+
+        let matches = store
+            .search_event_titles("ALPHA", None, 10)
+            .expect("search");
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0], (alpha.id, "Alpha Launch".to_string()));
+
+        let excluded = store
+            .search_event_titles("alpha", Some(alpha.id), 1)
+            .expect("excluded search");
+        assert_eq!(excluded, vec![(beta.id, "Beta Review".to_string())]);
+
+        assert!(store
+            .search_event_titles("", None, 10)
+            .expect("empty search")
+            .is_empty());
     }
 
     #[test]
