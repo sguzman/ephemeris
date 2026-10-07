@@ -504,9 +504,8 @@ impl TemporalStore {
             let from_event_id = Uuid::parse_str(&raw_from_event_id).with_context(|| {
                 format!("invalid relation source event id: {raw_from_event_id}")
             })?;
-            let to_event_id = Uuid::parse_str(&raw_to_event_id).with_context(|| {
-                format!("invalid relation target event id: {raw_to_event_id}")
-            })?;
+            let to_event_id = Uuid::parse_str(&raw_to_event_id)
+                .with_context(|| format!("invalid relation target event id: {raw_to_event_id}"))?;
             memberships
                 .entry(from_event_id)
                 .or_default()
@@ -4708,9 +4707,7 @@ mod tests {
         store.upsert_event(&second).expect("second");
 
         let relation = EventRelation::new(first.id, second.id, "precedes");
-        store
-            .upsert_event_relation(&relation)
-            .expect("relation");
+        store.upsert_event_relation(&relation).expect("relation");
 
         let collection = EventCollection::new("Pair", false);
         store
