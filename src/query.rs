@@ -401,8 +401,9 @@ impl QueryPredicate {
                 })
                 .is_some_and(|(uncertain_earliest, uncertain_latest)| {
                     start.is_none_or(|query_start| uncertain_latest >= query_start)
-                        && end_exclusive
-                            .is_none_or(|query_end_exclusive| uncertain_earliest < query_end_exclusive)
+                        && end_exclusive.is_none_or(|query_end_exclusive| {
+                            uncertain_earliest < query_end_exclusive
+                        })
                 }),
             Self::BundleMembership { bundle_ref } => {
                 membership.is_some_and(|membership| membership.belongs_to_bundle(bundle_ref))
