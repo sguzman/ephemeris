@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`44e42f8441a7219ddb0436171572f4023ebc1fc8`
+`2759b1442f5f5ba4522de6efc5ddb6d2b650c9f2`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **489 library tests** pass
+- **500 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -122,7 +122,9 @@ User-facing topology inspection and core editing are now implemented. The event 
 
 The event-topology milestone is now substantially complete. Ordered sequence reordering, broader collection management (rename/description, collection↔sequence conversion, deletion without deleting events), and topology-aware canonical JSON v2 are implemented and verified.
 
-The next canonical-model frontier is **temporal uncertainty**: represent approximate/estimated temporal knowledge without confusing it with coarse precision (`Month`/`Year`), lifecycle state (`tentative`/`estimated`/`projected`), or general event confidence. After that come duplicate/entity resolution, richer provenance records, and annotations.
+Temporal uncertainty now has a canonical first slice. `TemporalEvent.time_uncertainty` is an optional typed bounded **start-placement** window, independent from coarse precision, lifecycle status, and general event `confidence`. Date/all-day, floating, and exact-instant events use date, wall-clock, and UTC uncertainty coordinates respectively; the representative canonical start must lie inside a non-zero window. Schema v16 persists the field losslessly, canonical JSON preserves it, the inspector displays it separately from the representative placement, and programmable views can query both uncertainty presence and overlap against the possible-start window. Recurring events and month/year/unresolved precision deliberately reject this uncertainty form for now, and CSV v1 / iCalendar export reject uncertain events rather than erasing the semantics.
+
+The next canonical-model frontier is **duplicate/entity resolution**: represent candidate and resolved identity relationships without conflating them with ordinary semantic event relations. Richer provenance records and annotations follow behind that.
 
 ## Documentation roles
 
