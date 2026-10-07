@@ -15,7 +15,7 @@ use crate::calendar::{
 };
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
-    EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
+    CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
     EventIdentityState, EventParticipant, EventProvenanceRecord, EventProvenanceRole,
     EventRelation, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
     RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
@@ -32,7 +32,7 @@ use crate::query::{
 };
 use crate::state::PersistedUiState;
 use crate::store::{
-    EventRevision, SourceRefreshAttempt, TariaProjectedCalendarChoice, TariaReleaseDiff,
+    EventRevision, ParticipantEntityResolution, SourceRefreshAttempt, TariaProjectedCalendarChoice, TariaReleaseDiff,
     TariaReleaseHistoryEntry, TariaReleaseStatusRecord, TemporalStore,
 };
 use crate::taria::import_reconciled_event_set_file;
@@ -1411,6 +1411,9 @@ enum RecurrenceEditorAction {
 enum ParticipantInspectorAction {
     Add,
     Remove(usize),
+    BindEntity(usize, Uuid),
+    UnbindEntity(usize),
+    CreateEntity(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1465,6 +1468,10 @@ pub struct EphemerisApp {
     participant_new_role: String,
     participant_new_type: String,
     participant_new_entity_ref: String,
+    participant_entity_edit: Option<(Uuid, usize)>,
+    participant_entity_search: String,
+    participant_entity_candidates: Vec<(Uuid, String, Option<String>)>,
+    participant_entity_target_id: Option<Uuid>,
     event_provenance_records: Vec<EventProvenanceRecord>,
     event_revision_event_id: Option<Uuid>,
     event_revisions: Vec<EventRevision>,
@@ -1558,6 +1565,10 @@ impl EphemerisApp {
             participant_new_role: String::new(),
             participant_new_type: String::new(),
             participant_new_entity_ref: String::new(),
+            participant_entity_edit: None,
+            participant_entity_search: String::new(),
+            participant_entity_candidates: Vec::new(),
+            participant_entity_target_id: None,
             event_provenance_records: Vec::new(),
             event_revision_event_id: None,
             event_revisions: Vec::new(),
@@ -4413,8 +4424,112 @@ impl EphemerisApp {
         }
     }
 
+    fn begin_participant_entity_resolution(
+        &mut self,
+        event_id: Uuid,
+        participant_index: usize,
+        participant: &EventParticipant,
+    ) {
+        self.participant_entity_edit = Some((event_id, participant_index));
+        self.participant_entity_search = participant.name.clone();
+        self.participant_entity_target_id = None;
+        self.refresh_participant_entity_candidates();
+    }
+
+    fn refresh_participant_entity_candidates(&mut self) {
+        let query = self.participant_entity_search.trim();
+        if query.is_empty() {
+            self.participant_entity_candidates.clear();
+            self.participant_entity_target_id = None;
+            return;
+        }
+
+        match self.store.search_canonical_entities(query, 12) {
+            Ok(entities) => {
+                self.participant_entity_candidates = entities
+                    .into_iter()
+                    .map(|entity| (entity.id, entity.canonical_name, entity.entity_type))
+                    .collect();
+                if self.participant_entity_target_id.is_some_and(|target_id| {
+                    !self
+                        .participant_entity_candidates
+                        .iter()
+                        .any(|(id, _, _)| *id == target_id)
+                }) {
+                    self.participant_entity_target_id = None;
+                }
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.participant_entity_candidates.clear();
+                self.participant_entity_target_id = None;
+                self.last_error = Some(format!("Entity search failed: {error:#}"));
+            }
+        }
+    }
+
+    fn reset_participant_entity_editor(&mut self) {
+        self.participant_entity_edit = None;
+        self.participant_entity_search.clear();
+        self.participant_entity_candidates.clear();
+        self.participant_entity_target_id = None;
+    }
+
     fn apply_participant_action(&mut self, event_id: Uuid, action: ParticipantInspectorAction) {
         let result = (|| -> anyhow::Result<()> {
+            match action {
+                ParticipantInspectorAction::BindEntity(index, entity_id) => {
+                    let binding = self
+                        .store
+                        .bind_event_participant_entity(event_id, index, entity_id)?;
+                    let entity = self
+                        .store
+                        .canonical_entity_by_id(binding.entity_id)?
+                        .ok_or_else(|| anyhow::anyhow!("bound canonical entity disappeared"))?;
+                    self.last_message =
+                        Some(format!("Bound participant to {:?}.", entity.canonical_name));
+                    self.reset_participant_entity_editor();
+                    return Ok(());
+                }
+                ParticipantInspectorAction::UnbindEntity(index) => {
+                    self.store
+                        .unbind_event_participant_entity(event_id, index)?;
+                    self.last_message = Some("Removed local participant entity binding.".to_string());
+                    self.reset_participant_entity_editor();
+                    return Ok(());
+                }
+                ParticipantInspectorAction::CreateEntity(index) => {
+                    let event = self
+                        .store
+                        .event_by_id(event_id)?
+                        .ok_or_else(|| anyhow::anyhow!("event {event_id} does not exist"))?;
+                    let participant = event
+                        .participants
+                        .get(index)
+                        .ok_or_else(|| anyhow::anyhow!("participant row {index} does not exist"))?;
+
+                    let mut entity = CanonicalEntity::new(participant.name.trim());
+                    entity.entity_type = participant.participant_type.clone();
+                    if let Some(reference) = participant.entity_ref.as_deref()
+                        && self
+                            .store
+                            .canonical_entity_by_reference(reference)?
+                            .is_none()
+                    {
+                        entity.external_refs.push(reference.trim().to_string());
+                    }
+                    entity.validate()?;
+                    self.store.upsert_canonical_entity(&entity)?;
+                    self.store
+                        .bind_event_participant_entity(event_id, index, entity.id)?;
+                    self.last_message =
+                        Some(format!("Created and bound canonical entity {:?}.", entity.canonical_name));
+                    self.reset_participant_entity_editor();
+                    return Ok(());
+                }
+                ParticipantInspectorAction::Add | ParticipantInspectorAction::Remove(_) => {}
+            }
+
             let mut event = self
                 .store
                 .event_by_id(event_id)?
@@ -4444,6 +4559,9 @@ impl EphemerisApp {
                     event.participants.remove(index);
                     self.last_message = Some("Removed event participant.".to_string());
                 }
+                ParticipantInspectorAction::BindEntity(_, _)
+                | ParticipantInspectorAction::UnbindEntity(_)
+                | ParticipantInspectorAction::CreateEntity(_) => unreachable!(),
             }
 
             event.updated_at = Utc::now();
