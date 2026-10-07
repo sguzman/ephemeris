@@ -415,10 +415,8 @@ mod tests {
             starts_at_utc: trigger + Duration::minutes(15),
             lead_minutes: 15,
         };
-        let delivery = NotificationDelivery::from_occurrence(
-            &occurrence,
-            trigger + Duration::minutes(1),
-        );
+        let delivery =
+            NotificationDelivery::from_occurrence(&occurrence, trigger + Duration::minutes(1));
         assert_eq!(delivery.id, occurrence.id);
         assert_eq!(delivery.rule_id, occurrence.rule_id);
         assert_eq!(delivery.event_id, occurrence.event_id);
