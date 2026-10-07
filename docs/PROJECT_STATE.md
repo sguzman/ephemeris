@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`98df2aa618be9d4f50c0910808f8518c9b371bac`
+`775b79e288d2ae6dad53620d072878780be8f6c9`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **480 library tests** pass
+- **484 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -116,9 +116,11 @@ CSV refresh attempts now participate in the same durable external-source history
 
 The core Phase 9 interoperability boundary is now strong enough to stop driving the roadmap: local/remote iCalendar, conditional Webcal refresh, canonical JSON snapshots, and strict CSV are all implemented. JSCalendar/jCal and CalDAV remain optional future adapters when concrete ecosystem value justifies them.
 
-The next canonical-model frontier is **event relations and collections/sequences**: represent relationships between events without encoding those relationships into titles, tags, or copied calendar membership.
+Event relations and collections/sequences now have a canonical external topology layer. Directed relations and ordered/unordered collections have domain types, schema-v15 persistence, validation, semantic uniqueness, FK cascades, atomic collection membership replacement, reverse lookups, and programmable-view predicates. Collection membership and incoming/outgoing relation-type context remain external to `TemporalEvent`, so topology does not contaminate event ownership or fields.
 
-The long-horizon domain roadmap then returns to event relations, collections/sequences, uncertainty, and duplicate/entity resolution.
+The next canonical-model slice is **user-facing topology inspection and editing**: selected events should visibly expose their collections and incoming/outgoing relations, followed by local creation/editing of relations, collections, and sequence order.
+
+After that, the long-horizon domain roadmap returns to uncertainty, duplicate/entity resolution, richer provenance records, and annotations.
 
 ## Documentation roles
 
