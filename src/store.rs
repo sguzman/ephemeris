@@ -4573,7 +4573,7 @@ mod tests {
             TimeSpec::DateOnly {
                 start: day
                     .succ_opt()
-                    .and_then(NaiveDate::succ_opt)
+                    .and_then(|date| date.succ_opt())
                     .expect("third day"),
                 end_exclusive: None,
             },
