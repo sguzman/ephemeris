@@ -1513,14 +1513,8 @@ mod tests {
         )
     }
 
-    fn event() -> TemporalEvent {
-        let mut event = TemporalEvent::new(
-            "California General Election",
-            TimeSpec::DateOnly {
-                start: NaiveDate::from_ymd_opt(2026, 11, 3).expect("date"),
-                end_exclusive: None,
-            },
-        );
+    fn event_with_time(time: TimeSpec) -> TemporalEvent {
+        let mut event = TemporalEvent::new("California General Election", time);
         event.domain = Some("elections".to_string());
         event.jurisdiction = Some("US-CA".to_string());
         event.event_type = Some("election".to_string());
@@ -1531,6 +1525,13 @@ mod tests {
         event.tags = vec!["state".to_string(), "general".to_string()];
         event.source_refs = vec!["ca-sos".to_string()];
         event
+    }
+
+    fn event() -> TemporalEvent {
+        event_with_time(TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 11, 3).expect("date"),
+            end_exclusive: None,
+        })
     }
 
     #[test]
