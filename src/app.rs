@@ -8454,9 +8454,7 @@ fn render_query_predicate_editor(
                             || entity.canonical_name.clone(),
                             |kind| format!("{} · {kind}", entity.canonical_name),
                         );
-                        changed |= ui
-                            .selectable_value(entity_id, entity.id, label)
-                            .changed();
+                        changed |= ui.selectable_value(entity_id, entity.id, label).changed();
                     }
                 });
         }
