@@ -4497,6 +4497,140 @@ mod tests {
     use super::*;
 
     #[test]
+    fn temporal_uncertainty_validates_supported_coordinate_systems() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let mut date_event = TemporalEvent::new(
+            "Uncertain date",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        date_event.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: day - Duration::days(1),
+            latest: day + Duration::days(1),
+        });
+        assert_eq!(date_event.validate_time_uncertainty(), Ok(()));
+
+        let floating = day.and_hms_opt(12, 0, 0).expect("floating");
+        let mut floating_event = TemporalEvent::new(
+            "Uncertain floating",
+            TimeSpec::Floating {
+                start: floating,
+                end: None,
+                source_timezone: Some("America/Mexico_City".to_string()),
+            },
+        );
+        floating_event.time_uncertainty = Some(TimeUncertainty::FloatingWindow {
+            earliest: floating - Duration::hours(1),
+            latest: floating + Duration::hours(1),
+        });
+        assert_eq!(floating_event.validate_time_uncertainty(), Ok(()));
+
+        let instant = Utc
+            .with_ymd_and_hms(2026, 10, 7, 18, 0, 0)
+            .single()
+            .expect("instant");
+        let mut instant_event = TemporalEvent::new(
+            "Uncertain instant",
+            TimeSpec::Instant {
+                start_utc: instant,
+                end_utc: None,
+                source_timezone: Some("America/Mexico_City".to_string()),
+            },
+        );
+        instant_event.time_uncertainty = Some(TimeUncertainty::InstantWindow {
+            earliest_utc: instant - Duration::minutes(30),
+            latest_utc: instant + Duration::minutes(30),
+        });
+        assert_eq!(instant_event.validate_time_uncertainty(), Ok(()));
+    }
+
+    #[test]
+    fn temporal_uncertainty_rejects_empty_mismatched_and_outside_windows() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let mut event = TemporalEvent::new(
+            "Uncertain date",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+
+        event.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: day,
+            latest: day,
+        });
+        assert_eq!(
+            event.validate_time_uncertainty(),
+            Err(TimeUncertaintyError::EmptyWindow)
+        );
+
+        event.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: day + Duration::days(1),
+            latest: day + Duration::days(2),
+        });
+        assert_eq!(
+            event.validate_time_uncertainty(),
+            Err(TimeUncertaintyError::AnchorOutsideWindow)
+        );
+
+        let instant = Utc
+            .with_ymd_and_hms(2026, 10, 7, 18, 0, 0)
+            .single()
+            .expect("instant");
+        event.time_uncertainty = Some(TimeUncertainty::InstantWindow {
+            earliest_utc: instant - Duration::hours(1),
+            latest_utc: instant + Duration::hours(1),
+        });
+        assert_eq!(
+            event.validate_time_uncertainty(),
+            Err(TimeUncertaintyError::MismatchedTimeKind {
+                uncertainty_kind: "instant_window",
+                time_kind: "date_only",
+            })
+        );
+
+        let mut month = TemporalEvent::new(
+            "Month precision",
+            TimeSpec::Month {
+                year: 2026,
+                month: 10,
+            },
+        );
+        month.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: day - Duration::days(1),
+            latest: day + Duration::days(1),
+        });
+        assert_eq!(
+            month.validate_time_uncertainty(),
+            Err(TimeUncertaintyError::UnsupportedTimeKind("month"))
+        );
+    }
+
+    #[test]
+    fn temporal_uncertainty_is_not_yet_defined_for_recurring_series() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let mut event = TemporalEvent::new(
+            "Recurring uncertain date",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: day - Duration::days(1),
+            latest: day + Duration::days(1),
+        });
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
+
+        assert_eq!(
+            event.validate_time_uncertainty(),
+            Err(TimeUncertaintyError::RecurrenceUnsupported)
+        );
+    }
+
+    #[test]
     fn daily_recurrence_expands_with_stable_occurrence_identity() {
         let start = NaiveDate::from_ymd_opt(2026, 10, 1).expect("start");
         let mut event = TemporalEvent::new(
