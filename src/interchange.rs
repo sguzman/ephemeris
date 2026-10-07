@@ -396,7 +396,8 @@ mod tests {
 
     use super::*;
     use crate::domain::{
-        RecurrenceFrequency, RecurrenceRule, SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
+        EventIdentityAssessment, EventIdentityState, RecurrenceFrequency, RecurrenceRule,
+        SourceAuthority, SourceKind, TimeSpec, TimeUncertainty,
     };
 
     fn fixture_source() -> TemporalSource {
@@ -651,6 +652,73 @@ mod tests {
     }
 
     #[test]
+    fn canonical_snapshot_v3_roundtrips_identity_assessments() {
+        let source = fixture_source();
+        let first = fixture_event(&source);
+        let mut second = fixture_event(&source);
+        second.id = Uuid::new_v4();
+        second.source_record_key = Some("snapshot-event-identity-peer".to_string());
+        second.normalized_title = "Identity peer".to_string();
+
+        let mut assessment = EventIdentityAssessment::new(first.id, second.id);
+        assessment.state = EventIdentityState::SameEvent;
+        assessment.confidence = Some(0.97);
+        assessment.rationale = Some("manually resolved duplicate".to_string());
+
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: 3,
+            sources: vec![source],
+            events: vec![first.clone(), second.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: vec![assessment.clone()],
+        };
+        snapshot.validate().expect("valid v3 snapshot");
+
+        let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
+        let decoded = parse_canonical_json_snapshot(&encoded).expect("decode");
+        assert_eq!(decoded, snapshot);
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let report = import_canonical_json_snapshot(&store, &decoded).expect("merge identity");
+        assert_eq!(report.identity_assessments_created, 1);
+        assert_eq!(
+            store
+                .event_identity_assessment_between(first.id, second.id)
+                .expect("query")
+                .expect("assessment"),
+            assessment
+        );
+
+        let exported = CanonicalJsonSnapshot::from_store(&store).expect("snapshot");
+        assert_eq!(exported.version, 3);
+        assert_eq!(exported.identity_assessments, vec![assessment]);
+    }
+
+    #[test]
+    fn canonical_snapshot_v2_rejects_identity_assessments() {
+        let source = fixture_source();
+        let first = fixture_event(&source);
+        let mut second = fixture_event(&source);
+        second.id = Uuid::new_v4();
+        second.source_record_key = Some("snapshot-event-v2-peer".to_string());
+
+        let snapshot = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: 2,
+            sources: vec![source],
+            events: vec![first.clone(), second.clone()],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: vec![EventIdentityAssessment::new(first.id, second.id)],
+        };
+        assert!(snapshot.validate().is_err());
+    }
+
+    #[test]
     fn canonical_snapshot_v2_roundtrips_topology() {
         let source = fixture_source();
         let first = fixture_event(&source);
@@ -675,12 +743,13 @@ mod tests {
         ];
         let snapshot = CanonicalJsonSnapshot {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
-            version: CANONICAL_SNAPSHOT_VERSION,
+            version: 2,
             sources: vec![source],
             events: vec![first.clone(), second.clone()],
             relations: vec![relation.clone()],
             collections: vec![collection.clone()],
             collection_members: members.clone(),
+            identity_assessments: Vec::new(),
         };
 
         let store = TemporalStore::open_in_memory().expect("store");
@@ -716,7 +785,7 @@ mod tests {
         let dangling_relation = EventRelation::new(event.id, Uuid::new_v4(), "references");
         let dangling = CanonicalJsonSnapshot {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
-            version: CANONICAL_SNAPSHOT_VERSION,
+            version: 2,
             sources: vec![source.clone()],
             events: vec![event.clone()],
             relations: vec![dangling_relation],
@@ -729,7 +798,7 @@ mod tests {
         let collection = EventCollection::new("Broken sequence", true);
         let malformed = CanonicalJsonSnapshot {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
-            version: CANONICAL_SNAPSHOT_VERSION,
+            version: 2,
             sources: vec![source],
             events: vec![event.clone()],
             relations: Vec::new(),
@@ -739,6 +808,7 @@ mod tests {
                 event_id: event.id,
                 position: None,
             }],
+            identity_assessments: Vec::new(),
         };
         assert!(malformed.validate().is_err());
     }
@@ -759,7 +829,7 @@ mod tests {
         let collection = EventCollection::new("Authoritative sequence", true);
         let snapshot = CanonicalJsonSnapshot {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
-            version: CANONICAL_SNAPSHOT_VERSION,
+            version: 2,
             sources: vec![source.clone()],
             events: vec![first.clone(), second.clone()],
             relations: Vec::new(),
@@ -776,6 +846,7 @@ mod tests {
                     position: Some(1),
                 },
             ],
+            identity_assessments: Vec::new(),
         };
 
         let store = TemporalStore::open_in_memory().expect("store");
