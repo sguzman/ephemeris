@@ -8,10 +8,13 @@ use crate::domain::{
     CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
     EventIdentityAssessment, EventProvenanceRecord, EventRelation, TemporalEvent, TemporalSource,
 };
-use crate::store::{CanonicalSnapshotMergeInput, CanonicalSnapshotMergeResult, TemporalStore};
+use crate::store::{
+    CanonicalSnapshotMergeInput, CanonicalSnapshotMergeResult, ParticipantEntityBinding,
+    TemporalStore, participant_entity_binding_key,
+};
 
 pub const CANONICAL_SNAPSHOT_FORMAT: &str = "ephemeris.canonical_snapshot";
-pub const CANONICAL_SNAPSHOT_VERSION: u32 = 8;
+pub const CANONICAL_SNAPSHOT_VERSION: u32 = 9;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalJsonSnapshot {
@@ -33,6 +36,8 @@ pub struct CanonicalJsonSnapshot {
     pub annotations: Vec<EventAnnotation>,
     #[serde(default)]
     pub provenance_records: Vec<EventProvenanceRecord>,
+    #[serde(default)]
+    pub participant_entity_bindings: Vec<ParticipantEntityBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +51,7 @@ pub struct CanonicalJsonExportReport {
     pub identity_assessment_count: usize,
     pub annotation_count: usize,
     pub provenance_record_count: usize,
+    pub participant_entity_binding_count: usize,
     pub output_path: PathBuf,
 }
 
@@ -60,6 +66,7 @@ impl CanonicalJsonSnapshot {
         let mut identity_assessments = store.list_event_identity_assessments()?;
         let mut annotations = store.list_event_annotations()?;
         let mut provenance_records = store.list_event_provenance_records()?;
+        let mut participant_entity_bindings = store.list_participant_entity_bindings()?;
         sources.sort_by_key(|source| source.id);
         entities.sort_by_key(|entity| entity.id);
         events.sort_by_key(|event| event.id);
@@ -70,6 +77,8 @@ impl CanonicalJsonSnapshot {
         identity_assessments.sort_by_key(|assessment| assessment.id);
         annotations.sort_by_key(|annotation| annotation.id);
         provenance_records.sort_by_key(|record| record.id);
+        participant_entity_bindings
+            .sort_by_key(|binding| (binding.event_id, binding.participant_key.clone()));
 
         let snapshot = Self {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
@@ -83,6 +92,7 @@ impl CanonicalJsonSnapshot {
             identity_assessments,
             annotations,
             provenance_records,
+            participant_entity_bindings,
         };
         snapshot.validate()?;
         Ok(snapshot)
@@ -148,6 +158,11 @@ impl CanonicalJsonSnapshot {
         if self.version < 8 && !self.entities.is_empty() {
             return Err(anyhow!(
                 "canonical snapshot versions before 8 cannot contain canonical entities"
+            ));
+        }
+        if self.version < 9 && !self.participant_entity_bindings.is_empty() {
+            return Err(anyhow!(
+                "canonical snapshot versions before 9 cannot contain participant entity bindings"
             ));
         }
 
@@ -427,6 +442,46 @@ impl CanonicalJsonSnapshot {
             }
         }
 
+        if self.version >= 9 {
+            let mut binding_keys = HashSet::new();
+            for binding in &self.participant_entity_bindings {
+                if !event_ids.contains(&binding.event_id) {
+                    return Err(anyhow!(
+                        "participant entity binding references event {} that is not present in the snapshot",
+                        binding.event_id
+                    ));
+                }
+                if !entity_ids.contains(&binding.entity_id) {
+                    return Err(anyhow!(
+                        "participant entity binding references entity {} that is not present in the snapshot",
+                        binding.entity_id
+                    ));
+                }
+                if !binding_keys.insert((binding.event_id, binding.participant_key.as_str())) {
+                    return Err(anyhow!(
+                        "duplicate participant entity binding for event {} and key {:?}",
+                        binding.event_id,
+                        binding.participant_key
+                    ));
+                }
+
+                let event = self
+                    .events
+                    .iter()
+                    .find(|event| event.id == binding.event_id)
+                    .expect("validated event id must resolve inside snapshot");
+                if !event.participants.iter().any(|participant| {
+                    participant_entity_binding_key(participant) == binding.participant_key
+                }) {
+                    return Err(anyhow!(
+                        "participant entity binding key {:?} does not match a participant on event {}",
+                        binding.participant_key,
+                        binding.event_id
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -476,6 +531,7 @@ pub fn import_canonical_json_snapshot(
             identity_assessments: &snapshot.identity_assessments,
             annotations: &snapshot.annotations,
             provenance_records: &snapshot.provenance_records,
+            participant_entity_bindings: &snapshot.participant_entity_bindings,
         }),
     }
 }
@@ -510,6 +566,7 @@ pub fn export_canonical_json_file(
         identity_assessment_count: snapshot.identity_assessments.len(),
         annotation_count: snapshot.annotations.len(),
         provenance_record_count: snapshot.provenance_records.len(),
+        participant_entity_binding_count: snapshot.participant_entity_bindings.len(),
         output_path,
     })
 }
@@ -595,12 +652,91 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
 
         let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
         let decoded = parse_canonical_json_snapshot(&encoded).expect("decode");
         assert_eq!(decoded, snapshot);
+    }
+
+    #[test]
+    fn canonical_snapshot_v9_preserves_participant_entity_bindings_losslessly() {
+        let source = fixture_source();
+        let mut entity = CanonicalEntity::new("Ada Lovelace");
+        entity.entity_type = Some("person".to_string());
+        let mut event = fixture_event(&source);
+        event.participants.push(EventParticipant::new("Ada Lovelace"));
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        store.upsert_source(&source).expect("source");
+        store.upsert_canonical_entity(&entity).expect("entity");
+        store.upsert_event(&event).expect("event");
+        let binding = store
+            .bind_event_participant_entity(event.id, 0, entity.id)
+            .expect("binding");
+
+        let snapshot = CanonicalJsonSnapshot::from_store(&store).expect("snapshot");
+        assert_eq!(snapshot.version, 9);
+        assert_eq!(snapshot.participant_entity_bindings, vec![binding.clone()]);
+
+        let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
+        let decoded = parse_canonical_json_snapshot(&encoded).expect("decode");
+        assert_eq!(decoded, snapshot);
+
+        let target = TemporalStore::open_in_memory().expect("target store");
+        let report = import_canonical_json_snapshot(&target, &decoded).expect("merge");
+        assert_eq!(report.participant_entity_bindings_created, 1);
+        assert_eq!(
+            target
+                .list_participant_entity_bindings()
+                .expect("target bindings"),
+            vec![binding]
+        );
+    }
+
+    #[test]
+    fn canonical_snapshot_v9_rejects_dangling_or_mismatched_participant_bindings() {
+        let source = fixture_source();
+        let mut entity = CanonicalEntity::new("Ada Lovelace");
+        entity.entity_type = Some("person".to_string());
+        let mut event = fixture_event(&source);
+        event.participants.push(EventParticipant::new("Ada Lovelace"));
+        let key = participant_entity_binding_key(&event.participants[0]);
+        let now = Utc::now();
+
+        let valid = ParticipantEntityBinding {
+            event_id: event.id,
+            participant_key: key,
+            entity_id: entity.id,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let base = CanonicalJsonSnapshot {
+            format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
+            version: 9,
+            sources: vec![source],
+            entities: vec![entity],
+            events: vec![event],
+            relations: Vec::new(),
+            collections: Vec::new(),
+            collection_members: Vec::new(),
+            identity_assessments: Vec::new(),
+            annotations: Vec::new(),
+            provenance_records: Vec::new(),
+            participant_entity_bindings: vec![valid.clone()],
+        };
+        base.validate().expect("valid binding snapshot");
+
+        let mut dangling_entity = base.clone();
+        dangling_entity.participant_entity_bindings[0].entity_id = Uuid::new_v4();
+        assert!(dangling_entity.validate().is_err());
+
+        let mut bad_key = base;
+        bad_key.participant_entity_bindings[0].participant_key = "v1:[\"wrong\"]".to_string();
+        assert!(bad_key.validate().is_err());
     }
 
     #[test]
@@ -629,6 +765,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
 
@@ -689,6 +826,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
 
@@ -742,6 +880,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
 
@@ -800,6 +939,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
 
@@ -831,6 +971,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         let store = TemporalStore::open_in_memory().expect("store");
@@ -876,6 +1017,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         import_canonical_json_snapshot(&store, &initial).expect("initial merge");
@@ -895,6 +1037,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
 
@@ -933,6 +1076,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         assert!(dangling_snapshot.validate().is_err());
@@ -951,6 +1095,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         assert!(duplicate_snapshot.validate().is_err());
@@ -969,6 +1114,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         assert!(snapshot.validate().is_err());
@@ -1017,6 +1163,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: vec![record.clone()],
         };
         snapshot.validate().expect("valid v5 snapshot");
@@ -1061,6 +1208,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: vec![annotation.clone()],
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         snapshot.validate().expect("valid v4 snapshot");
@@ -1095,6 +1243,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: vec![EventAnnotation::new(event.id, "watched", json!(true))],
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         assert!(snapshot.validate().is_err());
@@ -1120,6 +1269,7 @@ mod tests {
                 "note",
                 json!("dangling"),
             )],
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         assert!(dangling.validate().is_err());
@@ -1135,6 +1285,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: vec![annotation.clone(), annotation],
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         assert!(duplicate.validate().is_err());
@@ -1165,6 +1316,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: vec![assessment.clone()],
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         snapshot.validate().expect("valid v3 snapshot");
@@ -1209,6 +1361,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: vec![EventIdentityAssessment::new(first.id, second.id)],
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         assert!(snapshot.validate().is_err());
@@ -1248,6 +1401,7 @@ mod tests {
             collection_members: members.clone(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
 
@@ -1293,6 +1447,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         assert!(dangling.validate().is_err());
@@ -1313,6 +1468,7 @@ mod tests {
             }],
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
         assert!(malformed.validate().is_err());
@@ -1354,6 +1510,7 @@ mod tests {
             ],
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            participant_entity_bindings: Vec::new(),
             provenance_records: Vec::new(),
         };
 
