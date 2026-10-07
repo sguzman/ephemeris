@@ -32,6 +32,9 @@ pub struct CanonicalSnapshotMergeResult {
     pub sources_created: usize,
     pub sources_updated: usize,
     pub sources_unchanged: usize,
+    pub entities_created: usize,
+    pub entities_updated: usize,
+    pub entities_unchanged: usize,
     pub events_created: usize,
     pub events_updated: usize,
     pub events_unchanged: usize,
@@ -57,6 +60,7 @@ pub struct CanonicalSnapshotMergeResult {
 #[derive(Debug, Clone, Copy)]
 pub struct CanonicalSnapshotMergeInput<'a> {
     pub sources: &'a [TemporalSource],
+    pub entities: &'a [CanonicalEntity],
     pub events: &'a [TemporalEvent],
     pub relations: &'a [EventRelation],
     pub collections: &'a [EventCollection],
@@ -3089,6 +3093,7 @@ impl TemporalStore {
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
         self.merge_canonical_snapshot_records(CanonicalSnapshotMergeInput {
             sources,
+            entities: &[],
             events,
             relations: &[],
             collections: &[],
@@ -3109,6 +3114,7 @@ impl TemporalStore {
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
         self.merge_canonical_snapshot_records(CanonicalSnapshotMergeInput {
             sources,
+            entities: &[],
             events,
             relations,
             collections,
@@ -3130,6 +3136,7 @@ impl TemporalStore {
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
         self.merge_canonical_snapshot_records(CanonicalSnapshotMergeInput {
             sources,
+            entities: &[],
             events,
             relations,
             collections,
@@ -3146,6 +3153,7 @@ impl TemporalStore {
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
         let CanonicalSnapshotMergeInput {
             sources,
+            entities,
             events,
             relations,
             collections,
@@ -3175,6 +3183,25 @@ impl TemporalStore {
                     Some(_) => {
                         self.upsert_source(source)?;
                         sources_updated += 1;
+                    }
+                }
+            }
+
+            let mut entities_created = 0;
+            let mut entities_updated = 0;
+            let mut entities_unchanged = 0;
+            for entity in entities {
+                match self.canonical_entity_by_id(entity.id)? {
+                    None => {
+                        self.upsert_canonical_entity(entity)?;
+                        entities_created += 1;
+                    }
+                    Some(existing) if existing == *entity => {
+                        entities_unchanged += 1;
+                    }
+                    Some(_) => {
+                        self.upsert_canonical_entity(entity)?;
+                        entities_updated += 1;
                     }
                 }
             }
@@ -3328,6 +3355,9 @@ impl TemporalStore {
                 sources_created,
                 sources_updated,
                 sources_unchanged,
+                entities_created,
+                entities_updated,
+                entities_unchanged,
                 events_created,
                 events_updated,
                 events_unchanged,
