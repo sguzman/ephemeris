@@ -3365,6 +3365,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         create_event_identity_schema_current(&tx)?;
         create_event_annotation_schema_current(&tx)?;
         create_event_provenance_schema_current(&tx)?;
+        create_event_revision_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -3458,6 +3459,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 18 {
         migrate_v18_to_v19(conn)?;
+        current = 19;
+    }
+
+    if current == 19 {
+        migrate_v19_to_v20(conn)?;
     }
 
     Ok(())
