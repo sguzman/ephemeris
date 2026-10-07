@@ -17,9 +17,10 @@ use crate::domain::{
     NotificationTarget, NotificationTrigger, RecurrenceRule, SourceAuthority, SourceKind,
     TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
+use crate::notifications::NotificationDelivery;
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 25;
+const SCHEMA_VERSION: i64 = 26;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParticipantEntityBinding {
@@ -4540,6 +4541,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         create_canonical_entity_schema_current(&tx)?;
         create_participant_entity_binding_schema_current(&tx)?;
         create_notification_rule_schema_current(&tx)?;
+        create_notification_delivery_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -4663,6 +4665,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 24 {
         migrate_v24_to_v25(conn)?;
+        current = 25;
+    }
+
+    if current == 25 {
+        migrate_v25_to_v26(conn)?;
     }
 
     Ok(())
@@ -5122,6 +5129,38 @@ fn add_event_location_column(conn: &Connection) -> anyhow::Result<()> {
         .context("failed to add event location column")
 }
 
+fn create_notification_delivery_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE notification_deliveries (
+            id TEXT PRIMARY KEY,
+            rule_id TEXT NOT NULL REFERENCES notification_rules(id) ON DELETE CASCADE,
+            event_id TEXT NOT NULL REFERENCES temporal_events(id) ON DELETE CASCADE,
+            occurrence_id TEXT NOT NULL,
+            rule_name TEXT NOT NULL,
+            event_title TEXT NOT NULL,
+            trigger_at_utc TEXT NOT NULL,
+            starts_at_utc TEXT NOT NULL,
+            lead_minutes INTEGER NOT NULL CHECK (lead_minutes >= 0),
+            delivered_at TEXT NOT NULL,
+            dismissed_at TEXT,
+            UNIQUE (rule_id, occurrence_id)
+        );
+
+        CREATE INDEX notification_deliveries_active
+            ON notification_deliveries(dismissed_at, delivered_at)
+            WHERE dismissed_at IS NULL;
+
+        CREATE INDEX notification_deliveries_rule
+            ON notification_deliveries(rule_id, delivered_at);
+
+        CREATE INDEX notification_deliveries_event
+            ON notification_deliveries(event_id, delivered_at);
+        "#,
+    )
+    .context("failed to create notification delivery schema")
+}
+
 fn create_notification_rule_schema_current(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -5292,6 +5331,17 @@ fn create_event_annotation_schema_current(conn: &Connection) -> anyhow::Result<(
         "#,
     )
     .context("failed to create event annotation schema")
+}
+
+fn migrate_v25_to_v26(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v25 to v26 migration")?;
+    create_notification_delivery_schema_current(&tx)?;
+    tx.pragma_update(None, "user_version", 26)
+        .context("failed to set schema version 26")?;
+    tx.commit()
+        .context("failed to commit v25 to v26 schema migration")
 }
 
 fn migrate_v24_to_v25(conn: &mut Connection) -> anyhow::Result<()> {
