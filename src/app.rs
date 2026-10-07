@@ -6869,10 +6869,12 @@ enum QueryPredicateKind {
     RelationType,
     IdentityStateAnyOf,
     AnnotationKind,
+    ProvenanceRoleAnyOf,
+    ProvenanceReference,
 }
 
 impl QueryPredicateKind {
-    const ALL: [Self; 15] = [
+    const ALL: [Self; 17] = [
         Self::Text,
         Self::TextAnyOf,
         Self::StatusAnyOf,
@@ -6888,6 +6890,8 @@ impl QueryPredicateKind {
         Self::RelationType,
         Self::IdentityStateAnyOf,
         Self::AnnotationKind,
+        Self::ProvenanceRoleAnyOf,
+        Self::ProvenanceReference,
     ];
 
     const fn label(self) -> &'static str {
@@ -6907,6 +6911,8 @@ impl QueryPredicateKind {
             Self::RelationType => "Event relation type",
             Self::IdentityStateAnyOf => "Event identity state",
             Self::AnnotationKind => "Annotation kind",
+            Self::ProvenanceRoleAnyOf => "Provenance role",
+            Self::ProvenanceReference => "Provenance reference",
         }
     }
 }
@@ -7003,6 +7009,12 @@ fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
         QueryPredicateKind::AnnotationKind => QueryPredicate::AnnotationKind {
             annotation_kind: String::new(),
         },
+        QueryPredicateKind::ProvenanceRoleAnyOf => QueryPredicate::ProvenanceRoleAnyOf {
+            values: vec![EventProvenanceRole::Source],
+        },
+        QueryPredicateKind::ProvenanceReference => QueryPredicate::ProvenanceReference {
+            reference: String::new(),
+        },
     }
 }
 
@@ -7025,6 +7037,8 @@ fn query_predicate_kind(predicate: &QueryPredicate) -> QueryPredicateKind {
         QueryPredicate::RelationType { .. } => QueryPredicateKind::RelationType,
         QueryPredicate::IdentityStateAnyOf { .. } => QueryPredicateKind::IdentityStateAnyOf,
         QueryPredicate::AnnotationKind { .. } => QueryPredicateKind::AnnotationKind,
+        QueryPredicate::ProvenanceRoleAnyOf { .. } => QueryPredicateKind::ProvenanceRoleAnyOf,
+        QueryPredicate::ProvenanceReference { .. } => QueryPredicateKind::ProvenanceReference,
     }
 }
 
@@ -7521,6 +7535,31 @@ fn render_query_predicate_editor(
                 .add(
                     egui::TextEdit::singleline(annotation_kind)
                         .hint_text("note, watched, rating, ..."),
+                )
+                .changed();
+        }
+        QueryPredicate::ProvenanceRoleAnyOf { values } => {
+            ui.small("Matches structured provenance records stored outside canonical event fields.");
+            ui.horizontal_wrapped(|ui| {
+                for role in EventProvenanceRole::ALL {
+                    let mut selected = values.contains(&role);
+                    if ui.checkbox(&mut selected, role.as_str()).changed() {
+                        if selected {
+                            values.push(role);
+                        } else {
+                            values.retain(|value| *value != role);
+                        }
+                        changed = true;
+                    }
+                }
+            });
+        }
+        QueryPredicate::ProvenanceReference { reference } => {
+            ui.small("Matches an exact structured provenance reference.");
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(reference)
+                        .hint_text("https://…, archive:123, assertion:…"),
                 )
                 .changed();
         }
