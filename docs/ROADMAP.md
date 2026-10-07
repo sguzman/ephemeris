@@ -62,11 +62,15 @@ Implemented:
 
 Still required:
 
-- dedicated provenance records/tables
-- general-purpose snapshot/history tables beyond the implemented Taria release snapshot model
-- annotations
-- event relations and collections/sequences — domain types, schema-v15 persistence, query predicates, inspector editing, ordered sequence reordering, broader collection management, and topology-aware canonical JSON v2 implemented
+- general-purpose snapshot/history beyond the implemented Taria release snapshot model — active next slice
 - richer indexed ontology
+
+Implemented canonical extensions:
+
+- dedicated structured provenance records/tables — schema v19, queries, inspector authoring, canonical JSON v5
+- user-owned annotations — schema v18, queries, inspector authoring, canonical JSON v4
+- duplicate/entity identity assessments — schema v17, queries, inspector authoring, canonical JSON v3
+- event relations and collections/sequences — domain types, schema-v15 persistence, query predicates, inspector editing, ordered sequence reordering, broader collection management, and topology-aware canonical JSON v2
 
 ## Phase 3 - Taria ingestion and bundle-release adoption
 
@@ -431,8 +435,9 @@ Next Phase 8 work:
 - relations — canonical directed storage/query plus inspector create/delete UI and canonical JSON v2 interchange implemented
 - collections/sequences — canonical ordered/unordered storage/query, inspector membership/create/manage UI, sequence reordering, and canonical JSON v2 interchange implemented
 - uncertainty — schema-v16 bounded start-placement windows, canonical JSON preservation, inspector visibility, presence queries, and uncertain-start overlap queries implemented; recurring-event uncertainty and richer visualization/editing remain future work
-- duplicate/entity resolution — next canonical-model frontier
-- advanced annotations
+- duplicate/entity resolution — candidate/same/distinct assessments implemented with confidence/rationale, query/UI, and canonical JSON
+- advanced annotations — user-owned structured JSON annotations implemented
+- structured provenance — typed assertion/source/provenance records implemented
 
 ## Phase 9 - External interoperability
 
