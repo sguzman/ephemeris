@@ -1591,6 +1591,10 @@ fn parse_ordinal_byday_values(raw: &str) -> Result<Vec<RecurrenceOrdinalWeekday>
 struct NewLocalEventDraft {
     title: String,
     description: String,
+    event_type: String,
+    domain: String,
+    status: EventStatus,
+    availability: AvailabilityBehavior,
     date: String,
     all_day: bool,
     start_time: String,
@@ -1602,6 +1606,10 @@ impl NewLocalEventDraft {
         Self {
             title: String::new(),
             description: String::new(),
+            event_type: String::new(),
+            domain: String::new(),
+            status: EventStatus::Scheduled,
+            availability: AvailabilityBehavior::Busy,
             date: date.to_string(),
             all_day: false,
             start_time: "09:00".to_string(),
@@ -3080,7 +3088,10 @@ impl EphemerisApp {
             let (time, focus_date) = parse_new_local_event_time(&draft, timezone)?;
             let mut event = TemporalEvent::new(title, time);
             event.description = optional_trimmed(&draft.description);
-            event.status = EventStatus::Scheduled;
+            event.event_type = optional_trimmed(&draft.event_type);
+            event.domain = optional_trimmed(&draft.domain);
+            event.status = draft.status;
+            event.availability = draft.availability;
             let event_id = event.id;
             self.store.upsert_event(&event)?;
             Ok((event_id, focus_date))
@@ -4619,6 +4630,44 @@ impl EphemerisApp {
                         .hint_text("Description (optional)")
                         .desired_width(320.0),
                 );
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.event_type)
+                            .hint_text("Event type (optional)")
+                            .desired_width(150.0),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.domain)
+                            .hint_text("Domain (optional)")
+                            .desired_width(150.0),
+                    );
+                });
+                ui.horizontal_wrapped(|ui| {
+                    egui::ComboBox::from_id_salt("new-local-event-status")
+                        .selected_text(draft.status.as_str())
+                        .show_ui(ui, |ui| {
+                            for status in EventStatus::ALL {
+                                ui.selectable_value(&mut draft.status, status, status.as_str());
+                            }
+                        });
+                    egui::ComboBox::from_id_salt("new-local-event-availability")
+                        .selected_text(match draft.availability {
+                            AvailabilityBehavior::Busy => "Busy",
+                            AvailabilityBehavior::Free => "Free",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut draft.availability,
+                                AvailabilityBehavior::Busy,
+                                "Busy · blocks availability",
+                            );
+                            ui.selectable_value(
+                                &mut draft.availability,
+                                AvailabilityBehavior::Free,
+                                "Free · does not block availability",
+                            );
+                        });
+                });
                 ui.horizontal_wrapped(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut draft.date)
