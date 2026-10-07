@@ -1403,6 +1403,8 @@ enum TopologyInspectorAction {
     MoveCollectionMemberUp(Uuid),
     MoveCollectionMemberDown(Uuid),
     CreateCollection,
+    SaveCollection(Uuid),
+    DeleteCollection(Uuid),
     AddRelation,
     DeleteRelation(Uuid),
 }
@@ -1433,6 +1435,10 @@ pub struct EphemerisApp {
     topology_collection_choice: Option<Uuid>,
     topology_new_collection_name: String,
     topology_new_collection_ordered: bool,
+    topology_manage_collection_id: Option<Uuid>,
+    topology_manage_collection_name: String,
+    topology_manage_collection_description: String,
+    topology_manage_collection_ordered: bool,
     topology_relation_type: String,
     topology_relation_outgoing: bool,
     topology_relation_search: String,
@@ -1500,6 +1506,10 @@ impl EphemerisApp {
             topology_collection_choice: None,
             topology_new_collection_name: String::new(),
             topology_new_collection_ordered: false,
+            topology_manage_collection_id: None,
+            topology_manage_collection_name: String::new(),
+            topology_manage_collection_description: String::new(),
+            topology_manage_collection_ordered: false,
             topology_relation_type: String::new(),
             topology_relation_outgoing: true,
             topology_relation_search: String::new(),
@@ -4135,6 +4145,10 @@ impl EphemerisApp {
         self.topology_collection_choice = None;
         self.topology_new_collection_name.clear();
         self.topology_new_collection_ordered = false;
+        self.topology_manage_collection_id = None;
+        self.topology_manage_collection_name.clear();
+        self.topology_manage_collection_description.clear();
+        self.topology_manage_collection_ordered = false;
         self.topology_relation_type.clear();
         self.topology_relation_outgoing = true;
         self.topology_relation_search.clear();
@@ -4179,6 +4193,12 @@ impl EphemerisApp {
                 self.move_event_in_collection(event_id, collection_id, 1)
             }
             TopologyInspectorAction::CreateCollection => self.create_collection_for_event(event_id),
+            TopologyInspectorAction::SaveCollection(collection_id) => {
+                self.save_managed_collection(collection_id)
+            }
+            TopologyInspectorAction::DeleteCollection(collection_id) => {
+                self.delete_managed_collection(collection_id)
+            }
             TopologyInspectorAction::AddRelation => self.create_relation_for_event(event_id),
             TopologyInspectorAction::DeleteRelation(relation_id) => {
                 self.store.delete_event_relation(relation_id).map(|_| ())
@@ -4295,6 +4315,86 @@ impl EphemerisApp {
         } else {
             "Created collection and added event.".to_string()
         });
+        Ok(())
+    }
+
+    fn begin_manage_collection(&mut self, collection_id: Uuid) -> anyhow::Result<()> {
+        let collection = self
+            .store
+            .event_collection_by_id(collection_id)?
+            .ok_or_else(|| anyhow::anyhow!("event collection {collection_id} does not exist"))?;
+        self.topology_manage_collection_id = Some(collection.id);
+        self.topology_manage_collection_name = collection.name;
+        self.topology_manage_collection_description =
+            collection.description.unwrap_or_default();
+        self.topology_manage_collection_ordered = collection.ordered;
+        Ok(())
+    }
+
+    fn save_managed_collection(&mut self, collection_id: Uuid) -> anyhow::Result<()> {
+        let name = self.topology_manage_collection_name.trim();
+        if name.is_empty() {
+            anyhow::bail!("collection name is empty");
+        }
+
+        let mut collection = self
+            .store
+            .event_collection_by_id(collection_id)?
+            .ok_or_else(|| anyhow::anyhow!("event collection {collection_id} does not exist"))?;
+        let ordered_changed = collection.ordered != self.topology_manage_collection_ordered;
+        let member_ids = if ordered_changed {
+            self.store
+                .events_for_collection(collection_id)?
+                .into_iter()
+                .map(|event| event.id)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
+        collection.name = name.to_string();
+        collection.description = if self.topology_manage_collection_description.trim().is_empty() {
+            None
+        } else {
+            Some(self.topology_manage_collection_description.trim().to_string())
+        };
+        collection.ordered = self.topology_manage_collection_ordered;
+        collection.updated_at = Utc::now();
+        self.store.upsert_event_collection(&collection)?;
+
+        if ordered_changed {
+            self.store
+                .replace_event_collection_members(collection_id, &member_ids)?;
+        }
+
+        self.last_message = Some(if collection.ordered {
+            format!("Updated sequence {:?}.", collection.name)
+        } else {
+            format!("Updated collection {:?}.", collection.name)
+        });
+        Ok(())
+    }
+
+    fn delete_managed_collection(&mut self, collection_id: Uuid) -> anyhow::Result<()> {
+        let collection = self
+            .store
+            .event_collection_by_id(collection_id)?
+            .ok_or_else(|| anyhow::anyhow!("event collection {collection_id} does not exist"))?;
+        self.store.delete_event_collection(collection_id)?;
+        self.topology_manage_collection_id = None;
+        self.topology_manage_collection_name.clear();
+        self.topology_manage_collection_description.clear();
+        self.topology_manage_collection_ordered = false;
+        self.topology_collection_choice = None;
+        self.last_message = Some(format!(
+            "Deleted {} {:?}; events were not deleted.",
+            if collection.ordered {
+                "sequence"
+            } else {
+                "collection"
+            },
+            collection.name
+        ));
         Ok(())
     }
 
@@ -4681,6 +4781,15 @@ impl EphemerisApp {
                             *collection_id,
                         ));
                     }
+                    if ui
+                        .small_button("Manage")
+                        .on_hover_text("Rename, describe, convert, or delete this collection")
+                        .clicked()
+                        && let Err(error) = self.begin_manage_collection(*collection_id)
+                    {
+                        self.last_error =
+                            Some(format!("Failed to open collection manager: {error:#}"));
+                    }
                 });
             }
 
@@ -4750,6 +4859,54 @@ impl EphemerisApp {
                     topology_action = Some(TopologyInspectorAction::CreateCollection);
                 }
             });
+
+            if let Some(collection_id) = self.topology_manage_collection_id {
+                ui.collapsing("Manage collection / sequence", |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.topology_manage_collection_name)
+                            .hint_text("Collection name"),
+                    );
+                    ui.add(
+                        egui::TextEdit::multiline(
+                            &mut self.topology_manage_collection_description,
+                        )
+                        .desired_rows(2)
+                        .hint_text("Optional description"),
+                    );
+                    ui.checkbox(
+                        &mut self.topology_manage_collection_ordered,
+                        "Ordered sequence",
+                    );
+                    ui.small(
+                        "Switching to a sequence assigns deterministic positions to all current members. Switching to a collection removes ordering but keeps every member.",
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .add_enabled(
+                                !self.topology_manage_collection_name.trim().is_empty(),
+                                egui::Button::new("Save collection"),
+                            )
+                            .clicked()
+                        {
+                            topology_action =
+                                Some(TopologyInspectorAction::SaveCollection(collection_id));
+                        }
+                        if ui.button("Close").clicked() {
+                            self.topology_manage_collection_id = None;
+                        }
+                        if ui
+                            .button("Delete collection")
+                            .on_hover_text(
+                                "Delete the collection and its memberships; events remain intact",
+                            )
+                            .clicked()
+                        {
+                            topology_action =
+                                Some(TopologyInspectorAction::DeleteCollection(collection_id));
+                        }
+                    });
+                });
+            }
 
             for relation in &relation_rows {
                 let (direction, counterpart_id) = if relation.from_event_id == canonical_id {
