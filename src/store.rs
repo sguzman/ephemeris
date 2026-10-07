@@ -3389,6 +3389,7 @@ impl TemporalStore {
             identity_assessments: &[],
             annotations: &[],
             provenance_records: &[],
+            participant_entity_bindings: &[],
         })
     }
 
@@ -3410,6 +3411,7 @@ impl TemporalStore {
             identity_assessments: &[],
             annotations: &[],
             provenance_records: &[],
+            participant_entity_bindings: &[],
         })
     }
 
@@ -3432,6 +3434,7 @@ impl TemporalStore {
             identity_assessments,
             annotations: &[],
             provenance_records: &[],
+            participant_entity_bindings: &[],
         })
     }
 
