@@ -22,7 +22,7 @@ This matters especially for large temporal corpora where provenance, recurrence,
 
 Ephemeris is an active native application, not a design-only repository.
 
-The current application has a canonical temporal store, recurrence engine and editor, programmable calendar views, Taria/Resourcearium ingestion, release-aware source history, and bidirectional RFC 5545 interoperability for the supported iCalendar subset.
+The current application has a canonical temporal store, recurrence engine and editor, programmable calendar views, Taria/Resourcearium ingestion, release-aware source history, bidirectional RFC 5545 interoperability for the supported iCalendar subset, and a growing personal-scheduling layer with reminders, Busy/Free availability, free-busy/slot search, persisted workday preferences, and writable-event authoring.
 
 Local `.ics` / `.ical` files can be imported through the CLI or by dropping them onto the running application. Imported calendars become first-class sources in the canonical store and refresh by stable source/UID identity. Their current canonical state can be exported back to `.ics` from the source inspector or the `ephemeris-export` CLI.
 
