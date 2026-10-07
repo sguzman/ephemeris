@@ -2823,6 +2823,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::TimeUncertainty;
 
     #[test]
     fn content_line_parser_handles_quoted_parameter_colons() {
@@ -3254,6 +3255,29 @@ and continues here\r\nSUMMARY:Example\r\n";
         let exported = export_temporal_event(&event).expect("export");
         assert!(exported[0].summary.is_none());
         assert_eq!(exported[0].uid.value, "untitled@example.com");
+    }
+
+    #[test]
+    fn canonical_export_rejects_temporal_uncertainty_losslessly() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut event = TemporalEvent::new(
+            "Uncertain date",
+            TimeSpec::AllDay {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: day - Duration::days(1),
+            latest: day + Duration::days(1),
+        });
+
+        assert_eq!(
+            export_temporal_event(&event),
+            Err(IcalRecurrenceError::UnsupportedTemporalUncertainty(
+                "date_window"
+            ))
+        );
     }
 
     #[test]
