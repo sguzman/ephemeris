@@ -1396,6 +1396,15 @@ enum RecurrenceEditorAction {
     Remove,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TopologyInspectorAction {
+    AddToCollection(Uuid),
+    RemoveFromCollection(Uuid),
+    CreateCollection,
+    AddRelation,
+    DeleteRelation(Uuid),
+}
+
 pub struct EphemerisApp {
     store: TemporalStore,
     state: PersistedUiState,
@@ -1417,6 +1426,15 @@ pub struct EphemerisApp {
     event_relations: Vec<EventRelation>,
     event_relation_titles: HashMap<Uuid, String>,
     event_relation_types: Vec<String>,
+    topology_edit_event_id: Option<Uuid>,
+    topology_collection_choice: Option<Uuid>,
+    topology_new_collection_name: String,
+    topology_new_collection_ordered: bool,
+    topology_relation_type: String,
+    topology_relation_outgoing: bool,
+    topology_relation_search: String,
+    topology_relation_candidates: Vec<(Uuid, String)>,
+    topology_relation_target_id: Option<Uuid>,
     taria_release_status: Option<TariaReleaseStatusRecord>,
     taria_release_history: Vec<TariaReleaseHistoryEntry>,
     taria_previous_release_diff: Option<TariaReleaseDiff>,
@@ -1474,6 +1492,15 @@ impl EphemerisApp {
             event_relations: Vec::new(),
             event_relation_titles: HashMap::new(),
             event_relation_types: Vec::new(),
+            topology_edit_event_id: None,
+            topology_collection_choice: None,
+            topology_new_collection_name: String::new(),
+            topology_new_collection_ordered: false,
+            topology_relation_type: String::new(),
+            topology_relation_outgoing: true,
+            topology_relation_search: String::new(),
+            topology_relation_candidates: Vec::new(),
+            topology_relation_target_id: None,
             taria_release_status: None,
             taria_release_history: Vec::new(),
             taria_previous_release_diff: None,
@@ -4098,6 +4125,151 @@ impl EphemerisApp {
         });
     }
 
+    fn reset_topology_editor(&mut self, event_id: Uuid) {
+        self.topology_edit_event_id = Some(event_id);
+        self.topology_collection_choice = None;
+        self.topology_new_collection_name.clear();
+        self.topology_new_collection_ordered = false;
+        self.topology_relation_type.clear();
+        self.topology_relation_outgoing = true;
+        self.topology_relation_search.clear();
+        self.topology_relation_candidates.clear();
+        self.topology_relation_target_id = None;
+    }
+
+    fn refresh_topology_relation_candidates(&mut self, event_id: Uuid) {
+        match self
+            .store
+            .search_event_titles(&self.topology_relation_search, Some(event_id), 20)
+        {
+            Ok(candidates) => {
+                if self
+                    .topology_relation_target_id
+                    .is_some_and(|selected| !candidates.iter().any(|(id, _)| *id == selected))
+                {
+                    self.topology_relation_target_id = None;
+                }
+                self.topology_relation_candidates = candidates;
+            }
+            Err(error) => {
+                self.topology_relation_candidates.clear();
+                self.topology_relation_target_id = None;
+                self.last_error = Some(format!("Failed to search relation targets: {error:#}"));
+            }
+        }
+    }
+
+    fn apply_topology_action(&mut self, event_id: Uuid, action: TopologyInspectorAction) {
+        let result = match action {
+            TopologyInspectorAction::AddToCollection(collection_id) => {
+                self.add_event_to_collection(event_id, collection_id)
+            }
+            TopologyInspectorAction::RemoveFromCollection(collection_id) => {
+                self.remove_event_from_collection(event_id, collection_id)
+            }
+            TopologyInspectorAction::CreateCollection => {
+                self.create_collection_for_event(event_id)
+            }
+            TopologyInspectorAction::AddRelation => self.create_relation_for_event(event_id),
+            TopologyInspectorAction::DeleteRelation(relation_id) => self
+                .store
+                .delete_event_relation(relation_id)
+                .map(|_| ())
+                .map_err(anyhow::Error::from),
+        };
+
+        match result {
+            Ok(()) => {
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Topology edit failed: {error:#}"));
+            }
+        }
+    }
+
+    fn add_event_to_collection(
+        &mut self,
+        event_id: Uuid,
+        collection_id: Uuid,
+    ) -> anyhow::Result<()> {
+        let members = self.store.event_collection_members(collection_id)?;
+        if members.iter().any(|member| member.event_id == event_id) {
+            return Ok(());
+        }
+        let mut event_ids = members
+            .into_iter()
+            .map(|member| member.event_id)
+            .collect::<Vec<_>>();
+        event_ids.push(event_id);
+        self.store
+            .replace_event_collection_members(collection_id, &event_ids)?;
+        self.last_message = Some("Added event to collection.".to_string());
+        Ok(())
+    }
+
+    fn remove_event_from_collection(
+        &mut self,
+        event_id: Uuid,
+        collection_id: Uuid,
+    ) -> anyhow::Result<()> {
+        let event_ids = self
+            .store
+            .event_collection_members(collection_id)?
+            .into_iter()
+            .map(|member| member.event_id)
+            .filter(|member_event_id| *member_event_id != event_id)
+            .collect::<Vec<_>>();
+        self.store
+            .replace_event_collection_members(collection_id, &event_ids)?;
+        self.last_message = Some("Removed event from collection.".to_string());
+        Ok(())
+    }
+
+    fn create_collection_for_event(&mut self, event_id: Uuid) -> anyhow::Result<()> {
+        let name = self.topology_new_collection_name.trim();
+        if name.is_empty() {
+            anyhow::bail!("collection name is empty");
+        }
+        let collection = EventCollection::new(name, self.topology_new_collection_ordered);
+        self.store.upsert_event_collection(&collection)?;
+        self.store
+            .replace_event_collection_members(collection.id, &[event_id])?;
+        self.topology_new_collection_name.clear();
+        self.topology_new_collection_ordered = false;
+        self.topology_collection_choice = Some(collection.id);
+        self.last_message = Some(if collection.ordered {
+            "Created sequence and added event.".to_string()
+        } else {
+            "Created collection and added event.".to_string()
+        });
+        Ok(())
+    }
+
+    fn create_relation_for_event(&mut self, event_id: Uuid) -> anyhow::Result<()> {
+        let relation_type = self.topology_relation_type.trim();
+        if relation_type.is_empty() {
+            anyhow::bail!("relation type is empty");
+        }
+        let target_id = self
+            .topology_relation_target_id
+            .ok_or_else(|| anyhow::anyhow!("choose a relation target event"))?;
+        let (from_event_id, to_event_id) = if self.topology_relation_outgoing {
+            (event_id, target_id)
+        } else {
+            (target_id, event_id)
+        };
+        let relation = EventRelation::new(from_event_id, to_event_id, relation_type);
+        self.store.upsert_event_relation(&relation)?;
+        self.topology_relation_search.clear();
+        self.topology_relation_candidates.clear();
+        self.topology_relation_target_id = None;
+        self.last_message = Some("Created event relation.".to_string());
+        Ok(())
+    }
+
     fn render_inspector(&mut self, ui: &mut egui::Ui, events: &[TemporalEvent]) {
         ui.set_width(320.0);
         ui.heading("Event Inspector");
@@ -4122,6 +4294,37 @@ impl EphemerisApp {
             return;
         };
         let canonical_id = self.canonical_event_id(event.id);
+        if self.topology_edit_event_id != Some(canonical_id) {
+            self.reset_topology_editor(canonical_id);
+        }
+
+        let collection_ids = self
+            .event_memberships
+            .get(&canonical_id)
+            .map(|membership| membership.collection_ids.clone())
+            .unwrap_or_default();
+        let collection_rows = self
+            .event_collections
+            .iter()
+            .filter(|collection| collection_ids.contains(&collection.id))
+            .map(|collection| (collection.id, collection.name.clone(), collection.ordered))
+            .collect::<Vec<_>>();
+        let available_collections = self
+            .event_collections
+            .iter()
+            .filter(|collection| !collection_ids.contains(&collection.id))
+            .map(|collection| (collection.id, collection.name.clone(), collection.ordered))
+            .collect::<Vec<_>>();
+        let relation_rows = self
+            .event_relations
+            .iter()
+            .filter(|relation| {
+                relation.from_event_id == canonical_id || relation.to_event_id == canonical_id
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut topology_action = None;
+        let mut refresh_relation_search = false;
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.heading(&event.normalized_title);
@@ -4370,55 +4573,178 @@ impl EphemerisApp {
                 inspector_row(ui, "Provenance", &event.provenance_refs.join(", "));
             }
 
-            let collection_memberships = self
-                .event_memberships
-                .get(&canonical_id)
-                .map(|membership| &membership.collection_ids);
-            let related_edges = self
-                .event_relations
-                .iter()
-                .filter(|relation| {
-                    relation.from_event_id == canonical_id || relation.to_event_id == canonical_id
-                })
-                .collect::<Vec<_>>();
-            let has_collections =
-                collection_memberships.is_some_and(|collection_ids| !collection_ids.is_empty());
-            if has_collections || !related_edges.is_empty() {
-                ui.separator();
-                ui.strong("Topology");
+            ui.separator();
+            ui.strong("Topology");
 
-                if let Some(collection_ids) = collection_memberships {
-                    for collection in self
-                        .event_collections
-                        .iter()
-                        .filter(|collection| collection_ids.contains(&collection.id))
+            for (collection_id, collection_name, ordered) in &collection_rows {
+                ui.horizontal(|ui| {
+                    ui.label(if *ordered { "Sequence" } else { "Collection" });
+                    ui.label(collection_name);
+                    if ui
+                        .small_button("Remove")
+                        .on_hover_text("Remove this event from the collection")
+                        .clicked()
                     {
-                        let kind = if collection.ordered {
-                            "Sequence"
-                        } else {
-                            "Collection"
-                        };
-                        inspector_row(ui, kind, &collection.name);
+                        topology_action =
+                            Some(TopologyInspectorAction::RemoveFromCollection(*collection_id));
                     }
+                });
+            }
+
+            if !available_collections.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    let selected = self
+                        .topology_collection_choice
+                        .and_then(|selected_id| {
+                            available_collections
+                                .iter()
+                                .find(|(id, _, _)| *id == selected_id)
+                                .map(|(_, name, ordered)| {
+                                    if *ordered {
+                                        format!("{name} · sequence")
+                                    } else {
+                                        name.clone()
+                                    }
+                                })
+                        })
+                        .unwrap_or_else(|| "Add to collection…".to_string());
+                    egui::ComboBox::from_id_salt(("topology-add-collection", canonical_id))
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            for (collection_id, name, ordered) in &available_collections {
+                                let label = if *ordered {
+                                    format!("{name} · sequence")
+                                } else {
+                                    name.clone()
+                                };
+                                ui.selectable_value(
+                                    &mut self.topology_collection_choice,
+                                    Some(*collection_id),
+                                    label,
+                                );
+                            }
+                        });
+                    if ui
+                        .add_enabled(
+                            self.topology_collection_choice.is_some(),
+                            egui::Button::new("Add"),
+                        )
+                        .clicked()
+                        && let Some(collection_id) = self.topology_collection_choice
+                    {
+                        topology_action =
+                            Some(TopologyInspectorAction::AddToCollection(collection_id));
+                    }
+                });
+            }
+
+            ui.collapsing("New collection / sequence", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.topology_new_collection_name)
+                        .hint_text("Collection name"),
+                );
+                ui.checkbox(&mut self.topology_new_collection_ordered, "Ordered sequence");
+                if ui
+                    .add_enabled(
+                        !self.topology_new_collection_name.trim().is_empty(),
+                        egui::Button::new("Create + add"),
+                    )
+                    .clicked()
+                {
+                    topology_action = Some(TopologyInspectorAction::CreateCollection);
+                }
+            });
+
+            for relation in &relation_rows {
+                let (direction, counterpart_id) = if relation.from_event_id == canonical_id {
+                    ("Outgoing", relation.to_event_id)
+                } else {
+                    ("Incoming", relation.from_event_id)
+                };
+                let counterpart = self
+                    .event_relation_titles
+                    .get(&counterpart_id)
+                    .map_or_else(|| counterpart_id.to_string(), Clone::clone);
+                ui.horizontal(|ui| {
+                    ui.label(direction);
+                    ui.label(format!("{} · {}", relation.relation_type, counterpart));
+                    if ui.small_button("×").on_hover_text("Delete relation").clicked() {
+                        topology_action =
+                            Some(TopologyInspectorAction::DeleteRelation(relation.id));
+                    }
+                });
+            }
+
+            ui.collapsing("New relation", |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.selectable_value(&mut self.topology_relation_outgoing, true, "Outgoing");
+                    ui.selectable_value(&mut self.topology_relation_outgoing, false, "Incoming");
+                });
+
+                egui::ComboBox::from_id_salt(("topology-relation-type", canonical_id))
+                    .selected_text(if self.topology_relation_type.trim().is_empty() {
+                        "Relation type…"
+                    } else {
+                        self.topology_relation_type.as_str()
+                    })
+                    .show_ui(ui, |ui| {
+                        for relation_type in &self.event_relation_types {
+                            ui.selectable_value(
+                                &mut self.topology_relation_type,
+                                relation_type.clone(),
+                                relation_type,
+                            );
+                        }
+                    });
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.topology_relation_type)
+                        .hint_text("causes, precedes, references, ..."),
+                );
+
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut self.topology_relation_search)
+                            .hint_text("Search target event title/ref"),
+                    )
+                    .changed()
+                {
+                    refresh_relation_search = true;
                 }
 
-                for relation in related_edges {
-                    let (direction, counterpart_id) = if relation.from_event_id == canonical_id {
-                        ("Outgoing", relation.to_event_id)
-                    } else {
-                        ("Incoming", relation.from_event_id)
-                    };
-                    let counterpart = self
-                        .event_relation_titles
-                        .get(&counterpart_id)
-                        .map_or_else(|| counterpart_id.to_string(), Clone::clone);
-                    inspector_row(
-                        ui,
-                        direction,
-                        &format!("{} · {}", relation.relation_type, counterpart),
-                    );
+                if !self.topology_relation_candidates.is_empty() {
+                    let selected = self
+                        .topology_relation_target_id
+                        .and_then(|target_id| {
+                            self.topology_relation_candidates
+                                .iter()
+                                .find(|(id, _)| *id == target_id)
+                                .map(|(id, title)| format!("{title} · {id}"))
+                        })
+                        .unwrap_or_else(|| "Select target event…".to_string());
+                    egui::ComboBox::from_id_salt(("topology-relation-target", canonical_id))
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            for (target_id, title) in &self.topology_relation_candidates {
+                                ui.selectable_value(
+                                    &mut self.topology_relation_target_id,
+                                    Some(*target_id),
+                                    format!("{title} · {target_id}"),
+                                );
+                            }
+                        });
                 }
-            }
+
+                if ui
+                    .add_enabled(
+                        !self.topology_relation_type.trim().is_empty()
+                            && self.topology_relation_target_id.is_some(),
+                        egui::Button::new("Create relation"),
+                    )
+                    .clicked()
+                {
+                    topology_action = Some(TopologyInspectorAction::AddRelation);
+                }
+            });
 
             render_time_spec(ui, &event.time, self.timezone());
 
@@ -4483,6 +4809,13 @@ impl EphemerisApp {
             inspector_row(ui, "Created", &event.created_at.to_rfc3339());
             inspector_row(ui, "Updated", &event.updated_at.to_rfc3339());
         });
+
+        if refresh_relation_search {
+            self.refresh_topology_relation_candidates(canonical_id);
+        }
+        if let Some(action) = topology_action {
+            self.apply_topology_action(canonical_id, action);
+        }
     }
 
     fn apply_calendar_action(&mut self, action: CalendarAction) {
