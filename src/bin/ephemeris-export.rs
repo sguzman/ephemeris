@@ -42,6 +42,8 @@ fn main() -> anyhow::Result<()> {
         println!("Relations: {}", report.relation_count);
         println!("Collections: {}", report.collection_count);
         println!("Collection memberships: {}", report.collection_member_count);
+        println!("Identity assessments: {}", report.identity_assessment_count);
+        println!("Annotations: {}", report.annotation_count);
         println!("Output: {}", report.output_path.display());
         return Ok(());
     }
