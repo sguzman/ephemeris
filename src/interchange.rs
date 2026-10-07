@@ -8,7 +8,7 @@ use crate::domain::{
     EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
     EventRelation, TemporalEvent, TemporalSource,
 };
-use crate::store::{CanonicalSnapshotMergeResult, TemporalStore};
+use crate::store::{CanonicalSnapshotMergeInput, CanonicalSnapshotMergeResult, TemporalStore};
 
 pub const CANONICAL_SNAPSHOT_FORMAT: &str = "ephemeris.canonical_snapshot";
 pub const CANONICAL_SNAPSHOT_VERSION: u32 = 4;
@@ -361,15 +361,15 @@ pub fn import_canonical_json_snapshot(
             &snapshot.collection_members,
             &snapshot.identity_assessments,
         ),
-        _ => store.merge_canonical_snapshot_with_annotations(
-            &snapshot.sources,
-            &snapshot.events,
-            &snapshot.relations,
-            &snapshot.collections,
-            &snapshot.collection_members,
-            &snapshot.identity_assessments,
-            &snapshot.annotations,
-        ),
+        _ => store.merge_canonical_snapshot_records(CanonicalSnapshotMergeInput {
+            sources: &snapshot.sources,
+            events: &snapshot.events,
+            relations: &snapshot.relations,
+            collections: &snapshot.collections,
+            collection_members: &snapshot.collection_members,
+            identity_assessments: &snapshot.identity_assessments,
+            annotations: &snapshot.annotations,
+        }),
     }
 }
 
