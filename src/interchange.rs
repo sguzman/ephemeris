@@ -673,10 +673,7 @@ mod tests {
         import_canonical_json_snapshot(&store, &snapshot).expect("initial merge");
         store.upsert_event(&local_extra).expect("local event");
         store
-            .replace_event_collection_members(
-                collection.id,
-                &[first.id, second.id, local_extra.id],
-            )
+            .replace_event_collection_members(collection.id, &[first.id, second.id, local_extra.id])
             .expect("local membership extension");
 
         import_canonical_json_snapshot(&store, &snapshot).expect("repeat merge");
