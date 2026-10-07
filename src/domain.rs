@@ -1480,6 +1480,126 @@ impl fmt::Display for TimeUncertaintyError {
 impl std::error::Error for TimeUncertaintyError {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CanonicalEntity {
+    pub id: Uuid,
+    pub canonical_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_refs: Vec<String>,
+    #[serde(default)]
+    pub properties: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl CanonicalEntity {
+    pub fn new(canonical_name: impl Into<String>) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            canonical_name: canonical_name.into(),
+            entity_type: None,
+            aliases: Vec::new(),
+            external_refs: Vec::new(),
+            properties: Value::Object(Default::default()),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), CanonicalEntityError> {
+        if self.canonical_name.trim().is_empty() {
+            return Err(CanonicalEntityError::EmptyCanonicalName);
+        }
+        if self
+            .entity_type
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(CanonicalEntityError::EmptyEntityType);
+        }
+
+        let mut aliases = HashSet::new();
+        for alias in &self.aliases {
+            let normalized = alias.trim().to_lowercase();
+            if normalized.is_empty() {
+                return Err(CanonicalEntityError::EmptyAlias);
+            }
+            if !aliases.insert(normalized) {
+                return Err(CanonicalEntityError::DuplicateAlias(alias.clone()));
+            }
+        }
+
+        let mut external_refs = HashSet::new();
+        for external_ref in &self.external_refs {
+            let normalized = external_ref.trim();
+            if normalized.is_empty() {
+                return Err(CanonicalEntityError::EmptyExternalRef);
+            }
+            if !external_refs.insert(normalized) {
+                return Err(CanonicalEntityError::DuplicateExternalRef(
+                    external_ref.clone(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn local_reference(&self) -> String {
+        format!("ephemeris:entity:{}", self.id)
+    }
+
+    pub fn parse_local_reference(reference: &str) -> Option<Uuid> {
+        reference
+            .strip_prefix("ephemeris:entity:")
+            .and_then(|value| Uuid::parse_str(value).ok())
+    }
+
+    pub fn text_values(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.canonical_name.as_str())
+            .chain(self.entity_type.as_deref())
+            .chain(self.aliases.iter().map(String::as_str))
+            .chain(self.external_refs.iter().map(String::as_str))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CanonicalEntityError {
+    EmptyCanonicalName,
+    EmptyEntityType,
+    EmptyAlias,
+    DuplicateAlias(String),
+    EmptyExternalRef,
+    DuplicateExternalRef(String),
+}
+
+impl fmt::Display for CanonicalEntityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyCanonicalName => formatter.write_str("canonical entity name cannot be blank"),
+            Self::EmptyEntityType => formatter.write_str("canonical entity type cannot be blank"),
+            Self::EmptyAlias => formatter.write_str("canonical entity alias cannot be blank"),
+            Self::DuplicateAlias(alias) => {
+                write!(formatter, "canonical entity contains duplicate alias {alias:?}")
+            }
+            Self::EmptyExternalRef => {
+                formatter.write_str("canonical entity external reference cannot be blank")
+            }
+            Self::DuplicateExternalRef(reference) => write!(
+                formatter,
+                "canonical entity contains duplicate external reference {reference:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CanonicalEntityError {}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventParticipant {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
