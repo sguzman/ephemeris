@@ -40,6 +40,7 @@ pub struct NotificationDelivery {
     pub starts_at_utc: DateTime<Utc>,
     pub lead_minutes: u32,
     pub delivered_at: DateTime<Utc>,
+    pub snoozed_until: Option<DateTime<Utc>>,
     pub dismissed_at: Option<DateTime<Utc>>,
 }
 
@@ -59,12 +60,21 @@ impl NotificationDelivery {
             starts_at_utc: occurrence.starts_at_utc,
             lead_minutes: occurrence.lead_minutes,
             delivered_at,
+            snoozed_until: None,
             dismissed_at: None,
         }
     }
 
     pub const fn is_active(&self) -> bool {
         self.dismissed_at.is_none()
+    }
+
+    pub fn is_due_at(&self, now: DateTime<Utc>) -> bool {
+        self.is_active() && self.snoozed_until.is_none_or(|until| until <= now)
+    }
+
+    pub fn is_snoozed_at(&self, now: DateTime<Utc>) -> bool {
+        self.is_active() && self.snoozed_until.is_some_and(|until| until > now)
     }
 }
 
