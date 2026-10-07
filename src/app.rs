@@ -24,7 +24,9 @@ use crate::domain::{
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
-use crate::notifications::{NotificationOccurrence, NotificationSkip, evaluate_notification_rules};
+use crate::notifications::{
+    NotificationDelivery, NotificationOccurrence, NotificationSkip, evaluate_notification_rules,
+};
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
@@ -1688,6 +1690,7 @@ pub struct EphemerisApp {
     event_details_editor: Option<EventDetailsEditDraft>,
     recurrence_editor: Option<RecurrenceEditDraft>,
     notification_rules: Vec<NotificationRule>,
+    notification_deliveries: Vec<NotificationDelivery>,
     notification_occurrences: Vec<NotificationOccurrence>,
     notification_skipped: Vec<NotificationSkip>,
     notification_eval_minute: Option<i64>,
@@ -1803,6 +1806,7 @@ impl EphemerisApp {
             event_details_editor: None,
             recurrence_editor: None,
             notification_rules: Vec::new(),
+            notification_deliveries: Vec::new(),
             notification_occurrences: Vec::new(),
             notification_skipped: Vec::new(),
             notification_eval_minute: None,
@@ -2996,6 +3000,28 @@ impl EphemerisApp {
         }
     }
 
+    fn dismiss_notification_delivery(&mut self, delivery_id: Uuid) {
+        match self
+            .store
+            .dismiss_notification_delivery(delivery_id, Utc::now())
+        {
+            Ok(true) => {
+                self.notification_deliveries
+                    .retain(|delivery| delivery.id != delivery_id);
+                self.last_message = Some("Dismissed reminder.".to_string());
+                self.last_error = None;
+            }
+            Ok(false) => {
+                self.notification_deliveries
+                    .retain(|delivery| delivery.id != delivery_id);
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to dismiss reminder: {error:#}"));
+            }
+        }
+    }
+
     fn delete_notification_rule(&mut self, rule_id: Uuid) {
         match self.store.delete_notification_rule(rule_id) {
             Ok(true) => {
@@ -3023,9 +3049,20 @@ impl EphemerisApp {
             &self.saved_views,
             &self.event_memberships,
             &QueryContext::for_timezone(self.timezone()),
-            now - ChronoDuration::minutes(5),
+            now - ChronoDuration::hours(24),
             now + ChronoDuration::days(7),
         )?;
+
+        for occurrence in evaluation
+            .occurrences
+            .iter()
+            .filter(|occurrence| occurrence.trigger_at_utc <= now)
+        {
+            let delivery = NotificationDelivery::from_occurrence(occurrence, now);
+            self.store.record_notification_delivery(&delivery)?;
+        }
+
+        self.notification_deliveries = self.store.active_notification_deliveries()?;
         self.notification_occurrences = evaluation.occurrences;
         self.notification_skipped = evaluation.skipped;
         self.notification_eval_minute = Some(now.timestamp() / 60);
