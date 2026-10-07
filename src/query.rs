@@ -2129,11 +2129,7 @@ mod tests {
             &test_context(),
             Some(&membership)
         ));
-        assert!(either_query.matches_with_membership(
-            &event,
-            &test_context(),
-            Some(&membership)
-        ));
+        assert!(either_query.matches_with_membership(&event, &test_context(), Some(&membership)));
     }
 
     #[test]
