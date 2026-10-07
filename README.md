@@ -140,6 +140,26 @@ cargo run --bin ephemeris-import -- snapshot.ephemeris.json
 
 A `.ephemeris.json` snapshot can also be dropped onto the running application. Import is transactional and merge-only: matching UUIDs update, new UUIDs are created, and records absent from the snapshot are not implicitly deleted.
 
+### CSV
+
+Ephemeris CSV v1 is a deliberately strict tabular source format for simple, non-recurring events. It supports exact instants, floating date-times, explicit all-day values, and date-only values plus scalar event metadata.
+
+Import a CSV source:
+
+```bash
+cargo run --bin ephemeris-import -- events.csv
+```
+
+Export a source whose events fit the CSV v1 subset:
+
+```bash
+cargo run --bin ephemeris-export -- --csv <source-id> export.csv
+```
+
+CSV files can also be dropped onto the running application. Imported CSV sources get **Refresh CSV** and **Export CSV** controls in the source inspector.
+
+CSV v1 refuses semantics it cannot round-trip: recurrence, month/year/unknown precision, list-valued references/tags, and arbitrary event properties produce explicit export errors instead of being flattened.
+
 ## Verify
 
 ```bash
