@@ -627,6 +627,312 @@ impl TemporalStore {
         Ok(())
     }
 
+    pub fn upsert_event_relation(&self, relation: &EventRelation) -> anyhow::Result<()> {
+        relation.validate().context("invalid event relation")?;
+        let properties_json = serde_json::to_string(&relation.properties)
+            .context("failed to encode event relation properties")?;
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO event_relations (
+                    id, from_event_id, to_event_id, relation_type,
+                    properties_json, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(id) DO UPDATE SET
+                    from_event_id = excluded.from_event_id,
+                    to_event_id = excluded.to_event_id,
+                    relation_type = excluded.relation_type,
+                    properties_json = excluded.properties_json,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    relation.id.to_string(),
+                    relation.from_event_id.to_string(),
+                    relation.to_event_id.to_string(),
+                    relation.relation_type,
+                    properties_json,
+                    relation.created_at.to_rfc3339(),
+                    relation.updated_at.to_rfc3339(),
+                ],
+            )
+            .context("failed to upsert event relation")?;
+        Ok(())
+    }
+
+    pub fn event_relation_by_id(&self, id: Uuid) -> anyhow::Result<Option<EventRelation>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, from_event_id, to_event_id, relation_type,
+                   properties_json, created_at, updated_at
+            FROM event_relations
+            WHERE id = ?1
+            "#,
+        )?;
+        stmt.query_row(params![id.to_string()], decode_event_relation)
+            .optional()
+            .context("failed to query event relation by id")
+    }
+
+    pub fn list_event_relations(&self) -> anyhow::Result<Vec<EventRelation>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, from_event_id, to_event_id, relation_type,
+                   properties_json, created_at, updated_at
+            FROM event_relations
+            ORDER BY relation_type COLLATE NOCASE, from_event_id, to_event_id, id
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut relations = Vec::new();
+        while let Some(row) = rows.next()? {
+            relations.push(decode_event_relation(row)?);
+        }
+        Ok(relations)
+    }
+
+    pub fn event_relations_for_event(&self, event_id: Uuid) -> anyhow::Result<Vec<EventRelation>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, from_event_id, to_event_id, relation_type,
+                   properties_json, created_at, updated_at
+            FROM event_relations
+            WHERE from_event_id = ?1 OR to_event_id = ?1
+            ORDER BY relation_type COLLATE NOCASE, from_event_id, to_event_id, id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![event_id.to_string()])?;
+        let mut relations = Vec::new();
+        while let Some(row) = rows.next()? {
+            relations.push(decode_event_relation(row)?);
+        }
+        Ok(relations)
+    }
+
+    pub fn delete_event_relation(&self, id: Uuid) -> anyhow::Result<bool> {
+        let changed = self
+            .conn
+            .execute(
+                "DELETE FROM event_relations WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .context("failed to delete event relation")?;
+        Ok(changed != 0)
+    }
+
+    pub fn upsert_event_collection(&self, collection: &EventCollection) -> anyhow::Result<()> {
+        collection.validate().context("invalid event collection")?;
+        let properties_json = serde_json::to_string(&collection.properties)
+            .context("failed to encode event collection properties")?;
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO event_collections (
+                    id, name, description, ordered,
+                    properties_json, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    description = excluded.description,
+                    ordered = excluded.ordered,
+                    properties_json = excluded.properties_json,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    collection.id.to_string(),
+                    collection.name,
+                    collection.description,
+                    collection.ordered,
+                    properties_json,
+                    collection.created_at.to_rfc3339(),
+                    collection.updated_at.to_rfc3339(),
+                ],
+            )
+            .context("failed to upsert event collection")?;
+        Ok(())
+    }
+
+    pub fn event_collection_by_id(&self, id: Uuid) -> anyhow::Result<Option<EventCollection>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, name, description, ordered,
+                   properties_json, created_at, updated_at
+            FROM event_collections
+            WHERE id = ?1
+            "#,
+        )?;
+        stmt.query_row(params![id.to_string()], decode_event_collection)
+            .optional()
+            .context("failed to query event collection by id")
+    }
+
+    pub fn list_event_collections(&self) -> anyhow::Result<Vec<EventCollection>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, name, description, ordered,
+                   properties_json, created_at, updated_at
+            FROM event_collections
+            ORDER BY name COLLATE NOCASE, id
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut collections = Vec::new();
+        while let Some(row) = rows.next()? {
+            collections.push(decode_event_collection(row)?);
+        }
+        Ok(collections)
+    }
+
+    pub fn collections_for_event(&self, event_id: Uuid) -> anyhow::Result<Vec<EventCollection>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT c.id, c.name, c.description, c.ordered,
+                   c.properties_json, c.created_at, c.updated_at
+            FROM event_collections c
+            JOIN event_collection_members m ON m.collection_id = c.id
+            WHERE m.event_id = ?1
+            ORDER BY c.name COLLATE NOCASE, c.id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![event_id.to_string()])?;
+        let mut collections = Vec::new();
+        while let Some(row) = rows.next()? {
+            collections.push(decode_event_collection(row)?);
+        }
+        Ok(collections)
+    }
+
+    pub fn replace_event_collection_members(
+        &self,
+        collection_id: Uuid,
+        event_ids: &[Uuid],
+    ) -> anyhow::Result<()> {
+        let collection = self
+            .event_collection_by_id(collection_id)?
+            .ok_or_else(|| anyhow!("event collection {collection_id} does not exist"))?;
+
+        let unique = event_ids.iter().copied().collect::<BTreeSet<_>>();
+        if unique.len() != event_ids.len() {
+            return Err(anyhow!(
+                "event collection {collection_id} cannot contain the same event twice"
+            ));
+        }
+
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .context("failed to begin event collection membership transaction")?;
+        let result = (|| -> anyhow::Result<()> {
+            tx.execute(
+                "DELETE FROM event_collection_members WHERE collection_id = ?1",
+                params![collection_id.to_string()],
+            )
+            .context("failed to clear event collection members")?;
+
+            for (index, event_id) in event_ids.iter().enumerate() {
+                let position = if collection.ordered {
+                    Some(i64::try_from(index).context("collection position is too large")?)
+                } else {
+                    None
+                };
+                tx.execute(
+                    r#"
+                    INSERT INTO event_collection_members (
+                        collection_id, event_id, position
+                    ) VALUES (?1, ?2, ?3)
+                    "#,
+                    params![
+                        collection_id.to_string(),
+                        event_id.to_string(),
+                        position,
+                    ],
+                )
+                .with_context(|| {
+                    format!(
+                        "failed to add event {event_id} to collection {collection_id}"
+                    )
+                })?;
+            }
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                tx.commit()
+                    .context("failed to commit event collection membership transaction")?;
+                Ok(())
+            }
+            Err(error) => {
+                let _ = tx.rollback();
+                Err(error)
+            }
+        }
+    }
+
+    pub fn event_collection_members(
+        &self,
+        collection_id: Uuid,
+    ) -> anyhow::Result<Vec<EventCollectionMember>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT collection_id, event_id, position
+            FROM event_collection_members
+            WHERE collection_id = ?1
+            ORDER BY
+                CASE WHEN position IS NULL THEN 1 ELSE 0 END,
+                position,
+                event_id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![collection_id.to_string()])?;
+        let mut members = Vec::new();
+        while let Some(row) = rows.next()? {
+            members.push(decode_event_collection_member(row)?);
+        }
+        Ok(members)
+    }
+
+    pub fn events_for_collection(&self, collection_id: Uuid) -> anyhow::Result<Vec<TemporalEvent>> {
+        let sql = event_select_sql(
+            "WHERE id IN (
+                SELECT event_id
+                FROM event_collection_members
+                WHERE collection_id = ?1
+            )
+            ORDER BY CASE WHEN (
+                SELECT position
+                FROM event_collection_members
+                WHERE collection_id = ?1
+                  AND event_id = temporal_events.id
+            ) IS NULL THEN 1 ELSE 0 END,
+            (
+                SELECT position
+                FROM event_collection_members
+                WHERE collection_id = ?1
+                  AND event_id = temporal_events.id
+            ),
+            normalized_title COLLATE NOCASE,
+            id",
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![collection_id.to_string()])?;
+        let mut events = Vec::new();
+        while let Some(row) = rows.next()? {
+            events.push(decode_event(row)?);
+        }
+        Ok(events)
+    }
+
+    pub fn delete_event_collection(&self, id: Uuid) -> anyhow::Result<bool> {
+        let changed = self
+            .conn
+            .execute(
+                "DELETE FROM event_collections WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .context("failed to delete event collection")?;
+        Ok(changed != 0)
+    }
+
     pub fn upsert_event(&self, event: &TemporalEvent) -> anyhow::Result<()> {
         event
             .validate_recurrence()
