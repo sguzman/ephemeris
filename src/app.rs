@@ -1611,6 +1611,248 @@ impl NewLocalEventDraft {
 }
 
 #[derive(Debug, Clone)]
+enum EventTimeEditKind {
+    Instant {
+        edit_timezone: Tz,
+        source_timezone: Option<String>,
+    },
+    Floating {
+        source_timezone: Option<String>,
+    },
+    AllDay,
+    DateOnly,
+}
+
+impl EventTimeEditKind {
+    const fn label(&self) -> &'static str {
+        match self {
+            Self::Instant { .. } => "Exact instant",
+            Self::Floating { .. } => "Floating wall clock",
+            Self::AllDay => "All day",
+            Self::DateOnly => "Date only",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EventTimeEditDraft {
+    event_id: Uuid,
+    kind: EventTimeEditKind,
+    date: String,
+    start_time: String,
+    duration_minutes: String,
+    end_date: String,
+}
+
+impl EventTimeEditDraft {
+    fn from_event(event: &TemporalEvent, display_timezone: Tz) -> anyhow::Result<Self> {
+        if event.recurrence.is_some() {
+            anyhow::bail!("recurring event master time editing is not supported yet");
+        }
+        if event.time_uncertainty.is_some() {
+            anyhow::bail!("uncertain event placement must be edited with uncertainty-aware controls");
+        }
+
+        match &event.time {
+            TimeSpec::Instant {
+                start_utc,
+                end_utc,
+                source_timezone,
+            } => {
+                let edit_timezone = match source_timezone.as_deref() {
+                    Some(raw) => raw
+                        .parse::<Tz>()
+                        .map_err(|_| anyhow::anyhow!("invalid source timezone {raw:?}"))?,
+                    None => display_timezone,
+                };
+                let local = start_utc.with_timezone(&edit_timezone);
+                let duration_minutes = end_utc.map_or_else(String::new, |end| {
+                    (*end - *start_utc).num_minutes().to_string()
+                });
+                Ok(Self {
+                    event_id: event.id,
+                    kind: EventTimeEditKind::Instant {
+                        edit_timezone,
+                        source_timezone: source_timezone.clone(),
+                    },
+                    date: local.date_naive().to_string(),
+                    start_time: local.format("%H:%M").to_string(),
+                    duration_minutes,
+                    end_date: String::new(),
+                })
+            }
+            TimeSpec::Floating {
+                start,
+                end,
+                source_timezone,
+            } => Ok(Self {
+                event_id: event.id,
+                kind: EventTimeEditKind::Floating {
+                    source_timezone: source_timezone.clone(),
+                },
+                date: start.date().to_string(),
+                start_time: start.format("%H:%M").to_string(),
+                duration_minutes: end.map_or_else(String::new, |end| {
+                    (end - *start).num_minutes().to_string()
+                }),
+                end_date: String::new(),
+            }),
+            TimeSpec::AllDay {
+                start,
+                end_exclusive,
+            } => Ok(Self {
+                event_id: event.id,
+                kind: EventTimeEditKind::AllDay,
+                date: start.to_string(),
+                start_time: String::new(),
+                duration_minutes: String::new(),
+                end_date: end_exclusive.map_or_else(String::new, |value| value.to_string()),
+            }),
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive,
+            } => Ok(Self {
+                event_id: event.id,
+                kind: EventTimeEditKind::DateOnly,
+                date: start.to_string(),
+                start_time: String::new(),
+                duration_minutes: String::new(),
+                end_date: end_exclusive.map_or_else(String::new, |value| value.to_string()),
+            }),
+            TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
+                anyhow::bail!(
+                    "{} precision is not editable through the scheduling time editor",
+                    event.time.kind_name()
+                )
+            }
+        }
+    }
+
+    fn parsed_time(&self) -> anyhow::Result<TimeSpec> {
+        let date = NaiveDate::parse_from_str(self.date.trim(), "%Y-%m-%d")
+            .map_err(|_| anyhow::anyhow!("date must use YYYY-MM-DD"))?;
+
+        match &self.kind {
+            EventTimeEditKind::Instant {
+                edit_timezone,
+                source_timezone,
+            } => {
+                let start_time = NaiveTime::parse_from_str(self.start_time.trim(), "%H:%M")
+                    .map_err(|_| anyhow::anyhow!("start time must use 24-hour HH:MM"))?;
+                let local = date.and_time(start_time);
+                let start_utc = match edit_timezone.from_local_datetime(&local) {
+                    chrono::LocalResult::Single(value) => value.with_timezone(&Utc),
+                    chrono::LocalResult::Ambiguous(_, _) => {
+                        anyhow::bail!(
+                            "start time is ambiguous in {edit_timezone}; choose an unambiguous local time"
+                        )
+                    }
+                    chrono::LocalResult::None => {
+                        anyhow::bail!(
+                            "start time does not exist in {edit_timezone} because of a timezone transition"
+                        )
+                    }
+                };
+                let end_utc = parse_optional_positive_duration(
+                    &self.duration_minutes,
+                    start_utc,
+                    "duration",
+                )?;
+                Ok(TimeSpec::Instant {
+                    start_utc,
+                    end_utc,
+                    source_timezone: source_timezone.clone(),
+                })
+            }
+            EventTimeEditKind::Floating { source_timezone } => {
+                let start_time = NaiveTime::parse_from_str(self.start_time.trim(), "%H:%M")
+                    .map_err(|_| anyhow::anyhow!("start time must use 24-hour HH:MM"))?;
+                let start = date.and_time(start_time);
+                let end = parse_optional_positive_duration(
+                    &self.duration_minutes,
+                    start,
+                    "duration",
+                )?;
+                Ok(TimeSpec::Floating {
+                    start,
+                    end,
+                    source_timezone: source_timezone.clone(),
+                })
+            }
+            EventTimeEditKind::AllDay | EventTimeEditKind::DateOnly => {
+                let end_exclusive = parse_optional_end_date(&self.end_date, date)?;
+                Ok(match self.kind {
+                    EventTimeEditKind::AllDay => TimeSpec::AllDay {
+                        start: date,
+                        end_exclusive,
+                    },
+                    EventTimeEditKind::DateOnly => TimeSpec::DateOnly {
+                        start: date,
+                        end_exclusive,
+                    },
+                    _ => unreachable!("matched date-like time edit kind"),
+                })
+            }
+        }
+    }
+
+    fn timezone_label(&self) -> Option<&str> {
+        match &self.kind {
+            EventTimeEditKind::Instant { edit_timezone, .. } => Some(edit_timezone.name()),
+            EventTimeEditKind::Floating {
+                source_timezone: Some(value),
+            } => Some(value.as_str()),
+            EventTimeEditKind::Floating {
+                source_timezone: None,
+            }
+            | EventTimeEditKind::AllDay
+            | EventTimeEditKind::DateOnly => None,
+        }
+    }
+
+    const fn is_timed(&self) -> bool {
+        matches!(
+            self.kind,
+            EventTimeEditKind::Instant { .. } | EventTimeEditKind::Floating { .. }
+        )
+    }
+}
+
+fn parse_optional_positive_duration<T>(
+    raw: &str,
+    start: T,
+    label: &str,
+) -> anyhow::Result<Option<T>>
+where
+    T: Copy + std::ops::Add<ChronoDuration, Output = T>,
+{
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let minutes = raw
+        .parse::<i64>()
+        .map_err(|_| anyhow::anyhow!("{label} must be a whole number of minutes"))?;
+    if minutes <= 0 {
+        anyhow::bail!("{label} must be greater than zero minutes when present");
+    }
+    Ok(Some(start + ChronoDuration::minutes(minutes)))
+}
+
+fn parse_optional_end_date(raw: &str, start: NaiveDate) -> anyhow::Result<Option<NaiveDate>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let end = NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+        .map_err(|_| anyhow::anyhow!("end date must use YYYY-MM-DD"))?;
+    if end <= start {
+        anyhow::bail!("end date must be later than the start date");
+    }
+    Ok(Some(end))
+}
+
+#[derive(Debug, Clone)]
 struct EventDetailsEditDraft {
     event_id: Uuid,
     title: String,
@@ -1653,6 +1895,12 @@ impl EventDetailsEditDraft {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EventDetailsEditorAction {
+    Save,
+    Cancel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EventTimeEditorAction {
     Save,
     Cancel,
 }
@@ -1774,6 +2022,7 @@ pub struct EphemerisApp {
     last_error: Option<String>,
     new_local_event: Option<NewLocalEventDraft>,
     event_details_editor: Option<EventDetailsEditDraft>,
+    event_time_editor: Option<EventTimeEditDraft>,
     recurrence_editor: Option<RecurrenceEditDraft>,
     notification_rules: Vec<NotificationRule>,
     notification_deliveries: Vec<NotificationDelivery>,
@@ -1890,6 +2139,7 @@ impl EphemerisApp {
             last_error: None,
             new_local_event: None,
             event_details_editor: None,
+            event_time_editor: None,
             recurrence_editor: None,
             notification_rules: Vec::new(),
             notification_deliveries: Vec::new(),
@@ -2850,6 +3100,73 @@ impl EphemerisApp {
             Err(error) => {
                 self.last_message = None;
                 self.last_error = Some(format!("Failed to create local event: {error:#}"));
+            }
+        }
+    }
+
+    fn begin_event_time_edit(&mut self, event_id: Uuid) {
+        let canonical_id = self.canonical_event_id(event_id);
+        let result = (|| -> anyhow::Result<EventTimeEditDraft> {
+            let event = self
+                .store
+                .event_by_id(canonical_id)?
+                .ok_or_else(|| anyhow::anyhow!("canonical event no longer exists"))?;
+            if !self.event_is_editable(&event) {
+                anyhow::bail!("event source is read-only");
+            }
+            EventTimeEditDraft::from_event(&event, self.timezone())
+        })();
+
+        match result {
+            Ok(draft) => {
+                self.event_time_editor = Some(draft);
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Cannot edit event time: {error:#}"));
+            }
+        }
+    }
+
+    fn save_event_time_edit(&mut self) {
+        let Some(draft) = self.event_time_editor.clone() else {
+            return;
+        };
+
+        let result = (|| -> anyhow::Result<()> {
+            let mut event = self
+                .store
+                .event_by_id(draft.event_id)?
+                .ok_or_else(|| anyhow::anyhow!("canonical event no longer exists"))?;
+            if !self.event_is_editable(&event) {
+                anyhow::bail!("event source is read-only");
+            }
+            if event.recurrence.is_some() {
+                anyhow::bail!("recurring event master time editing is not supported yet");
+            }
+            if event.time_uncertainty.is_some() {
+                anyhow::bail!(
+                    "uncertain event placement must be edited with uncertainty-aware controls"
+                );
+            }
+
+            event.time = draft.parsed_time()?;
+            event.updated_at = Utc::now();
+            self.store.upsert_event(&event)?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.event_time_editor = None;
+                self.last_message = Some("Saved canonical event time.".to_string());
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to save event time: {error:#}"));
             }
         }
     }
@@ -6669,8 +6986,86 @@ impl EphemerisApp {
 
             ui.add_space(8.0);
 
-            inspector_row(ui, "Time kind", event.time.kind_name());
+            ui.horizontal_wrapped(|ui| {
+                inspector_row(ui, "Time kind", event.time.kind_name());
+                let time_edit_supported = self.event_is_editable(&event)
+                    && event.recurrence.is_none()
+                    && event.time_uncertainty.is_none()
+                    && matches!(
+                        event.time,
+                        TimeSpec::Instant { .. }
+                            | TimeSpec::Floating { .. }
+                            | TimeSpec::AllDay { .. }
+                            | TimeSpec::DateOnly { .. }
+                    );
+                if ui
+                    .add_enabled(time_edit_supported, egui::Button::new("Edit time"))
+                    .clicked()
+                {
+                    self.begin_event_time_edit(canonical_id);
+                }
+            });
             inspector_row(ui, "Display", &event.display_time_label(self.timezone()));
+
+            if self
+                .event_time_editor
+                .as_ref()
+                .is_some_and(|draft| draft.event_id == canonical_id)
+            {
+                ui.group(|ui| {
+                    ui.strong("Edit canonical time");
+                    let draft = self.event_time_editor.as_mut().expect("checked above");
+                    ui.small(format!("Kind: {}", draft.kind.label()));
+                    if let Some(timezone) = draft.timezone_label() {
+                        ui.small(format!("Clock context: {timezone}"));
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut draft.date)
+                                .hint_text("YYYY-MM-DD")
+                                .desired_width(110.0),
+                        );
+                        if draft.is_timed() {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.start_time)
+                                    .hint_text("HH:MM")
+                                    .desired_width(75.0),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.duration_minutes)
+                                    .hint_text("minutes")
+                                    .desired_width(90.0),
+                            );
+                            ui.small("duration min · blank keeps no explicit end");
+                        } else {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.end_date)
+                                    .hint_text("end exclusive YYYY-MM-DD")
+                                    .desired_width(185.0),
+                            );
+                            ui.small("optional end-exclusive date");
+                        }
+                    });
+
+                    let mut action = None;
+                    ui.horizontal(|ui| {
+                        if ui.button("Save time").clicked() {
+                            action = Some(EventTimeEditorAction::Save);
+                        }
+                        if ui.small_button("Cancel").clicked() {
+                            action = Some(EventTimeEditorAction::Cancel);
+                        }
+                    });
+                    match action {
+                        Some(EventTimeEditorAction::Save) => self.save_event_time_edit(),
+                        Some(EventTimeEditorAction::Cancel) => {
+                            self.event_time_editor = None;
+                            self.last_error = None;
+                        }
+                        None => {}
+                    }
+                });
+            }
             inspector_row(
                 ui,
                 "Availability",
