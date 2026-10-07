@@ -5212,7 +5212,10 @@ mod tests {
         assert_eq!(AvailabilityBehavior::default(), AvailabilityBehavior::Busy);
         assert!(AvailabilityBehavior::Busy.blocks_time());
         assert!(!AvailabilityBehavior::Free.blocks_time());
-        assert_eq!(AvailabilityBehavior::parse("FREE"), Some(AvailabilityBehavior::Free));
+        assert_eq!(
+            AvailabilityBehavior::parse("FREE"),
+            Some(AvailabilityBehavior::Free)
+        );
         assert_eq!(
             serde_json::to_string(&AvailabilityBehavior::Free).expect("serialize"),
             "\"free\""
