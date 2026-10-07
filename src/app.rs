@@ -4167,9 +4167,7 @@ impl EphemerisApp {
             TopologyInspectorAction::RemoveFromCollection(collection_id) => {
                 self.remove_event_from_collection(event_id, collection_id)
             }
-            TopologyInspectorAction::CreateCollection => {
-                self.create_collection_for_event(event_id)
-            }
+            TopologyInspectorAction::CreateCollection => self.create_collection_for_event(event_id),
             TopologyInspectorAction::AddRelation => self.create_relation_for_event(event_id),
             TopologyInspectorAction::DeleteRelation(relation_id) => self
                 .store
@@ -4585,8 +4583,9 @@ impl EphemerisApp {
                         .on_hover_text("Remove this event from the collection")
                         .clicked()
                     {
-                        topology_action =
-                            Some(TopologyInspectorAction::RemoveFromCollection(*collection_id));
+                        topology_action = Some(TopologyInspectorAction::RemoveFromCollection(
+                            *collection_id,
+                        ));
                     }
                 });
             }
@@ -4643,7 +4642,10 @@ impl EphemerisApp {
                     egui::TextEdit::singleline(&mut self.topology_new_collection_name)
                         .hint_text("Collection name"),
                 );
-                ui.checkbox(&mut self.topology_new_collection_ordered, "Ordered sequence");
+                ui.checkbox(
+                    &mut self.topology_new_collection_ordered,
+                    "Ordered sequence",
+                );
                 if ui
                     .add_enabled(
                         !self.topology_new_collection_name.trim().is_empty(),
@@ -4668,7 +4670,11 @@ impl EphemerisApp {
                 ui.horizontal(|ui| {
                     ui.label(direction);
                     ui.label(format!("{} · {}", relation.relation_type, counterpart));
-                    if ui.small_button("×").on_hover_text("Delete relation").clicked() {
+                    if ui
+                        .small_button("×")
+                        .on_hover_text("Delete relation")
+                        .clicked()
+                    {
                         topology_action =
                             Some(TopologyInspectorAction::DeleteRelation(relation.id));
                     }
