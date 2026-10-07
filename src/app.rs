@@ -19,15 +19,13 @@ use crate::domain::{
     CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
     EventIdentityAssessment, EventIdentityState, EventParticipant, EventProvenanceRecord,
     EventProvenanceRole, EventRelation, EventStatus, NotificationRule, NotificationTarget,
-    NotificationTrigger, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
-    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
-    TemporalSource, TimeSpec, TimeUncertainty,
+    NotificationTrigger, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday,
+    RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
+    TimeUncertainty,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
-use crate::notifications::{
-    NotificationOccurrence, NotificationSkip, evaluate_notification_rules,
-};
+use crate::notifications::{NotificationOccurrence, NotificationSkip, evaluate_notification_rules};
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
