@@ -6953,7 +6953,7 @@ fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
             values: vec![EventIdentityState::Candidate],
         },
         QueryPredicateKind::AnnotationKind => QueryPredicate::AnnotationKind {
-            kind: String::new(),
+            annotation_kind: String::new(),
         },
     }
 }
@@ -7454,23 +7454,26 @@ fn render_query_predicate_editor(
                 }
             });
         }
-        QueryPredicate::AnnotationKind { kind } => {
+        QueryPredicate::AnnotationKind { annotation_kind } => {
             ui.small("Matches user-owned event annotations without changing source-backed fields.");
             egui::ComboBox::from_id_salt(("advanced-annotation-kind", path))
-                .selected_text(if kind.is_empty() {
+                .selected_text(if annotation_kind.is_empty() {
                     "Select annotation kind…"
                 } else {
-                    kind.as_str()
+                    annotation_kind.as_str()
                 })
                 .show_ui(ui, |ui| {
                     for candidate in &membership_options.annotation_kinds {
                         changed |= ui
-                            .selectable_value(kind, candidate.clone(), candidate)
+                            .selectable_value(annotation_kind, candidate.clone(), candidate)
                             .changed();
                     }
                 });
             changed |= ui
-                .add(egui::TextEdit::singleline(kind).hint_text("note, watched, rating, ..."))
+                .add(
+                    egui::TextEdit::singleline(annotation_kind)
+                        .hint_text("note, watched, rating, ..."),
+                )
                 .changed();
         }
     }
