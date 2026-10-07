@@ -124,9 +124,9 @@ Refresh is identity-aware. Unchanged records stay unchanged, changed records upd
 
 ### Canonical JSON
 
-Ephemeris also has a versioned native interchange format for canonical sources and events. It preserves source/event UUIDs, timestamps, recurrence, time semantics, and arbitrary properties; it is a canonical-data snapshot, not a full SQLite backup of saved views, refresh history, or Taria release tables.
+Ephemeris also has a versioned native interchange format for canonical data. Current v2 snapshots preserve sources, events, directed event relations, collections/sequences, ordered memberships, UUIDs, timestamps, recurrence, time semantics, and arbitrary properties. Version 1 sources/events-only snapshots remain readable. This is a canonical-data snapshot, not a full SQLite backup of saved views, refresh history, or Taria release tables.
 
-Export the current canonical sources/events:
+Export the current canonical corpus:
 
 ```bash
 cargo run --bin ephemeris-export -- --canonical-json snapshot.ephemeris.json
@@ -138,7 +138,7 @@ Merge a snapshot back into the canonical store:
 cargo run --bin ephemeris-import -- snapshot.ephemeris.json
 ```
 
-A `.ephemeris.json` snapshot can also be dropped onto the running application. Import is transactional and merge-only: matching UUIDs update, new UUIDs are created, and records absent from the snapshot are not implicitly deleted.
+A `.ephemeris.json` snapshot can also be dropped onto the running application. Import is transactional and merge-only at the corpus level: matching UUIDs update, new UUIDs are created, and unrelated local records survive. For a collection included in v2, its imported membership list is authoritative for that collection.
 
 ### CSV
 
