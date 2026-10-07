@@ -17,7 +17,7 @@ use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
     EventCollection, EventCollectionMember, EventRelation, EventStatus, RecurrenceFrequency,
     RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule,
-    RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
+    RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
@@ -4518,6 +4518,18 @@ impl EphemerisApp {
 
             inspector_row(ui, "Time kind", event.time.kind_name());
             inspector_row(ui, "Display", &event.display_time_label(self.timezone()));
+            if let Some(uncertainty) = event.time_uncertainty.as_ref() {
+                let (earliest, latest) =
+                    temporal_uncertainty_labels(uncertainty, self.timezone());
+                ui.separator();
+                ui.strong("Temporal uncertainty");
+                ui.small(
+                    "Display is the representative placement; the actual start is bounded by this window.",
+                );
+                inspector_row(ui, "Window kind", uncertainty.kind_name());
+                inspector_row(ui, "Earliest", &earliest);
+                inspector_row(ui, "Latest", &latest);
+            }
             if let Some(raw) = event.raw_title.as_deref() {
                 inspector_row(ui, "Raw title", raw);
             }
@@ -8807,6 +8819,34 @@ fn render_time_spec(ui: &mut egui::Ui, time: &TimeSpec, timezone: Tz) {
     }
 }
 
+fn temporal_uncertainty_labels(
+    uncertainty: &TimeUncertainty,
+    timezone: Tz,
+) -> (String, String) {
+    match uncertainty {
+        TimeUncertainty::DateWindow { earliest, latest } => {
+            (earliest.to_string(), latest.to_string())
+        }
+        TimeUncertainty::FloatingWindow { earliest, latest } => (
+            earliest.format("%Y-%m-%d %H:%M:%S").to_string(),
+            latest.format("%Y-%m-%d %H:%M:%S").to_string(),
+        ),
+        TimeUncertainty::InstantWindow {
+            earliest_utc,
+            latest_utc,
+        } => (
+            earliest_utc
+                .with_timezone(&timezone)
+                .format("%Y-%m-%d %H:%M:%S %Z")
+                .to_string(),
+            latest_utc
+                .with_timezone(&timezone)
+                .format("%Y-%m-%d %H:%M:%S %Z")
+                .to_string(),
+        ),
+    }
+}
+
 fn inspector_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.horizontal_wrapped(|ui| {
         ui.strong(format!("{label}:"));
@@ -8847,6 +8887,49 @@ mod tests {
             remote_locator_display("http://localhost:8080/calendar.ics"),
             "http://localhost:8080/…"
         );
+    }
+
+    #[test]
+    fn temporal_uncertainty_labels_preserve_window_shapes() {
+        let timezone = chrono_tz::America::Mexico_City;
+        let date = TimeUncertainty::DateWindow {
+            earliest: NaiveDate::from_ymd_opt(2026, 10, 5).expect("earliest"),
+            latest: NaiveDate::from_ymd_opt(2026, 10, 9).expect("latest"),
+        };
+        assert_eq!(
+            temporal_uncertainty_labels(&date, timezone),
+            ("2026-10-05".to_string(), "2026-10-09".to_string())
+        );
+
+        let floating = TimeUncertainty::FloatingWindow {
+            earliest: NaiveDate::from_ymd_opt(2026, 10, 7)
+                .expect("date")
+                .and_hms_opt(9, 0, 0)
+                .expect("time"),
+            latest: NaiveDate::from_ymd_opt(2026, 10, 7)
+                .expect("date")
+                .and_hms_opt(11, 0, 0)
+                .expect("time"),
+        };
+        assert_eq!(
+            temporal_uncertainty_labels(&floating, timezone),
+            (
+                "2026-10-07 09:00:00".to_string(),
+                "2026-10-07 11:00:00".to_string()
+            )
+        );
+
+        let instant = TimeUncertainty::InstantWindow {
+            earliest_utc: DateTime::parse_from_rfc3339("2026-10-07T15:00:00Z")
+                .expect("earliest")
+                .with_timezone(&Utc),
+            latest_utc: DateTime::parse_from_rfc3339("2026-10-07T17:00:00Z")
+                .expect("latest")
+                .with_timezone(&Utc),
+        };
+        let (earliest, latest) = temporal_uncertainty_labels(&instant, timezone);
+        assert!(earliest.starts_with("2026-10-07 09:00:00"));
+        assert!(latest.starts_with("2026-10-07 11:00:00"));
     }
 
     #[test]
