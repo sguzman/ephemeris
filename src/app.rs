@@ -11,7 +11,8 @@ use eframe::egui::{self, Color32, RichText};
 use uuid::Uuid;
 
 use crate::availability::{
-    BusyKind, FreeInterval, SlotSearch, availability_for_materialized_date_window, suggest_slots,
+    BusyKind, FreeInterval, SlotSearch, availability_for_materialized_date_window,
+    conflicts_for_candidate_event, suggest_slots,
 };
 use crate::calendar::{
     CalendarLayout, CalendarView, calendar_title, month_days, month_grid_start, quarter_months,
@@ -1599,7 +1600,30 @@ fn parse_ordinal_byday_values(raw: &str) -> Result<Vec<RecurrenceOrdinalWeekday>
         .collect()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+struct ConflictConfirmation {
+    time: TimeSpec,
+    availability: AvailabilityBehavior,
+    status: EventStatus,
+}
+
+impl ConflictConfirmation {
+    fn for_event(event: &TemporalEvent) -> Self {
+        Self {
+            time: event.time.clone(),
+            availability: event.availability,
+            status: event.status,
+        }
+    }
+
+    fn matches(&self, event: &TemporalEvent) -> bool {
+        self.time == event.time
+            && self.availability == event.availability
+            && self.status == event.status
+    }
+}
+
+#[derive(Debug, Clone)
 struct NewLocalEventDraft {
     title: String,
     description: String,
@@ -1611,6 +1635,7 @@ struct NewLocalEventDraft {
     all_day: bool,
     start_time: String,
     duration_minutes: String,
+    conflict_confirmation: Option<ConflictConfirmation>,
 }
 
 impl NewLocalEventDraft {
@@ -1626,6 +1651,7 @@ impl NewLocalEventDraft {
             all_day: false,
             start_time: "09:00".to_string(),
             duration_minutes: "60".to_string(),
+            conflict_confirmation: None,
         }
     }
 }
@@ -1662,6 +1688,7 @@ struct EventTimeEditDraft {
     start_time: String,
     duration_minutes: String,
     end_date: String,
+    conflict_confirmation: Option<ConflictConfirmation>,
 }
 
 impl EventTimeEditDraft {
@@ -1701,6 +1728,7 @@ impl EventTimeEditDraft {
                     start_time: local.format("%H:%M").to_string(),
                     duration_minutes,
                     end_date: String::new(),
+                    conflict_confirmation: None,
                 })
             }
             TimeSpec::Floating {
@@ -1728,6 +1756,7 @@ impl EventTimeEditDraft {
                 start_time: String::new(),
                 duration_minutes: String::new(),
                 end_date: end_exclusive.map_or_else(String::new, |value| value.to_string()),
+                conflict_confirmation: None,
             }),
             TimeSpec::DateOnly {
                 start,
@@ -1739,6 +1768,7 @@ impl EventTimeEditDraft {
                 start_time: String::new(),
                 duration_minutes: String::new(),
                 end_date: end_exclusive.map_or_else(String::new, |value| value.to_string()),
+                conflict_confirmation: None,
             }),
             TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
                 anyhow::bail!(
@@ -3176,6 +3206,48 @@ impl EphemerisApp {
         })
     }
 
+    fn scheduling_conflict_warning(
+        &self,
+        candidate: &TemporalEvent,
+        exclude_event_id: Option<Uuid>,
+    ) -> anyhow::Result<Option<String>> {
+        if matches!(candidate.time, TimeSpec::DateOnly { .. }) {
+            return Ok(None);
+        }
+
+        let events = self.store.list_events()?;
+        let check =
+            conflicts_for_candidate_event(&events, candidate, self.timezone(), exclude_event_id)?;
+        if check.conflicts.is_empty() {
+            return Ok(None);
+        }
+
+        let mut titles = check
+            .conflicts
+            .iter()
+            .map(|interval| interval.event_title.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let extra = titles.len().saturating_sub(4);
+        titles.truncate(4);
+        let mut message = format!(
+            "Scheduling conflict with {}.",
+            titles.join(", ")
+        );
+        if extra != 0 {
+            message.push_str(&format!(" +{extra} more."));
+        }
+        if !check.skipped.is_empty() {
+            message.push_str(&format!(
+                " {} other events could not be conflict-checked.",
+                check.skipped.len()
+            ));
+        }
+        message.push_str(" Save again without changing the time/status/availability to confirm.");
+        Ok(Some(message))
+    }
+
     fn begin_new_local_event(&mut self) {
         self.new_local_event = Some(NewLocalEventDraft::for_date(self.state.focus_date()));
         self.last_error = None;
@@ -3200,6 +3272,19 @@ impl EphemerisApp {
             event.domain = optional_trimmed(&draft.domain);
             event.status = draft.status;
             event.availability = draft.availability;
+
+            if let Some(warning) = self.scheduling_conflict_warning(&event, None)?
+                && draft
+                    .conflict_confirmation
+                    .as_ref()
+                    .is_none_or(|confirmation| !confirmation.matches(&event))
+            {
+                if let Some(current) = self.new_local_event.as_mut() {
+                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event));
+                }
+                anyhow::bail!("{warning}");
+            }
+
             let event_id = event.id;
             self.store.upsert_event(&event)?;
             Ok((event_id, focus_date))
@@ -3271,6 +3356,19 @@ impl EphemerisApp {
             }
 
             event.time = draft.parsed_time()?;
+
+            if let Some(warning) = self.scheduling_conflict_warning(&event, Some(event.id))?
+                && draft
+                    .conflict_confirmation
+                    .as_ref()
+                    .is_none_or(|confirmation| !confirmation.matches(&event))
+            {
+                if let Some(current) = self.event_time_editor.as_mut() {
+                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event));
+                }
+                anyhow::bail!("{warning}");
+            }
+
             event.updated_at = Utc::now();
             self.store.upsert_event(&event)?;
             Ok(())
@@ -4916,6 +5014,12 @@ impl EphemerisApp {
                         ui.small("min");
                     }
                 });
+                if draft.conflict_confirmation.is_some() {
+                    ui.colored_label(
+                        Color32::YELLOW,
+                        "Conflict warning active for the current scheduling fields. Create again to confirm.",
+                    );
+                }
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
@@ -7323,6 +7427,13 @@ impl EphemerisApp {
                             ui.small("optional end-exclusive date");
                         }
                     });
+
+                    if draft.conflict_confirmation.is_some() {
+                        ui.colored_label(
+                            Color32::YELLOW,
+                            "Conflict warning active for the current scheduling fields. Save again to confirm.",
+                        );
+                    }
 
                     let mut action = None;
                     ui.horizontal(|ui| {
