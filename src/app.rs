@@ -11,7 +11,7 @@ use eframe::egui::{self, Color32, RichText};
 use uuid::Uuid;
 
 use crate::availability::{
-    BusyKind, FreeInterval, availability_for_materialized_date_window,
+    BusyKind, FreeInterval, SlotSearch, availability_for_materialized_date_window, suggest_slots,
 };
 use crate::calendar::{
     CalendarLayout, CalendarView, calendar_title, month_days, month_grid_start, quarter_months,
@@ -112,6 +112,47 @@ fn parse_new_local_event_time(
         },
         date,
     ))
+}
+
+fn parse_slot_search(
+    duration_minutes: &str,
+    step_minutes: &str,
+    day_start: &str,
+    day_end: &str,
+) -> anyhow::Result<SlotSearch> {
+    let duration_minutes = duration_minutes
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| anyhow::anyhow!("slot duration must be a positive whole number of minutes"))?;
+    let step_minutes = step_minutes
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| anyhow::anyhow!("slot step must be a positive whole number of minutes"))?;
+    let day_start = NaiveTime::parse_from_str(day_start.trim(), "%H:%M")
+        .map_err(|_| anyhow::anyhow!("availability start must use HH:MM"))?;
+    let day_end = NaiveTime::parse_from_str(day_end.trim(), "%H:%M")
+        .map_err(|_| anyhow::anyhow!("availability end must use HH:MM"))?;
+
+    SlotSearch {
+        duration_minutes,
+        step_minutes,
+        day_start,
+        day_end,
+    }
+    .validate()
+}
+
+fn new_event_draft_for_suggested_slot(
+    interval: &FreeInterval,
+    timezone: Tz,
+) -> anyhow::Result<NewLocalEventDraft> {
+    let mut draft = new_event_draft_for_free_interval(interval, timezone)?;
+    let duration_minutes = (interval.end_utc - interval.start_utc).num_minutes();
+    if duration_minutes <= 0 {
+        anyhow::bail!("suggested slot has no positive duration");
+    }
+    draft.duration_minutes = duration_minutes.to_string();
+    Ok(draft)
 }
 
 fn new_event_draft_for_free_interval(
@@ -1738,6 +1779,10 @@ pub struct EphemerisApp {
     notification_event_lead_minutes: String,
     notification_saved_view_id: Option<Uuid>,
     notification_saved_view_lead_minutes: String,
+    availability_duration_minutes: String,
+    availability_step_minutes: String,
+    availability_day_start: String,
+    availability_day_end: String,
     dirty_state: bool,
     saved_view_name: String,
     saved_views: Vec<SavedView>,
@@ -1854,6 +1899,10 @@ impl EphemerisApp {
             notification_event_lead_minutes: "15".to_string(),
             notification_saved_view_id: None,
             notification_saved_view_lead_minutes: "15".to_string(),
+            availability_duration_minutes: "60".to_string(),
+            availability_step_minutes: "30".to_string(),
+            availability_day_start: "09:00".to_string(),
+            availability_day_end: "17:00".to_string(),
             dirty_state: false,
             saved_view_name: String::new(),
             saved_views,
