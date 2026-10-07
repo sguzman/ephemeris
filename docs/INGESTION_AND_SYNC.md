@@ -69,7 +69,17 @@ Local ICS is the first implemented source in this class. The current adapter par
 
 For local files, the canonicalized filesystem path is the stable source identity and VEVENT UID is the stable source-record identity. Refresh is transactional: unchanged records remain unchanged, changed UIDs update in place, new UIDs are created, and UIDs absent from a later file snapshot are retained unless stronger source semantics justify deletion or cancellation. Invalid calendars fail before source creation.
 
-Local ICS import is available from `ephemeris-import` and GUI drag/drop, with explicit in-app refresh from the source inspector. Remote HTTP/HTTPS/webcal feeds are also implemented: the CLI accepts feed URLs directly, and the GUI imports/refreshes them on a background worker so network latency does not block egui. Remote feeds use `SourceKind::Webcal`; their stable external source key is a SHA-256-derived identity rather than the raw feed URL, while the refresh locator remains local to the source record. The inspector redacts private path/query material. Stored iCalendar sources can be exported atomically through `ephemeris-export` or the GUI source inspector. The next integration step is recording local/remote iCalendar acquisition attempts in the generic refresh-attempt ledger.
+Local ICS import is available from `ephemeris-import` and GUI drag/drop, with explicit in-app refresh from the source inspector. Remote HTTP/HTTPS/webcal feeds are also implemented: the CLI accepts feed URLs directly, and the GUI imports/refreshes them on a background worker so network latency does not block egui. Remote feeds use `SourceKind::Webcal`; their stable external source key is a SHA-256-derived identity rather than the raw feed URL, while the refresh locator remains local to the source record. The inspector redacts private path/query material. Stored iCalendar sources can be exported atomically through `ephemeris-export` or the GUI source inspector.
+
+Local and remote iCalendar acquisition attempts are recorded in the generic durable refresh-attempt ledger. Remote feeds persist ETag/Last-Modified validators when available and send conditional requests on refresh; HTTP 304 is recorded and surfaced as a successful not-modified refresh without reparsing or rewriting canonical events.
+
+### Native canonical JSON
+
+The versioned `ephemeris.canonical_snapshot` JSON format is the lossless interchange boundary for canonical sources/events outside SQLite. Version 1 contains `TemporalSource` and `TemporalEvent` records, preserving UUIDs, timestamps, recurrence, time semantics, and arbitrary properties. Validation rejects duplicate UUIDs, duplicate source external refs, duplicate source-record identities, dangling source references, unsupported versions, and invalid recurrence.
+
+Snapshot import is transactional and merge-only: new UUIDs are created, matching UUIDs are updated or left unchanged, and records absent from the snapshot are not implicitly deleted. The explicit `.ephemeris.json` suffix keeps this path distinct from Taria's JSON artifacts. CLI import/export and GUI drag/drop are implemented.
+
+This format is not a complete SQLite backup. Saved views, refresh history, Taria release tables, and auxiliary alias/membership tables are outside v1.
 
 Each adapter stage should provide diagnostics.
 
