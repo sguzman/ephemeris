@@ -62,6 +62,19 @@ fn main() -> anyhow::Result<()> {
             "Events: {} created  {} updated  {} unchanged",
             report.events_created, report.events_updated, report.events_unchanged
         );
+        println!(
+            "Relations: {} created  {} updated  {} unchanged",
+            report.relations_created, report.relations_updated, report.relations_unchanged
+        );
+        println!(
+            "Collections: {} created  {} updated  {} unchanged",
+            report.collections_created, report.collections_updated, report.collections_unchanged
+        );
+        println!(
+            "Collection memberships: {} replaced  {} unchanged",
+            report.collection_memberships_replaced,
+            report.collection_memberships_unchanged
+        );
         return Ok(());
     }
 
