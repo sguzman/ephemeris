@@ -5156,7 +5156,7 @@ mod tests {
 
         migrate(&mut conn).expect("migrate to current");
         let store = TemporalStore { conn, path: None };
-        assert_eq!(store.schema_version().expect("version"), 17);
+        assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
 
         let loaded = store.event_by_id(event_id).expect("query").expect("event");
         assert_eq!(loaded.normalized_title, "Pre-v16 event");
@@ -5202,6 +5202,154 @@ mod tests {
                 .expect("empty search")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn event_annotations_roundtrip_survive_source_refresh_and_cascade_on_event_delete() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let source = TemporalSource::new("Feed", SourceKind::Ics, SourceAuthority::Official);
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+
+        let mut event = TemporalEvent::new(
+            "Original title",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        event.source_record_key = Some("uid-annotation".to_string());
+        let first = store
+            .import_batch(&source, std::slice::from_mut(&mut event))
+            .expect("initial import");
+        assert_eq!(first.created, 1);
+
+        let canonical = store
+            .event_by_source_record(source.id, "uid-annotation")
+            .expect("event query")
+            .expect("event");
+        let mut annotation = EventAnnotation::new(
+            canonical.id,
+            "note",
+            serde_json::json!({"text": "Keep this local note"}),
+        );
+        annotation.updated_at = Utc::now();
+        store
+            .upsert_event_annotation(&annotation)
+            .expect("annotation");
+
+        assert_eq!(
+            store
+                .event_annotation_by_id(annotation.id)
+                .expect("annotation query")
+                .expect("annotation"),
+            annotation
+        );
+        assert_eq!(
+            store
+                .event_annotations_for_event(canonical.id)
+                .expect("event annotations"),
+            vec![annotation.clone()]
+        );
+
+        let mut refreshed = TemporalEvent::new(
+            "Updated title from source",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        refreshed.source_record_key = Some("uid-annotation".to_string());
+        let result = store
+            .import_batch(&source, std::slice::from_mut(&mut refreshed))
+            .expect("refresh import");
+        assert_eq!(result.updated, 1);
+
+        let refreshed_event = store
+            .event_by_source_record(source.id, "uid-annotation")
+            .expect("event query")
+            .expect("event");
+        assert_eq!(refreshed_event.id, canonical.id);
+        assert_eq!(refreshed_event.normalized_title, "Updated title from source");
+        assert_eq!(
+            store
+                .event_annotations_for_event(canonical.id)
+                .expect("annotations after refresh"),
+            vec![annotation.clone()]
+        );
+
+        assert!(store
+            .delete_event_annotation(annotation.id)
+            .expect("delete annotation"));
+        assert!(store
+            .event_annotations_for_event(canonical.id)
+            .expect("annotations after delete")
+            .is_empty());
+
+        let cascade = EventAnnotation::new(canonical.id, "watched", serde_json::json!(true));
+        store
+            .upsert_event_annotation(&cascade)
+            .expect("cascade annotation");
+        store
+            .conn
+            .execute(
+                "DELETE FROM temporal_events WHERE id = ?1",
+                params![canonical.id.to_string()],
+            )
+            .expect("delete event");
+        assert!(store
+            .event_annotation_by_id(cascade.id)
+            .expect("annotation after cascade")
+            .is_none());
+    }
+
+    #[test]
+    fn v17_migration_adds_annotations_without_rewriting_events() {
+        let mut conn = Connection::open_in_memory().expect("connection");
+        configure_connection(&conn).expect("configure");
+
+        let tx = conn.transaction().expect("schema transaction");
+        create_schema_v2(&tx).expect("base schema");
+        add_event_recurrence_column(&tx).expect("recurrence column");
+        create_saved_views_schema_current(&tx).expect("saved views");
+        create_taria_release_schema_current(&tx).expect("taria schema");
+        create_refresh_history_schema_current(&tx).expect("refresh schema");
+        create_event_relation_collection_schema_current(&tx).expect("topology schema");
+        add_event_uncertainty_column(&tx).expect("uncertainty column");
+        create_event_identity_schema_current(&tx).expect("identity schema");
+        tx.pragma_update(None, "user_version", 17).expect("set v17");
+        tx.commit().expect("commit v17 schema");
+
+        let event_id = Uuid::new_v4();
+        conn.execute(
+            r#"
+            INSERT INTO temporal_events (
+                id,
+                assertion_refs_json, source_refs_json, provenance_refs_json,
+                normalized_title, status,
+                time_kind, start_date,
+                tags_json, properties_json,
+                created_at, updated_at
+            ) VALUES (?1, '[]', '[]', '[]', ?2, 'scheduled', 'date_only', ?3, '[]', '{}', ?4, ?4)
+            "#,
+            params![
+                event_id.to_string(),
+                "Pre-v18 event",
+                "2026-10-07",
+                "2026-10-07T00:00:00Z",
+            ],
+        )
+        .expect("insert v17 event");
+
+        migrate(&mut conn).expect("migrate to current");
+        let store = TemporalStore { conn, path: None };
+        assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+
+        let loaded = store.event_by_id(event_id).expect("query").expect("event");
+        assert_eq!(loaded.normalized_title, "Pre-v18 event");
+        assert!(store
+            .event_annotations_for_event(event_id)
+            .expect("annotations")
+            .is_empty());
     }
 
     #[test]
@@ -5347,7 +5495,7 @@ mod tests {
 
         migrate(&mut conn).expect("migrate to current");
         let store = TemporalStore { conn, path: None };
-        assert_eq!(store.schema_version().expect("version"), 17);
+        assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
         assert_eq!(
             store
                 .event_by_id(event_id)
