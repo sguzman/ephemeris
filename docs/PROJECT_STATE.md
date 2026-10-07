@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`f0a03a051bbd786c38855a00c62ab64703916ed0`
+`b40046840a6e506843e45c41ccef4e71c36354aa`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **534 library tests** pass
+- **548 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -106,7 +106,7 @@ The application can detect a local Resourcearium checkout and run **Update Taria
 
 ## Immediate frontier
 
-The versioned native JSON interchange boundary is implemented and verified. Current **v7** snapshots preserve canonical sources/events, relations, collections/sequences and memberships, identity assessments, user annotations, structured provenance, structured event location, and structured participants. Versions 1–6 remain readable under their historical capability gates. Validation rejects duplicate/dangling identities, malformed topology, invalid recurrence/uncertainty/location/participants, and records that claim semantics unavailable in their declared snapshot version. Import remains transactional and merge-only; collection memberships are authoritative only for collections explicitly present in the imported snapshot. CLI import/export and GUI drag/drop use the explicit `.ephemeris.json` suffix. Saved views, refresh history, Taria release tables, and auxiliary alias tables remain outside this snapshot boundary.
+The versioned native JSON interchange boundary is implemented and verified. Current **v9** snapshots preserve canonical sources/events, relations, collections/sequences and memberships, identity assessments, user annotations, structured provenance, structured event location, structured participants, the canonical entity registry, and Ephemeris-local participant→entity bindings. Versions 1–8 remain readable under their historical capability gates. Validation rejects duplicate/dangling identities, malformed topology, invalid recurrence/uncertainty/location/participants, invalid entity registries, and participant bindings whose event/entity/fingerprint no longer resolve. Import remains transactional and merge-only; collection memberships are authoritative only for collections explicitly present in the imported snapshot. CLI import/export and GUI drag/drop use the explicit `.ephemeris.json` suffix. Saved views, refresh history, and Taria release tables remain outside this snapshot boundary.
 
 Strict CSV v1 projection/import is now implemented and verified. CSV files become first-class `SourceKind::Csv` sources with stable file/source identity and required per-row `record_key` identity. The schema supports non-recurring exact instants, floating date-times, explicit all-day values, date-only values, and scalar event metadata. Refresh updates matching rows in place and retains rows absent from later snapshots. Source-scoped export is available from the CLI and GUI, and empty exports retain a valid schema header.
 
@@ -130,7 +130,11 @@ General-purpose canonical event history is now implemented as immutable schema-v
 
 Structured event location and participants are now implemented canonical fields. Location is persisted in schema v21 with structured venue/address/locality/region/country/coordinates/virtual-URL semantics. Participants are persisted in schema v22 as ordered structured rows with required name plus optional role, participant type, stable entity reference, and extensible properties. Both are queryable and inspector-visible; canonical JSON v7 preserves both losslessly. Editable/local events can add or remove participants through the inspector, while read-only source-backed events remain source-owned. CSV v1 and VEVENT export reject participant-bearing events rather than silently dropping them.
 
-The next Phase-2 frontier is **canonical entity resolution**: participant `entity_ref` should be able to resolve to durable person/organization/team/etc. identities without collapsing source-supplied participant labels into the entity registry itself.
+Canonical entity resolution is now a verified Phase-2 subsystem. Schema v23 introduced the durable entity registry; schema v24 adds Ephemeris-local participant→entity bindings without rewriting source-owned participant labels or `entity_ref`. Resolution order is explicit: manual local binding, source stable reference, then unique exact canonical-name/alias match with participant-type narrowing. Ambiguous and unresolved references remain unresolved rather than guessed.
+
+The UI now exposes participant resolution on read-only as well as editable events, a searchable/editable canonical entity registry, guarded entity merge, reverse event-usage visibility, and saved-view predicates by stable canonical entity UUID or entity type. Merges transfer aliases, external refs, old local refs, and local bindings while rejecting incompatible entity types or conflicting opaque properties. Canonical JSON v9 preserves the local binding layer losslessly.
+
+With the canonical temporal core now including durable reusable entity identity, the next product frontier moves into **Phase 10 personal scheduling completeness**, beginning with richer local event creation/editing while retaining the existing specialized editors for recurrence and other temporal semantics.
 
 ## Documentation roles
 
