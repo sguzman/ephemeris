@@ -56,6 +56,7 @@ pub enum IcalRecurrenceError {
     UnsupportedCanonicalStatus(String),
     UnsupportedTemporalUncertainty(&'static str),
     UnsupportedCanonicalLocation,
+    UnsupportedCanonicalParticipants,
     InvalidTimezone(String),
     TemporalKindMismatch {
         property: &'static str,
@@ -175,6 +176,9 @@ impl fmt::Display for IcalRecurrenceError {
             ),
             Self::UnsupportedCanonicalLocation => formatter.write_str(
                 "VEVENT transport cannot losslessly represent canonical structured location",
+            ),
+            Self::UnsupportedCanonicalParticipants => formatter.write_str(
+                "VEVENT transport cannot losslessly represent canonical structured participants",
             ),
             Self::InvalidTimezone(value) => {
                 write!(formatter, "unsupported or invalid iCalendar TZID {value}")
@@ -464,6 +468,9 @@ pub fn export_temporal_event(
     }
     if event.location.is_some() {
         return Err(IcalRecurrenceError::UnsupportedCanonicalLocation);
+    }
+    if !event.participants.is_empty() {
+        return Err(IcalRecurrenceError::UnsupportedCanonicalParticipants);
     }
 
     let template = stored_ical_master(event)?;
@@ -3306,6 +3313,25 @@ and continues here\r\nSUMMARY:Example\r\n";
         assert_eq!(
             export_temporal_event(&event),
             Err(IcalRecurrenceError::UnsupportedCanonicalLocation)
+        );
+    }
+
+    #[test]
+    fn canonical_export_rejects_structured_participants() {
+        let mut event = TemporalEvent::new(
+            "Participants",
+            TimeSpec::AllDay {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        event
+            .participants
+            .push(crate::domain::EventParticipant::new("Ada Lovelace"));
+
+        assert_eq!(
+            export_temporal_event(&event),
+            Err(IcalRecurrenceError::UnsupportedCanonicalParticipants)
         );
     }
 
