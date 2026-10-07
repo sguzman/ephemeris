@@ -809,9 +809,7 @@ impl TemporalStore {
         Ok(assessments)
     }
 
-    pub fn list_event_identity_assessments(
-        &self,
-    ) -> anyhow::Result<Vec<EventIdentityAssessment>> {
+    pub fn list_event_identity_assessments(&self) -> anyhow::Result<Vec<EventIdentityAssessment>> {
         let mut stmt = self.conn.prepare(
             r#"
             SELECT id, left_event_id, right_event_id, state,
@@ -3967,9 +3965,7 @@ fn decode_source(row: &Row<'_>) -> rusqlite::Result<TemporalSource> {
     })
 }
 
-fn decode_event_identity_assessment(
-    row: &Row<'_>,
-) -> rusqlite::Result<EventIdentityAssessment> {
+fn decode_event_identity_assessment(row: &Row<'_>) -> rusqlite::Result<EventIdentityAssessment> {
     let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
     let left_event_id =
         Uuid::parse_str(&row.get::<_, String>("left_event_id")?).map_err(to_sql_decode_error)?;
@@ -3977,7 +3973,9 @@ fn decode_event_identity_assessment(
         Uuid::parse_str(&row.get::<_, String>("right_event_id")?).map_err(to_sql_decode_error)?;
     let state_raw: String = row.get("state")?;
     let state = EventIdentityState::parse(&state_raw).ok_or_else(|| {
-        to_sql_decode_error(anyhow!("invalid event identity assessment state {state_raw:?}"))
+        to_sql_decode_error(anyhow!(
+            "invalid event identity assessment state {state_raw:?}"
+        ))
     })?;
     Ok(EventIdentityAssessment {
         id,
