@@ -4169,11 +4169,9 @@ impl EphemerisApp {
             }
             TopologyInspectorAction::CreateCollection => self.create_collection_for_event(event_id),
             TopologyInspectorAction::AddRelation => self.create_relation_for_event(event_id),
-            TopologyInspectorAction::DeleteRelation(relation_id) => self
-                .store
-                .delete_event_relation(relation_id)
-                .map(|_| ())
-                .map_err(anyhow::Error::from),
+            TopologyInspectorAction::DeleteRelation(relation_id) => {
+                self.store.delete_event_relation(relation_id).map(|_| ())
+            }
         };
 
         match result {
