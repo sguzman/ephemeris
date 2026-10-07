@@ -74,6 +74,16 @@ fn main() -> anyhow::Result<()> {
             "Collection memberships: {} replaced  {} unchanged",
             report.collection_memberships_replaced, report.collection_memberships_unchanged
         );
+        println!(
+            "Identity assessments: {} created  {} updated  {} unchanged",
+            report.identity_assessments_created,
+            report.identity_assessments_updated,
+            report.identity_assessments_unchanged
+        );
+        println!(
+            "Annotations: {} created  {} updated  {} unchanged",
+            report.annotations_created, report.annotations_updated, report.annotations_unchanged
+        );
         return Ok(());
     }
 
