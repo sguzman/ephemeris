@@ -3554,6 +3554,231 @@ impl EphemerisApp {
         }
     }
 
+    fn render_notification_center(&mut self, ui: &mut egui::Ui) {
+        if self.notification_rules.is_empty() {
+            return;
+        }
+
+        let now = Utc::now();
+        let timezone = self.timezone();
+        let due = self
+            .notification_occurrences
+            .iter()
+            .filter(|occurrence| occurrence.trigger_at_utc <= now)
+            .count();
+        let upcoming = self
+            .notification_occurrences
+            .iter()
+            .filter(|occurrence| occurrence.trigger_at_utc > now)
+            .count();
+
+        ui.collapsing(
+            format!("Reminders · {due} due · {upcoming} upcoming"),
+            |ui| {
+                if self.notification_occurrences.is_empty() {
+                    ui.small("No timed reminders fall within the next seven days.");
+                }
+
+                for occurrence in self.notification_occurrences.iter().take(12) {
+                    let trigger = occurrence.trigger_at_utc.with_timezone(&timezone);
+                    let start = occurrence.starts_at_utc.with_timezone(&timezone);
+                    let due_now = occurrence.trigger_at_utc <= now;
+                    ui.group(|ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            if due_now {
+                                ui.label(RichText::new("DUE").color(Color32::LIGHT_RED).strong());
+                            } else {
+                                ui.label(RichText::new("UPCOMING").strong());
+                            }
+                            ui.strong(&occurrence.event_title);
+                        });
+                        ui.small(format!(
+                            "{} · trigger {} · starts {} · {}m lead",
+                            occurrence.rule_name,
+                            trigger.format("%Y-%m-%d %H:%M"),
+                            start.format("%Y-%m-%d %H:%M"),
+                            occurrence.lead_minutes
+                        ));
+                    });
+                }
+
+                if self.notification_occurrences.len() > 12 {
+                    ui.small(format!(
+                        "{} more reminders in the seven-day evaluation window",
+                        self.notification_occurrences.len() - 12
+                    ));
+                }
+                if !self.notification_skipped.is_empty() {
+                    ui.small(format!(
+                        "{} rule/event matches are not schedulable yet because their temporal kind has no explicit notification clock.",
+                        self.notification_skipped.len()
+                    ));
+                }
+            },
+        );
+    }
+
+    fn render_event_notification_rules(
+        &mut self,
+        ui: &mut egui::Ui,
+        event_id: Uuid,
+        event_title: &str,
+        time: &TimeSpec,
+    ) {
+        let rules = self
+            .notification_rules
+            .iter()
+            .filter(|rule| {
+                matches!(
+                    rule.target,
+                    NotificationTarget::Event {
+                        event_id: target
+                    } if target == event_id
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        ui.separator();
+        ui.strong("Reminders");
+        ui.small(
+            "Reminders are Ephemeris-local and can attach to imported/read-only events without modifying their source.",
+        );
+
+        let mut toggle = None;
+        let mut delete = None;
+        for rule in rules {
+            ui.horizontal_wrapped(|ui| {
+                let mut enabled = rule.enabled;
+                if ui.checkbox(&mut enabled, "").changed() {
+                    toggle = Some((rule.id, enabled));
+                }
+                ui.label(format!(
+                    "{} · {}m before start",
+                    rule.name,
+                    rule.trigger.lead_minutes()
+                ));
+                if ui.small_button("Delete").clicked() {
+                    delete = Some(rule.id);
+                }
+            });
+        }
+
+        let timed = matches!(time, TimeSpec::Instant { .. } | TimeSpec::Floating { .. });
+        ui.horizontal_wrapped(|ui| {
+            ui.add_enabled(
+                timed,
+                egui::TextEdit::singleline(&mut self.notification_event_lead_minutes)
+                    .desired_width(70.0)
+                    .hint_text("minutes"),
+            );
+            if ui
+                .add_enabled(timed, egui::Button::new("Add reminder"))
+                .clicked()
+            {
+                self.create_event_notification_rule(event_id, event_title);
+            }
+            ui.small("minutes before");
+        });
+        if !timed {
+            ui.small(
+                "Before-start reminders currently require an exact or floating DATE-TIME. All-day/date-only events need an explicit notification clock before they can be scheduled.",
+            );
+        }
+
+        if let Some((rule_id, enabled)) = toggle {
+            self.set_notification_rule_enabled(rule_id, enabled);
+        }
+        if let Some(rule_id) = delete {
+            self.delete_notification_rule(rule_id);
+        }
+    }
+
+    fn render_saved_view_notification_rules(&mut self, ui: &mut egui::Ui) {
+        ui.separator();
+        ui.strong("Saved-view reminders");
+        ui.small(
+            "A saved-view rule applies the same query, composition, source visibility, and membership semantics as the calendar view.",
+        );
+
+        if self.notification_saved_view_id.is_none() {
+            self.notification_saved_view_id = self.saved_views.first().map(|view| view.id);
+        }
+
+        let selected_name = self
+            .notification_saved_view_id
+            .and_then(|id| self.saved_views.iter().find(|view| view.id == id))
+            .map_or("Select saved view…", |view| view.name.as_str());
+        egui::ComboBox::from_id_salt("notification-saved-view-target")
+            .selected_text(selected_name)
+            .show_ui(ui, |ui| {
+                for view in &self.saved_views {
+                    ui.selectable_value(
+                        &mut self.notification_saved_view_id,
+                        Some(view.id),
+                        &view.name,
+                    );
+                }
+            });
+
+        ui.horizontal_wrapped(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.notification_saved_view_lead_minutes)
+                    .desired_width(70.0)
+                    .hint_text("minutes"),
+            );
+            if ui
+                .add_enabled(
+                    self.notification_saved_view_id.is_some(),
+                    egui::Button::new("Add saved-view reminder"),
+                )
+                .clicked()
+            {
+                self.create_saved_view_notification_rule();
+            }
+            ui.small("minutes before each matching timed occurrence");
+        });
+
+        let rows = self
+            .notification_rules
+            .iter()
+            .filter_map(|rule| match rule.target {
+                NotificationTarget::SavedView { saved_view_id } => Some((rule.clone(), saved_view_id)),
+                NotificationTarget::Event { .. } => None,
+            })
+            .collect::<Vec<_>>();
+
+        let mut toggle = None;
+        let mut delete = None;
+        for (rule, saved_view_id) in rows {
+            let view_name = self
+                .saved_views
+                .iter()
+                .find(|view| view.id == saved_view_id)
+                .map_or_else(|| saved_view_id.to_string(), |view| view.name.clone());
+            ui.horizontal_wrapped(|ui| {
+                let mut enabled = rule.enabled;
+                if ui.checkbox(&mut enabled, "").changed() {
+                    toggle = Some((rule.id, enabled));
+                }
+                ui.label(format!(
+                    "{view_name} · {}m before",
+                    rule.trigger.lead_minutes()
+                ));
+                if ui.small_button("Delete").clicked() {
+                    delete = Some(rule.id);
+                }
+            });
+        }
+
+        if let Some((rule_id, enabled)) = toggle {
+            self.set_notification_rule_enabled(rule_id, enabled);
+        }
+        if let Some(rule_id) = delete {
+            self.delete_notification_rule(rule_id);
+        }
+    }
+
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         let title = calendar_title(
             self.state.calendar_view,
