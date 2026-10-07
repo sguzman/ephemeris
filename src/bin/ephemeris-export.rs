@@ -46,6 +46,10 @@ fn main() -> anyhow::Result<()> {
         println!("Identity assessments: {}", report.identity_assessment_count);
         println!("Annotations: {}", report.annotation_count);
         println!("Provenance records: {}", report.provenance_record_count);
+        println!(
+            "Participant entity bindings: {}",
+            report.participant_entity_binding_count
+        );
         println!("Output: {}", report.output_path.display());
         return Ok(());
     }
