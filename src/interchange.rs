@@ -47,9 +47,8 @@ impl CanonicalJsonSnapshot {
         events.sort_by_key(|event| event.id);
         relations.sort_by_key(|relation| relation.id);
         collections.sort_by_key(|collection| collection.id);
-        collection_members.sort_by_key(|member| {
-            (member.collection_id, member.position, member.event_id)
-        });
+        collection_members
+            .sort_by_key(|member| (member.collection_id, member.position, member.event_id));
 
         let snapshot = Self {
             format: CANONICAL_SNAPSHOT_FORMAT.to_string(),
@@ -176,10 +175,8 @@ impl CanonicalJsonSnapshot {
             }
 
             let mut member_pairs = HashSet::new();
-            let mut members_by_collection = std::collections::BTreeMap::<
-                uuid::Uuid,
-                Vec<&EventCollectionMember>,
-            >::new();
+            let mut members_by_collection =
+                std::collections::BTreeMap::<uuid::Uuid, Vec<&EventCollectionMember>>::new();
             for member in &self.collection_members {
                 if !collection_ids.contains(&member.collection_id) {
                     return Err(anyhow!(
@@ -583,13 +580,18 @@ mod tests {
         assert_eq!(report.relations_created, 1);
         assert_eq!(report.collections_created, 1);
         assert_eq!(report.collection_memberships_replaced, 1);
-        assert_eq!(store.list_event_relations().expect("relations"), vec![relation]);
+        assert_eq!(
+            store.list_event_relations().expect("relations"),
+            vec![relation]
+        );
         assert_eq!(
             store.list_event_collections().expect("collections"),
             vec![collection.clone()]
         );
         assert_eq!(
-            store.event_collection_members(collection.id).expect("members"),
+            store
+                .event_collection_members(collection.id)
+                .expect("members"),
             members
         );
 
