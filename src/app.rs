@@ -18,8 +18,8 @@ use crate::domain::{
     EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
     EventIdentityState, EventParticipant, EventProvenanceRecord, EventProvenanceRole,
     EventRelation, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
-    RecurrenceOrdinalWeekday, RecurrenceOverride,
-    RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
+    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
+    TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
@@ -4410,11 +4410,7 @@ impl EphemerisApp {
         }
     }
 
-    fn apply_participant_action(
-        &mut self,
-        event_id: Uuid,
-        action: ParticipantInspectorAction,
-    ) {
+    fn apply_participant_action(&mut self, event_id: Uuid, action: ParticipantInspectorAction) {
         let result = (|| -> anyhow::Result<()> {
             let mut event = self
                 .store
