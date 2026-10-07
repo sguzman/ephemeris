@@ -5240,8 +5240,6 @@ mod tests {
         assert_eq!(decoded.availability, AvailabilityBehavior::Busy);
     }
 
-
-
     #[test]
     fn event_annotation_requires_nonempty_kind() {
         let event_id = Uuid::new_v4();
