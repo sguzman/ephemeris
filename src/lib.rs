@@ -5,6 +5,7 @@ pub mod domain;
 pub mod ical;
 pub mod ics;
 pub mod interchange;
+pub mod notifications;
 pub mod query;
 pub mod state;
 pub mod store;
