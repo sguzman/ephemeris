@@ -4972,7 +4972,7 @@ mod tests {
 
         migrate(&mut conn).expect("migrate to current");
         let store = TemporalStore { conn, path: None };
-        assert_eq!(store.schema_version().expect("version"), 16);
+        assert_eq!(store.schema_version().expect("version"), 17);
 
         let loaded = store.event_by_id(event_id).expect("query").expect("event");
         assert_eq!(loaded.normalized_title, "Pre-v16 event");
@@ -5016,6 +5016,166 @@ mod tests {
             store
                 .search_event_titles("", None, 10)
                 .expect("empty search")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn event_identity_assessments_roundtrip_enforce_pair_uniqueness_and_cascade() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let first = TemporalEvent::new(
+            "Possible duplicate A",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        let second = TemporalEvent::new(
+            "Possible duplicate B",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        store.upsert_event(&first).expect("first");
+        store.upsert_event(&second).expect("second");
+
+        let mut assessment = EventIdentityAssessment::new(second.id, first.id);
+        assessment.state = EventIdentityState::Candidate;
+        assessment.confidence = Some(0.84);
+        assessment.rationale = Some("same title/date from independent feeds".to_string());
+        assessment.properties = serde_json::json!({"method": "manual_review"});
+        store
+            .upsert_event_identity_assessment(&assessment)
+            .expect("assessment");
+
+        assert_eq!(
+            store
+                .event_identity_assessment_by_id(assessment.id)
+                .expect("query by id")
+                .expect("assessment"),
+            assessment
+        );
+        assert_eq!(
+            store
+                .event_identity_assessment_between(first.id, second.id)
+                .expect("query pair")
+                .expect("pair"),
+            assessment
+        );
+        assert_eq!(
+            store
+                .event_identity_assessment_between(second.id, first.id)
+                .expect("query reversed pair")
+                .expect("pair"),
+            assessment
+        );
+        assert_eq!(
+            store
+                .event_identity_assessments_for_event(first.id)
+                .expect("first assessments"),
+            vec![assessment.clone()]
+        );
+        assert_eq!(
+            store
+                .list_event_identity_assessments()
+                .expect("all assessments"),
+            vec![assessment.clone()]
+        );
+
+        let duplicate = EventIdentityAssessment::new(first.id, second.id);
+        assert!(
+            store
+                .upsert_event_identity_assessment(&duplicate)
+                .expect_err("duplicate pair must fail")
+                .to_string()
+                .contains("failed to upsert event identity assessment")
+        );
+
+        let mut resolved = assessment.clone();
+        resolved.state = EventIdentityState::SameEvent;
+        resolved.confidence = Some(1.0);
+        resolved.updated_at = Utc::now();
+        store
+            .upsert_event_identity_assessment(&resolved)
+            .expect("resolve same event");
+        assert_eq!(
+            store
+                .event_identity_assessment_between(first.id, second.id)
+                .expect("resolved pair")
+                .expect("assessment")
+                .state,
+            EventIdentityState::SameEvent
+        );
+
+        store
+            .conn
+            .execute(
+                "DELETE FROM temporal_events WHERE id = ?1",
+                params![first.id.to_string()],
+            )
+            .expect("delete event");
+        assert!(
+            store
+                .event_identity_assessment_by_id(assessment.id)
+                .expect("query after cascade")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn v16_migration_adds_identity_assessments_without_rewriting_events() {
+        let mut conn = Connection::open_in_memory().expect("connection");
+        configure_connection(&conn).expect("configure");
+
+        let tx = conn.transaction().expect("schema transaction");
+        create_schema_v2(&tx).expect("base schema");
+        add_event_recurrence_column(&tx).expect("recurrence column");
+        create_saved_views_schema_current(&tx).expect("saved views");
+        create_taria_release_schema_current(&tx).expect("taria schema");
+        create_refresh_history_schema_current(&tx).expect("refresh schema");
+        create_event_relation_collection_schema_current(&tx).expect("topology schema");
+        add_event_uncertainty_column(&tx).expect("uncertainty column");
+        tx.pragma_update(None, "user_version", 16).expect("set v16");
+        tx.commit().expect("commit v16 schema");
+
+        let event_id = Uuid::new_v4();
+        conn.execute(
+            r#"
+            INSERT INTO temporal_events (
+                id,
+                assertion_refs_json, source_refs_json, provenance_refs_json,
+                normalized_title, status,
+                time_kind, start_date,
+                tags_json, properties_json,
+                created_at, updated_at
+            ) VALUES (?1, '[]', '[]', '[]', ?2, 'scheduled', 'date_only', ?3, '[]', '{}', ?4, ?4)
+            "#,
+            params![
+                event_id.to_string(),
+                "Pre-v17 event",
+                "2026-10-07",
+                "2026-10-07T00:00:00Z",
+            ],
+        )
+        .expect("insert v16 event");
+
+        migrate(&mut conn).expect("migrate to current");
+        let store = TemporalStore { conn, path: None };
+        assert_eq!(store.schema_version().expect("version"), 17);
+        assert_eq!(
+            store
+                .event_by_id(event_id)
+                .expect("query")
+                .expect("event")
+                .normalized_title,
+            "Pre-v17 event"
+        );
+        assert!(
+            store
+                .list_event_identity_assessments()
+                .expect("identity assessments")
                 .is_empty()
         );
     }
