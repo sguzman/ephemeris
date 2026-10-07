@@ -63,6 +63,16 @@ pub struct PersistedUiState {
     #[serde(default)]
     pub active_saved_view_id: Option<Uuid>,
     pub selected_event_id: Option<Uuid>,
+    #[serde(default = "default_availability_duration_minutes")]
+    pub availability_duration_minutes: String,
+    #[serde(default = "default_availability_step_minutes")]
+    pub availability_step_minutes: String,
+    #[serde(default = "default_availability_day_start")]
+    pub availability_day_start: String,
+    #[serde(default = "default_availability_day_end")]
+    pub availability_day_end: String,
+    #[serde(default = "default_availability_workdays")]
+    pub availability_workdays: [bool; 7],
     #[serde(default)]
     pub taria_resourcearium_root: String,
     #[serde(default = "default_taria_channel")]
@@ -78,7 +88,7 @@ pub struct PersistedUiState {
 impl Default for PersistedUiState {
     fn default() -> Self {
         Self {
-            version: 10,
+            version: 11,
             calendar_view: CalendarView::Month,
             calendar_layout: CalendarLayout::Grid,
             focus_date: Local::now().date_naive().to_string(),
@@ -106,6 +116,11 @@ impl Default for PersistedUiState {
             legacy_saved_views: Vec::new(),
             active_saved_view_id: None,
             selected_event_id: None,
+            availability_duration_minutes: default_availability_duration_minutes(),
+            availability_step_minutes: default_availability_step_minutes(),
+            availability_day_start: default_availability_day_start(),
+            availability_day_end: default_availability_day_end(),
+            availability_workdays: default_availability_workdays(),
             taria_resourcearium_root: String::new(),
             taria_channel: default_taria_channel(),
             taria_last_release_id: None,
@@ -137,8 +152,8 @@ impl PersistedUiState {
             .with_context(|| format!("failed to read {}", path.display()))?;
         let mut state: Self = serde_json::from_str(&raw)
             .with_context(|| format!("failed to decode {}", path.display()))?;
-        if state.version < 10 {
-            state.version = 10;
+        if state.version < 11 {
+            state.version = 11;
         }
         if state.taria_channel.trim().is_empty() {
             state.taria_channel = default_taria_channel();
@@ -260,6 +275,26 @@ impl PersistedUiState {
     }
 }
 
+fn default_availability_duration_minutes() -> String {
+    "60".to_string()
+}
+
+fn default_availability_step_minutes() -> String {
+    "30".to_string()
+}
+
+fn default_availability_day_start() -> String {
+    "09:00".to_string()
+}
+
+fn default_availability_day_end() -> String {
+    "17:00".to_string()
+}
+
+fn default_availability_workdays() -> [bool; 7] {
+    [true, true, true, true, true, false, false]
+}
+
 fn default_taria_channel() -> String {
     "bootstrap".to_string()
 }
@@ -281,6 +316,34 @@ mod tests {
 
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn legacy_state_defaults_personal_availability_preferences() {
+        let raw = r#"{
+            "version": 10,
+            "calendar_view": "month",
+            "focus_date": "2026-10-07",
+            "display_timezone": "UTC",
+            "week_start_monday": false,
+            "show_sources": true,
+            "show_inspector": true,
+            "selected_event_id": null
+        }"#;
+        let mut state: PersistedUiState = serde_json::from_str(raw).expect("legacy state");
+        if state.version < 11 {
+            state.version = 11;
+        }
+
+        assert_eq!(state.version, 11);
+        assert_eq!(state.availability_duration_minutes, "60");
+        assert_eq!(state.availability_step_minutes, "30");
+        assert_eq!(state.availability_day_start, "09:00");
+        assert_eq!(state.availability_day_end, "17:00");
+        assert_eq!(
+            state.availability_workdays,
+            [true, true, true, true, true, false, false]
+        );
+    }
 
     #[test]
     fn state_roundtrips() {
