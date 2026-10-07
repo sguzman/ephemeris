@@ -264,9 +264,7 @@ impl CanonicalJsonSnapshot {
             for assessment in &self.identity_assessments {
                 assessment
                     .validate()
-                    .with_context(|| {
-                        format!("identity assessment {} is invalid", assessment.id)
-                    })?;
+                    .with_context(|| format!("identity assessment {} is invalid", assessment.id))?;
                 if !assessment_ids.insert(assessment.id) {
                     return Err(anyhow!(
                         "duplicate event identity assessment UUID {}",
@@ -281,9 +279,7 @@ impl CanonicalJsonSnapshot {
                         assessment.id
                     ));
                 }
-                if !assessment_pairs
-                    .insert((assessment.left_event_id, assessment.right_event_id))
-                {
+                if !assessment_pairs.insert((assessment.left_event_id, assessment.right_event_id)) {
                     return Err(anyhow!(
                         "duplicate event identity assessment pair {} / {}",
                         assessment.left_event_id,
