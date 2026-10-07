@@ -19,7 +19,7 @@ use crate::domain::{
     CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
     EventIdentityAssessment, EventIdentityState, EventParticipant, EventProvenanceRecord,
     EventProvenanceRole, EventRelation, EventStatus, NotificationRule, NotificationTarget,
-    NotificationTrigger, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday,
+    RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday,
     RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
     TimeUncertainty,
 };
