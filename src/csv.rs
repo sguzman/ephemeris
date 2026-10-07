@@ -308,6 +308,12 @@ fn row_into_event(row: CsvEventRow) -> anyhow::Result<TemporalEvent> {
 }
 
 fn event_into_row(event: &TemporalEvent) -> anyhow::Result<CsvEventRow> {
+    if event.location.is_some() {
+        return Err(anyhow!(
+            "event {} has structured location, which Ephemeris CSV v1 cannot represent",
+            event.id
+        ));
+    }
     if event.time_uncertainty.is_some() {
         return Err(anyhow!(
             "event {} has temporal uncertainty, which Ephemeris CSV v1 cannot represent",
@@ -735,6 +741,20 @@ mod tests {
         );
         properties.properties = serde_json::json!({"not": "representable"});
         assert!(format_csv_events(&[properties]).is_err());
+
+        let mut located = simple_event(
+            "Located",
+            "located",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        located.location = Some(crate::domain::EventLocation {
+            name: Some("Venue".to_string()),
+            ..crate::domain::EventLocation::default()
+        });
+        assert!(format_csv_events(&[located]).is_err());
     }
 
     #[test]
