@@ -52,6 +52,31 @@ fn multiline_values(value: &str) -> Vec<String> {
         .collect()
 }
 
+fn parse_optional_confidence(value: &str) -> anyhow::Result<Option<f32>> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let parsed = value
+        .parse::<f32>()
+        .map_err(|_| anyhow::anyhow!("confidence must be a number from 0 to 1"))?;
+    if !parsed.is_finite() || !(0.0..=1.0).contains(&parsed) {
+        anyhow::bail!("confidence must be finite and between 0 and 1");
+    }
+    Ok(Some(parsed))
+}
+
+fn parse_optional_i32(value: &str, label: &str) -> anyhow::Result<Option<i32>> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    value
+        .parse::<i32>()
+        .map(Some)
+        .map_err(|_| anyhow::anyhow!("{label} must be a whole number"))
+}
+
 fn optional_trimmed(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -1409,6 +1434,51 @@ fn parse_ordinal_byday_values(raw: &str) -> Result<Vec<RecurrenceOrdinalWeekday>
         .collect()
 }
 
+#[derive(Debug, Clone)]
+struct EventDetailsEditDraft {
+    event_id: Uuid,
+    title: String,
+    description: String,
+    event_type: String,
+    domain: String,
+    jurisdiction: String,
+    institution: String,
+    status: EventStatus,
+    confidence: String,
+    importance: String,
+    personal_relevance: String,
+}
+
+impl EventDetailsEditDraft {
+    fn from_event(event: &TemporalEvent) -> Self {
+        Self {
+            event_id: event.id,
+            title: event.normalized_title.clone(),
+            description: event.description.clone().unwrap_or_default(),
+            event_type: event.event_type.clone().unwrap_or_default(),
+            domain: event.domain.clone().unwrap_or_default(),
+            jurisdiction: event.jurisdiction.clone().unwrap_or_default(),
+            institution: event.institution.clone().unwrap_or_default(),
+            status: event.status,
+            confidence: event
+                .confidence
+                .map_or_else(String::new, |value| value.to_string()),
+            importance: event
+                .importance
+                .map_or_else(String::new, |value| value.to_string()),
+            personal_relevance: event
+                .personal_relevance
+                .map_or_else(String::new, |value| value.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EventDetailsEditorAction {
+    Save,
+    Cancel,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecurrenceEditorAction {
     Save,
@@ -1524,6 +1594,7 @@ pub struct EphemerisApp {
     taria_update_receiver: Option<(Uuid, Receiver<Result<TariaWorkspaceUpdateReport, String>>)>,
     last_message: Option<String>,
     last_error: Option<String>,
+    event_details_editor: Option<EventDetailsEditDraft>,
     recurrence_editor: Option<RecurrenceEditDraft>,
     dirty_state: bool,
     saved_view_name: String,
@@ -1630,6 +1701,7 @@ impl EphemerisApp {
             taria_update_receiver: None,
             last_message: None,
             last_error: None,
+            event_details_editor: None,
             recurrence_editor: None,
             dirty_state: false,
             saved_view_name: String::new(),
@@ -2540,6 +2612,83 @@ impl EphemerisApp {
                 .find(|source| source.id == source_id)
                 .is_none_or(|source| !source.read_only)
         })
+    }
+
+    fn begin_event_details_edit(&mut self, event_id: Uuid) {
+        let canonical_id = self.canonical_event_id(event_id);
+        match self.store.event_by_id(canonical_id) {
+            Ok(Some(event)) if self.event_is_editable(&event) => {
+                self.event_details_editor = Some(EventDetailsEditDraft::from_event(&event));
+                self.last_error = None;
+            }
+            Ok(Some(_)) => {
+                self.last_message = None;
+                self.last_error = Some(
+                    "This event comes from a read-only source and cannot be edited.".to_string(),
+                );
+            }
+            Ok(None) => {
+                self.last_message = None;
+                self.last_error = Some("The canonical event could not be found.".to_string());
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to load event editor: {error:#}"));
+            }
+        }
+    }
+
+    fn save_event_details_edit(&mut self) {
+        let Some(draft) = self.event_details_editor.clone() else {
+            return;
+        };
+
+        let result = (|| -> anyhow::Result<()> {
+            let title = draft.title.trim();
+            if title.is_empty() {
+                anyhow::bail!("event title cannot be empty");
+            }
+
+            let confidence = parse_optional_confidence(&draft.confidence)?;
+            let importance = parse_optional_i32(&draft.importance, "importance")?;
+            let personal_relevance =
+                parse_optional_i32(&draft.personal_relevance, "personal relevance")?;
+
+            let mut event = self
+                .store
+                .event_by_id(draft.event_id)?
+                .ok_or_else(|| anyhow::anyhow!("canonical event no longer exists"))?;
+            if !self.event_is_editable(&event) {
+                anyhow::bail!("event source is read-only");
+            }
+
+            event.normalized_title = title.to_string();
+            event.description = optional_trimmed(&draft.description);
+            event.event_type = optional_trimmed(&draft.event_type);
+            event.domain = optional_trimmed(&draft.domain);
+            event.jurisdiction = optional_trimmed(&draft.jurisdiction);
+            event.institution = optional_trimmed(&draft.institution);
+            event.status = draft.status;
+            event.confidence = confidence;
+            event.importance = importance;
+            event.personal_relevance = personal_relevance;
+            event.updated_at = Utc::now();
+            self.store.upsert_event(&event)?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.event_details_editor = None;
+                self.last_message = Some("Saved canonical event details.".to_string());
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to save event details: {error:#}"));
+            }
+        }
     }
 
     fn begin_recurrence_edit(&mut self, event_id: Uuid) {
@@ -5292,6 +5441,13 @@ impl EphemerisApp {
         };
         let canonical_id = self.canonical_event_id(event.id);
         if self
+            .event_details_editor
+            .as_ref()
+            .is_some_and(|draft| draft.event_id != canonical_id)
+        {
+            self.event_details_editor = None;
+        }
+        if self
             .participant_entity_edit
             .is_some_and(|(event_id, _)| event_id != canonical_id)
         {
@@ -5389,17 +5545,110 @@ impl EphemerisApp {
             .collect::<Vec<_>>();
         let mut topology_action = None;
         let mut participant_action = None;
+        let mut event_details_action = None;
         let mut refresh_participant_entity_search = false;
         let mut refresh_relation_search = false;
         let mut refresh_identity_search = false;
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.heading(&event.normalized_title);
+            ui.horizontal_wrapped(|ui| {
+                ui.heading(&event.normalized_title);
+                if self.event_is_editable(&event)
+                    && self
+                        .event_details_editor
+                        .as_ref()
+                        .is_none_or(|draft| draft.event_id != canonical_id)
+                    && ui.small_button("Edit details").clicked()
+                {
+                    self.begin_event_details_edit(canonical_id);
+                }
+            });
             ui.label(
                 RichText::new(event.status.as_str())
                     .color(status_color(event.status))
                     .strong(),
             );
+
+            if self
+                .event_details_editor
+                .as_ref()
+                .is_some_and(|draft| draft.event_id == canonical_id)
+            {
+                ui.group(|ui| {
+                    ui.strong("Edit canonical details");
+                    let draft = self.event_details_editor.as_mut().expect("checked above");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.title)
+                            .hint_text("Title"),
+                    );
+                    ui.add(
+                        egui::TextEdit::multiline(&mut draft.description)
+                            .desired_rows(3)
+                            .hint_text("Description"),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.event_type)
+                            .hint_text("Event type"),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.domain)
+                            .hint_text("Domain"),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.jurisdiction)
+                            .hint_text("Jurisdiction"),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.institution)
+                            .hint_text("Institution"),
+                    );
+
+                    egui::ComboBox::from_id_salt(("event-details-status", canonical_id))
+                        .selected_text(draft.status.as_str())
+                        .show_ui(ui, |ui| {
+                            for status in EventStatus::ALL {
+                                ui.selectable_value(&mut draft.status, status, status.as_str());
+                            }
+                        });
+
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut draft.confidence)
+                                .desired_width(90.0)
+                                .hint_text("Confidence 0..1"),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut draft.importance)
+                                .desired_width(80.0)
+                                .hint_text("Importance"),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut draft.personal_relevance)
+                                .desired_width(100.0)
+                                .hint_text("Relevance"),
+                        );
+                    });
+                    ui.small(
+                        "Blank optional fields clear the canonical value. Time, recurrence, participants, topology, and provenance are edited in their dedicated sections.",
+                    );
+
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !draft.title.trim().is_empty(),
+                                egui::Button::new("Save details"),
+                            )
+                            .clicked()
+                        {
+                            event_details_action = Some(EventDetailsEditorAction::Save);
+                        }
+                        if ui.small_button("Cancel").clicked() {
+                            event_details_action = Some(EventDetailsEditorAction::Cancel);
+                        }
+                    });
+                });
+            }
+
             ui.add_space(8.0);
 
             inspector_row(ui, "Time kind", event.time.kind_name());
@@ -6534,6 +6783,14 @@ impl EphemerisApp {
             inspector_row(ui, "Updated", &event.updated_at.to_rfc3339());
         });
 
+        match event_details_action {
+            Some(EventDetailsEditorAction::Save) => self.save_event_details_edit(),
+            Some(EventDetailsEditorAction::Cancel) => {
+                self.event_details_editor = None;
+                self.last_error = None;
+            }
+            None => {}
+        }
         if refresh_participant_entity_search {
             self.refresh_participant_entity_candidates();
         }
@@ -10577,6 +10834,24 @@ fn status_color(status: EventStatus) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_details_numeric_parsers_are_strict_and_blank_aware() {
+        assert_eq!(parse_optional_confidence("").expect("blank confidence"), None);
+        assert_eq!(
+            parse_optional_confidence("0.75").expect("confidence"),
+            Some(0.75)
+        );
+        assert!(parse_optional_confidence("1.1").is_err());
+        assert!(parse_optional_confidence("NaN").is_err());
+
+        assert_eq!(parse_optional_i32("", "importance").expect("blank"), None);
+        assert_eq!(
+            parse_optional_i32("-2", "importance").expect("integer"),
+            Some(-2)
+        );
+        assert!(parse_optional_i32("2.5", "importance").is_err());
+    }
 
     #[test]
     fn remote_locator_display_hides_private_path_and_query() {
