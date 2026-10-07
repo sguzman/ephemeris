@@ -5282,7 +5282,7 @@ fn add_event_location_column(conn: &Connection) -> anyhow::Result<()> {
         .context("failed to add event location column")
 }
 
-fn create_notification_delivery_schema_current(conn: &Connection) -> anyhow::Result<()> {
+fn create_notification_delivery_schema_v26(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
         CREATE TABLE notification_deliveries (
@@ -5296,17 +5296,12 @@ fn create_notification_delivery_schema_current(conn: &Connection) -> anyhow::Res
             starts_at_utc TEXT NOT NULL,
             lead_minutes INTEGER NOT NULL CHECK (lead_minutes >= 0),
             delivered_at TEXT NOT NULL,
-            snoozed_until TEXT,
             dismissed_at TEXT,
             UNIQUE (rule_id, occurrence_id)
         );
 
         CREATE INDEX notification_deliveries_active
             ON notification_deliveries(dismissed_at, delivered_at)
-            WHERE dismissed_at IS NULL;
-
-        CREATE INDEX notification_deliveries_due
-            ON notification_deliveries(dismissed_at, snoozed_until, delivered_at)
             WHERE dismissed_at IS NULL;
 
         CREATE INDEX notification_deliveries_rule
@@ -5316,7 +5311,26 @@ fn create_notification_delivery_schema_current(conn: &Connection) -> anyhow::Res
             ON notification_deliveries(event_id, delivered_at);
         "#,
     )
-    .context("failed to create notification delivery schema")
+    .context("failed to create v26 notification delivery schema")
+}
+
+fn add_notification_snooze_state(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        ALTER TABLE notification_deliveries
+        ADD COLUMN snoozed_until TEXT;
+
+        CREATE INDEX notification_deliveries_due
+            ON notification_deliveries(dismissed_at, snoozed_until, delivered_at)
+            WHERE dismissed_at IS NULL;
+        "#,
+    )
+    .context("failed to add notification snooze state")
+}
+
+fn create_notification_delivery_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    create_notification_delivery_schema_v26(conn)?;
+    add_notification_snooze_state(conn)
 }
 
 fn create_notification_rule_schema_current(conn: &Connection) -> anyhow::Result<()> {
@@ -5506,17 +5520,7 @@ fn migrate_v27_to_v28(conn: &mut Connection) -> anyhow::Result<()> {
     let tx = conn
         .transaction()
         .context("failed to start v27 to v28 migration")?;
-    tx.execute_batch(
-        r#"
-        ALTER TABLE notification_deliveries
-        ADD COLUMN snoozed_until TEXT;
-
-        CREATE INDEX notification_deliveries_due
-            ON notification_deliveries(dismissed_at, snoozed_until, delivered_at)
-            WHERE dismissed_at IS NULL;
-        "#,
-    )
-    .context("failed to add notification snooze state")?;
+    add_notification_snooze_state(&tx)?;
     tx.pragma_update(None, "user_version", 28)
         .context("failed to set schema version 28")?;
     tx.commit()
@@ -5538,7 +5542,7 @@ fn migrate_v25_to_v26(conn: &mut Connection) -> anyhow::Result<()> {
     let tx = conn
         .transaction()
         .context("failed to start v25 to v26 migration")?;
-    create_notification_delivery_schema_current(&tx)?;
+    create_notification_delivery_schema_v26(&tx)?;
     tx.pragma_update(None, "user_version", 26)
         .context("failed to set schema version 26")?;
     tx.commit()
