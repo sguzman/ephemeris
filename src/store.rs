@@ -20,7 +20,7 @@ use crate::domain::{
 use crate::notifications::NotificationDelivery;
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 27;
+const SCHEMA_VERSION: i64 = 28;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParticipantEntityBinding {
@@ -790,8 +790,8 @@ impl TemporalStore {
                     id, rule_id, event_id, occurrence_id,
                     rule_name, event_title,
                     trigger_at_utc, starts_at_utc, lead_minutes,
-                    delivered_at, dismissed_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                    delivered_at, snoozed_until, dismissed_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 "#,
                 params![
                     delivery.id.to_string(),
@@ -804,6 +804,7 @@ impl TemporalStore {
                     delivery.starts_at_utc.to_rfc3339(),
                     i64::from(delivery.lead_minutes),
                     delivery.delivered_at.to_rfc3339(),
+                    delivery.snoozed_until.map(|value| value.to_rfc3339()),
                     delivery.dismissed_at.map(|value| value.to_rfc3339()),
                 ],
             )
@@ -821,7 +822,7 @@ impl TemporalStore {
                 id, rule_id, event_id, occurrence_id,
                 rule_name, event_title,
                 trigger_at_utc, starts_at_utc, lead_minutes,
-                delivered_at, dismissed_at
+                delivered_at, snoozed_until, dismissed_at
             FROM notification_deliveries
             WHERE id = ?1
             "#,
@@ -838,7 +839,7 @@ impl TemporalStore {
                 id, rule_id, event_id, occurrence_id,
                 rule_name, event_title,
                 trigger_at_utc, starts_at_utc, lead_minutes,
-                delivered_at, dismissed_at
+                delivered_at, snoozed_until, dismissed_at
             FROM notification_deliveries
             WHERE dismissed_at IS NULL
             ORDER BY delivered_at DESC, id
@@ -850,6 +851,52 @@ impl TemporalStore {
             deliveries.push(decode_notification_delivery(row)?);
         }
         Ok(deliveries)
+    }
+
+    pub fn due_notification_deliveries(
+        &self,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<Vec<NotificationDelivery>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, rule_id, event_id, occurrence_id,
+                rule_name, event_title,
+                trigger_at_utc, starts_at_utc, lead_minutes,
+                delivered_at, snoozed_until, dismissed_at
+            FROM notification_deliveries
+            WHERE dismissed_at IS NULL
+              AND (snoozed_until IS NULL OR snoozed_until <= ?1)
+            ORDER BY
+                COALESCE(snoozed_until, delivered_at) DESC,
+                id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![now.to_rfc3339()])?;
+        let mut deliveries = Vec::new();
+        while let Some(row) = rows.next()? {
+            deliveries.push(decode_notification_delivery(row)?);
+        }
+        Ok(deliveries)
+    }
+
+    pub fn snooze_notification_delivery(
+        &self,
+        id: Uuid,
+        snoozed_until: DateTime<Utc>,
+    ) -> anyhow::Result<bool> {
+        let changed = self
+            .conn
+            .execute(
+                r#"
+                UPDATE notification_deliveries
+                SET snoozed_until = ?2
+                WHERE id = ?1 AND dismissed_at IS NULL
+                "#,
+                params![id.to_string(), snoozed_until.to_rfc3339()],
+            )
+            .context("failed to snooze notification delivery")?;
+        Ok(changed != 0)
     }
 
     pub fn dismiss_notification_delivery(
@@ -4771,6 +4818,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 26 {
         migrate_v26_to_v27(conn)?;
+        current = 27;
+    }
+
+    if current == 27 {
+        migrate_v27_to_v28(conn)?;
     }
 
     Ok(())
@@ -5244,12 +5296,17 @@ fn create_notification_delivery_schema_current(conn: &Connection) -> anyhow::Res
             starts_at_utc TEXT NOT NULL,
             lead_minutes INTEGER NOT NULL CHECK (lead_minutes >= 0),
             delivered_at TEXT NOT NULL,
+            snoozed_until TEXT,
             dismissed_at TEXT,
             UNIQUE (rule_id, occurrence_id)
         );
 
         CREATE INDEX notification_deliveries_active
             ON notification_deliveries(dismissed_at, delivered_at)
+            WHERE dismissed_at IS NULL;
+
+        CREATE INDEX notification_deliveries_due
+            ON notification_deliveries(dismissed_at, snoozed_until, delivered_at)
             WHERE dismissed_at IS NULL;
 
         CREATE INDEX notification_deliveries_rule
@@ -5443,6 +5500,27 @@ fn add_event_availability_column(conn: &Connection) -> anyhow::Result<()> {
         "#,
     )
     .context("failed to add canonical event availability behavior")
+}
+
+fn migrate_v27_to_v28(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v27 to v28 migration")?;
+    tx.execute_batch(
+        r#"
+        ALTER TABLE notification_deliveries
+        ADD COLUMN snoozed_until TEXT;
+
+        CREATE INDEX notification_deliveries_due
+            ON notification_deliveries(dismissed_at, snoozed_until, delivered_at)
+            WHERE dismissed_at IS NULL;
+        "#,
+    )
+    .context("failed to add notification snooze state")?;
+    tx.pragma_update(None, "user_version", 28)
+        .context("failed to set schema version 28")?;
+    tx.commit()
+        .context("failed to commit v27 to v28 schema migration")
 }
 
 fn migrate_v26_to_v27(conn: &mut Connection) -> anyhow::Result<()> {
@@ -5947,6 +6025,11 @@ fn decode_notification_delivery(row: &Row<'_>) -> rusqlite::Result<NotificationD
         Uuid::parse_str(&row.get::<_, String>("occurrence_id")?).map_err(to_sql_decode_error)?;
     let lead_minutes =
         u32::try_from(row.get::<_, i64>("lead_minutes")?).map_err(to_sql_decode_error)?;
+    let snoozed_until = row
+        .get::<_, Option<String>>("snoozed_until")?
+        .map(|value| parse_datetime(&value))
+        .transpose()
+        .map_err(to_sql_decode_error)?;
     let dismissed_at = row
         .get::<_, Option<String>>("dismissed_at")?
         .map(|value| parse_datetime(&value))
@@ -5967,6 +6050,7 @@ fn decode_notification_delivery(row: &Row<'_>) -> rusqlite::Result<NotificationD
         lead_minutes,
         delivered_at: parse_datetime(&row.get::<_, String>("delivered_at")?)
             .map_err(to_sql_decode_error)?,
+        snoozed_until,
         dismissed_at,
     })
 }
