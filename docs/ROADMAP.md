@@ -435,7 +435,7 @@ Next Phase 8 work:
 
 ## Phase 9 - External interoperability
 
-Status: **active — bidirectional RFC 5545 transport, local and remote ICS/Webcal import, CLI/GUI import/export, explicit refresh, durable diagnostics, conditional HTTP refresh, and versioned canonical JSON interchange are implemented; representable CSV projection/import is next**
+Status: **active — bidirectional RFC 5545 transport, local and remote ICS/Webcal import, CLI/GUI import/export, explicit refresh, durable diagnostics, conditional HTTP refresh, versioned canonical JSON interchange, and strict representable CSV import/export are implemented; CSV refresh diagnostics are next**
 
 Goals:
 
@@ -443,7 +443,7 @@ Goals:
 - webcal/remote ICS ingestion — implemented for HTTP/HTTPS/webcal feeds with persisted ETag/Last-Modified conditional refresh and explicit HTTP 304 reporting
 - CalDAV where valuable
 - versioned native JSON import/export — implemented for canonical sources/events with transactional merge-only import
-- CSV import/export for representable tabular subsets — next
+- CSV import/export for representable tabular subsets — implemented as strict CSV v1; durable refresh-attempt history next
 - JSCalendar/jCal
 - optional mobile/cloud bridges
 
