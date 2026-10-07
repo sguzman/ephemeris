@@ -1172,6 +1172,74 @@ pub struct EventCollectionMember {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TimeUncertainty {
+    DateWindow {
+        earliest: NaiveDate,
+        latest: NaiveDate,
+    },
+    FloatingWindow {
+        earliest: NaiveDateTime,
+        latest: NaiveDateTime,
+    },
+    InstantWindow {
+        earliest_utc: DateTime<Utc>,
+        latest_utc: DateTime<Utc>,
+    },
+}
+
+impl TimeUncertainty {
+    pub const fn kind_name(&self) -> &'static str {
+        match self {
+            Self::DateWindow { .. } => "date_window",
+            Self::FloatingWindow { .. } => "floating_window",
+            Self::InstantWindow { .. } => "instant_window",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TimeUncertaintyError {
+    RecurrenceUnsupported,
+    UnsupportedTimeKind(&'static str),
+    MismatchedTimeKind {
+        uncertainty_kind: &'static str,
+        time_kind: &'static str,
+    },
+    EmptyWindow,
+    AnchorOutsideWindow,
+}
+
+impl fmt::Display for TimeUncertaintyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RecurrenceUnsupported => formatter.write_str(
+                "temporal placement uncertainty is not yet supported on recurring events",
+            ),
+            Self::UnsupportedTimeKind(kind) => write!(
+                formatter,
+                "temporal placement uncertainty is not supported for {kind} precision"
+            ),
+            Self::MismatchedTimeKind {
+                uncertainty_kind,
+                time_kind,
+            } => write!(
+                formatter,
+                "{uncertainty_kind} uncertainty cannot describe a {time_kind} event"
+            ),
+            Self::EmptyWindow => formatter.write_str(
+                "temporal placement uncertainty must span more than one possible start value",
+            ),
+            Self::AnchorOutsideWindow => formatter.write_str(
+                "canonical event start must lie inside its temporal uncertainty window",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TimeUncertaintyError {}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TemporalEvent {
     pub id: Uuid,
     pub source_id: Option<Uuid>,
@@ -1196,6 +1264,8 @@ pub struct TemporalEvent {
     pub importance: Option<i32>,
     pub personal_relevance: Option<i32>,
     pub time: TimeSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_uncertainty: Option<TimeUncertainty>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recurrence: Option<RecurrenceRule>,
     pub tags: Vec<String>,
@@ -1229,6 +1299,7 @@ impl TemporalEvent {
             importance: None,
             personal_relevance: None,
             time,
+            time_uncertainty: None,
             recurrence: None,
             tags: Vec::new(),
             properties: Value::Object(Default::default()),
@@ -1243,6 +1314,44 @@ impl TemporalEvent {
 
     pub fn display_time_label(&self, timezone: Tz) -> String {
         self.time.display_time_label(timezone)
+    }
+
+    pub fn validate_time_uncertainty(&self) -> Result<(), TimeUncertaintyError> {
+        let Some(uncertainty) = self.time_uncertainty.as_ref() else {
+            return Ok(());
+        };
+
+        if self.recurrence.is_some() {
+            return Err(TimeUncertaintyError::RecurrenceUnsupported);
+        }
+
+        match (&self.time, uncertainty) {
+            (
+                TimeSpec::DateOnly { start, .. } | TimeSpec::AllDay { start, .. },
+                TimeUncertainty::DateWindow { earliest, latest },
+            ) => validate_uncertainty_window(*earliest, *latest, *start),
+            (
+                TimeSpec::Floating { start, .. },
+                TimeUncertainty::FloatingWindow { earliest, latest },
+            ) => validate_uncertainty_window(*earliest, *latest, *start),
+            (
+                TimeSpec::Instant { start_utc, .. },
+                TimeUncertainty::InstantWindow {
+                    earliest_utc,
+                    latest_utc,
+                },
+            ) => validate_uncertainty_window(*earliest_utc, *latest_utc, *start_utc),
+            (
+                TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. },
+                _,
+            ) => Err(TimeUncertaintyError::UnsupportedTimeKind(
+                self.time.kind_name(),
+            )),
+            (_, uncertainty) => Err(TimeUncertaintyError::MismatchedTimeKind {
+                uncertainty_kind: uncertainty.kind_name(),
+                time_kind: self.time.kind_name(),
+            }),
+        }
     }
 
     pub fn validate_recurrence(&self) -> Result<(), RecurrenceError> {
@@ -1511,6 +1620,23 @@ fn recurrence_key(time: &TimeSpec) -> Result<String, RecurrenceError> {
             Err(RecurrenceError::UnsupportedTimeKind(time.kind_name()))
         }
     }
+}
+
+fn validate_uncertainty_window<T>(
+    earliest: T,
+    latest: T,
+    anchor: T,
+) -> Result<(), TimeUncertaintyError>
+where
+    T: PartialOrd,
+{
+    if earliest >= latest {
+        return Err(TimeUncertaintyError::EmptyWindow);
+    }
+    if anchor < earliest || anchor > latest {
+        return Err(TimeUncertaintyError::AnchorOutsideWindow);
+    }
+    Ok(())
 }
 
 fn validate_recurrence_time(time: &TimeSpec) -> Result<(), RecurrenceError> {
