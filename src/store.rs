@@ -5715,6 +5715,113 @@ mod tests {
     }
 
     #[test]
+    fn structured_event_location_roundtrips_and_invalid_coordinates_are_rejected() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let mut event = TemporalEvent::new(
+            "Located event",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        event.location = Some(EventLocation {
+            name: Some("Palacio de Bellas Artes".to_string()),
+            address: Some("Av. Juárez S/N".to_string()),
+            locality: Some("Ciudad de México".to_string()),
+            region: Some("CDMX".to_string()),
+            postal_code: Some("06050".to_string()),
+            country: Some("MX".to_string()),
+            latitude: Some(19.4352),
+            longitude: Some(-99.1412),
+            virtual_url: Some("https://example.org/stream".to_string()),
+        });
+        store.upsert_event(&event).expect("persist located event");
+        assert_eq!(
+            store
+                .event_by_id(event.id)
+                .expect("query located event")
+                .expect("located event"),
+            event
+        );
+
+        let mut invalid = TemporalEvent::new(
+            "Invalid location",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 8).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        invalid.location = Some(EventLocation {
+            latitude: Some(91.0),
+            longitude: Some(0.0),
+            ..EventLocation::default()
+        });
+        assert!(
+            store
+                .upsert_event(&invalid)
+                .expect_err("invalid coordinates must fail")
+                .to_string()
+                .contains("invalid event location")
+        );
+        assert!(
+            store
+                .event_by_id(invalid.id)
+                .expect("invalid event query")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn v20_migration_adds_structured_location_without_rewriting_events() {
+        let mut conn = Connection::open_in_memory().expect("connection");
+        configure_connection(&conn).expect("configure");
+
+        let tx = conn.transaction().expect("schema transaction");
+        create_schema_v2(&tx).expect("base schema");
+        add_event_recurrence_column(&tx).expect("recurrence column");
+        create_saved_views_schema_current(&tx).expect("saved views");
+        create_taria_release_schema_current(&tx).expect("taria schema");
+        create_refresh_history_schema_current(&tx).expect("refresh schema");
+        create_event_relation_collection_schema_current(&tx).expect("topology schema");
+        add_event_uncertainty_column(&tx).expect("uncertainty column");
+        create_event_identity_schema_current(&tx).expect("identity schema");
+        create_event_annotation_schema_current(&tx).expect("annotation schema");
+        create_event_provenance_schema_current(&tx).expect("provenance schema");
+        create_event_revision_schema_current(&tx).expect("revision schema");
+        tx.pragma_update(None, "user_version", 20).expect("set v20");
+        tx.commit().expect("commit v20 schema");
+
+        let event_id = Uuid::new_v4();
+        conn.execute(
+            r#"
+            INSERT INTO temporal_events (
+                id,
+                assertion_refs_json, source_refs_json, provenance_refs_json,
+                normalized_title, status,
+                time_kind, start_date,
+                tags_json, properties_json,
+                created_at, updated_at
+            ) VALUES (?1, '[]', '[]', '[]', ?2, 'scheduled', 'date_only', ?3, '[]', '{}', ?4, ?4)
+            "#,
+            params![
+                event_id.to_string(),
+                "Pre-v21 event",
+                "2026-10-07",
+                "2026-10-07T00:00:00Z",
+            ],
+        )
+        .expect("insert v20 event");
+
+        migrate(&mut conn).expect("migrate to current");
+        let store = TemporalStore { conn, path: None };
+        assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+
+        let loaded = store.event_by_id(event_id).expect("query").expect("event");
+        assert_eq!(loaded.normalized_title, "Pre-v21 event");
+        assert!(loaded.location.is_none());
+    }
+
+    #[test]
     fn event_revisions_append_only_on_canonical_change_and_survive_event_delete() {
         let store = TemporalStore::open_in_memory().expect("store");
         let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
