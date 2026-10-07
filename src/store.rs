@@ -719,7 +719,9 @@ impl TemporalStore {
         &self,
         record: &EventProvenanceRecord,
     ) -> anyhow::Result<()> {
-        record.validate().context("invalid event provenance record")?;
+        record
+            .validate()
+            .context("invalid event provenance record")?;
         let properties_json = serde_json::to_string(&record.properties)
             .context("failed to encode event provenance properties")?;
         self.conn
@@ -5540,11 +5542,7 @@ mod tests {
                 .contains("failed to upsert event provenance record")
         );
 
-        let invalid = EventProvenanceRecord::new(
-            event.id,
-            EventProvenanceRole::Assertion,
-            "   ",
-        );
+        let invalid = EventProvenanceRecord::new(event.id, EventProvenanceRole::Assertion, "   ");
         assert!(
             store
                 .upsert_event_provenance_record(&invalid)
