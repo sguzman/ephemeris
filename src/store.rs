@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::calendar::CalendarLayout;
 use crate::domain::{
-    CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
+    AvailabilityBehavior, CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
     EventIdentityAssessment, EventIdentityState, EventLocation, EventParticipant,
     EventProvenanceRecord, EventProvenanceRole, EventRelation, EventStatus, NotificationRule,
     NotificationTarget, NotificationTrigger, RecurrenceRule, SourceAuthority, SourceKind,
@@ -20,7 +20,7 @@ use crate::domain::{
 use crate::notifications::NotificationDelivery;
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 26;
+const SCHEMA_VERSION: i64 = 27;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParticipantEntityBinding {
@@ -2615,7 +2615,7 @@ impl TemporalStore {
                     assertion_refs_json, source_refs_json, provenance_refs_json, renderability,
                     normalized_title, raw_title, description,
                     event_type, domain, jurisdiction, institution, location_json, participants_json,
-                    status, confidence, importance, personal_relevance,
+                    status, availability, confidence, importance, personal_relevance,
                     time_kind, start_utc, end_utc, source_timezone,
                     start_date, end_date_exclusive,
                     start_local, end_local, time_original_value,
@@ -2628,7 +2628,7 @@ impl TemporalStore {
                     :assertion_refs_json, :source_refs_json, :provenance_refs_json, :renderability,
                     :normalized_title, :raw_title, :description,
                     :event_type, :domain, :jurisdiction, :institution, :location_json, :participants_json,
-                    :status, :confidence, :importance, :personal_relevance,
+                    :status, :availability, :confidence, :importance, :personal_relevance,
                     :time_kind, :start_utc, :end_utc, :source_timezone,
                     :start_date, :end_date_exclusive,
                     :start_local, :end_local, :time_original_value,
@@ -2655,6 +2655,7 @@ impl TemporalStore {
                     location_json = excluded.location_json,
                     participants_json = excluded.participants_json,
                     status = excluded.status,
+                    availability = excluded.availability,
                     confidence = excluded.confidence,
                     importance = excluded.importance,
                     personal_relevance = excluded.personal_relevance,
@@ -2693,6 +2694,7 @@ impl TemporalStore {
                     ":location_json": location_json,
                     ":participants_json": participants_json,
                     ":status": event.status.as_str(),
+                    ":availability": event.availability.as_str(),
                     ":confidence": event.confidence,
                     ":importance": event.importance,
                     ":personal_relevance": event.personal_relevance,
@@ -4635,6 +4637,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         create_participant_entity_binding_schema_current(&tx)?;
         create_notification_rule_schema_current(&tx)?;
         create_notification_delivery_schema_current(&tx)?;
+        add_event_availability_column(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -4763,6 +4766,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 25 {
         migrate_v25_to_v26(conn)?;
+        current = 26;
+    }
+
+    if current == 26 {
+        migrate_v26_to_v27(conn)?;
     }
 
     Ok(())
@@ -5426,6 +5434,28 @@ fn create_event_annotation_schema_current(conn: &Connection) -> anyhow::Result<(
     .context("failed to create event annotation schema")
 }
 
+fn add_event_availability_column(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        ALTER TABLE temporal_events
+        ADD COLUMN availability TEXT NOT NULL DEFAULT 'busy'
+            CHECK (availability IN ('busy', 'free'));
+        "#,
+    )
+    .context("failed to add canonical event availability behavior")
+}
+
+fn migrate_v26_to_v27(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v26 to v27 migration")?;
+    add_event_availability_column(&tx)?;
+    tx.pragma_update(None, "user_version", 27)
+        .context("failed to set schema version 27")?;
+    tx.commit()
+        .context("failed to commit v26 to v27 schema migration")
+}
+
 fn migrate_v25_to_v26(conn: &mut Connection) -> anyhow::Result<()> {
     let tx = conn
         .transaction()
@@ -5823,7 +5853,7 @@ fn migrate_v1_to_v2(conn: &mut Connection) -> anyhow::Result<()> {
             id, source_id, source_record_key,
             normalized_title, raw_title, description,
             event_type, domain, jurisdiction, institution, location_json, participants_json,
-            status, confidence, importance, personal_relevance,
+            status, availability, confidence, importance, personal_relevance,
             time_kind, start_utc, end_utc, source_timezone,
             start_date, end_date_exclusive,
             start_local, end_local,
@@ -6265,6 +6295,12 @@ fn decode_event(row: &Row<'_>) -> rusqlite::Result<TemporalEvent> {
     let status_raw: String = row.get("status")?;
     let status = EventStatus::parse(&status_raw)
         .ok_or_else(|| to_sql_decode_error(anyhow!("unknown event status {status_raw}")))?;
+    let availability_raw: String = row.get("availability")?;
+    let availability = AvailabilityBehavior::parse(&availability_raw).ok_or_else(|| {
+        to_sql_decode_error(anyhow!(
+            "unknown event availability behavior {availability_raw}"
+        ))
+    })?;
 
     let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
     let source_id = row
@@ -6300,6 +6336,7 @@ fn decode_event(row: &Row<'_>) -> rusqlite::Result<TemporalEvent> {
         )
         .map_err(to_sql_decode_error)?,
         status,
+        availability,
         confidence: row.get("confidence")?,
         importance: row.get("importance")?,
         personal_relevance: row.get("personal_relevance")?,
@@ -7444,6 +7481,97 @@ mod tests {
     fn schema_bootstraps_at_current_version() {
         let store = TemporalStore::open_in_memory().expect("store");
         assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn event_availability_roundtrips_and_defaults_busy() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
+        let mut event = TemporalEvent::new(
+            "Transparent commitment",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        assert_eq!(event.availability, AvailabilityBehavior::Busy);
+        event.availability = AvailabilityBehavior::Free;
+
+        store.upsert_event(&event).expect("persist event");
+        let loaded = store.event_by_id(event.id).expect("query").expect("event");
+        assert_eq!(loaded.availability, AvailabilityBehavior::Free);
+    }
+
+    #[test]
+    fn v26_migration_adds_busy_availability_without_rewriting_events() {
+        let mut conn = Connection::open_in_memory().expect("connection");
+        configure_connection(&conn).expect("configure");
+
+        let tx = conn.transaction().expect("schema transaction");
+        create_schema_v2(&tx).expect("base schema");
+        add_event_recurrence_column(&tx).expect("recurrence column");
+        create_saved_views_schema_current(&tx).expect("saved views");
+        create_taria_release_schema_current(&tx).expect("taria schema");
+        create_refresh_history_schema_current(&tx).expect("refresh schema");
+        create_event_relation_collection_schema_current(&tx).expect("topology schema");
+        add_event_uncertainty_column(&tx).expect("uncertainty");
+        create_event_identity_schema_current(&tx).expect("identity schema");
+        create_event_annotation_schema_current(&tx).expect("annotation schema");
+        create_event_provenance_schema_current(&tx).expect("provenance schema");
+        create_event_revision_schema_current(&tx).expect("revision schema");
+        add_event_location_column(&tx).expect("location column");
+        add_event_participants_column(&tx).expect("participants column");
+        create_canonical_entity_schema_current(&tx).expect("entity schema");
+        create_participant_entity_binding_schema_current(&tx).expect("entity bindings");
+        create_notification_rule_schema_current(&tx).expect("notification rules");
+        create_notification_delivery_schema_current(&tx).expect("notification deliveries");
+        tx.pragma_update(None, "user_version", 26).expect("set v26");
+        tx.commit().expect("commit v26 schema");
+
+        let event_id = Uuid::new_v4();
+        conn.execute(
+            r#"
+            INSERT INTO temporal_events (
+                id,
+                assertion_refs_json, source_refs_json, provenance_refs_json,
+                normalized_title, status,
+                time_kind, start_date,
+                participants_json,
+                tags_json, properties_json,
+                created_at, updated_at
+            ) VALUES (
+                ?1, '[]', '[]', '[]',
+                ?2, 'scheduled',
+                'date_only', ?3,
+                '[]',
+                '[]', '{}',
+                ?4, ?4
+            )
+            "#,
+            params![
+                event_id.to_string(),
+                "Pre-v27 event",
+                "2026-10-07",
+                "2026-10-07T00:00:00Z",
+            ],
+        )
+        .expect("insert v26 event");
+
+        migrate(&mut conn).expect("migrate to current");
+        let store = TemporalStore { conn, path: None };
+        assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+
+        let loaded = store.event_by_id(event_id).expect("query").expect("event");
+        assert_eq!(loaded.id, event_id);
+        assert_eq!(loaded.normalized_title, "Pre-v27 event");
+        assert_eq!(loaded.availability, AvailabilityBehavior::Busy);
+        assert_eq!(
+            loaded.time,
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            }
+        );
     }
 
     #[test]
