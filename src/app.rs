@@ -15,11 +15,11 @@ use crate::calendar::{
 };
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
-    CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
-    EventIdentityState, EventParticipant, EventProvenanceRecord, EventProvenanceRole,
-    EventRelation, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
-    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
-    TemporalSource, TimeSpec, TimeUncertainty,
+    CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
+    EventIdentityAssessment, EventIdentityState, EventParticipant, EventProvenanceRecord,
+    EventProvenanceRole, EventRelation, EventStatus, RecurrenceFrequency,
+    RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule,
+    RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
@@ -32,8 +32,8 @@ use crate::query::{
 };
 use crate::state::PersistedUiState;
 use crate::store::{
-    EventRevision, ParticipantEntityResolution, SourceRefreshAttempt, TariaProjectedCalendarChoice, TariaReleaseDiff,
-    TariaReleaseHistoryEntry, TariaReleaseStatusRecord, TemporalStore,
+    EventRevision, ParticipantEntityResolution, SourceRefreshAttempt, TariaProjectedCalendarChoice,
+    TariaReleaseDiff, TariaReleaseHistoryEntry, TariaReleaseStatusRecord, TemporalStore,
 };
 use crate::taria::import_reconciled_event_set_file;
 use crate::taria_workspace::{
@@ -4494,7 +4494,8 @@ impl EphemerisApp {
                 ParticipantInspectorAction::UnbindEntity(index) => {
                     self.store
                         .unbind_event_participant_entity(event_id, index)?;
-                    self.last_message = Some("Removed local participant entity binding.".to_string());
+                    self.last_message =
+                        Some("Removed local participant entity binding.".to_string());
                     self.reset_participant_entity_editor();
                     return Ok(());
                 }
@@ -4522,8 +4523,10 @@ impl EphemerisApp {
                     self.store.upsert_canonical_entity(&entity)?;
                     self.store
                         .bind_event_participant_entity(event_id, index, entity.id)?;
-                    self.last_message =
-                        Some(format!("Created and bound canonical entity {:?}.", entity.canonical_name));
+                    self.last_message = Some(format!(
+                        "Created and bound canonical entity {:?}.",
+                        entity.canonical_name
+                    ));
                     self.reset_participant_entity_editor();
                     return Ok(());
                 }
@@ -4928,7 +4931,10 @@ impl EphemerisApp {
             .participants
             .iter()
             .enumerate()
-            .map(|(index, _)| self.store.resolve_event_participant_entity(canonical_id, index))
+            .map(|(index, _)| {
+                self.store
+                    .resolve_event_participant_entity(canonical_id, index)
+            })
             .collect::<Vec<_>>();
         if self.event_revision_event_id != Some(canonical_id) {
             match self.store.event_revisions(canonical_id) {
