@@ -12,8 +12,8 @@ use crate::calendar::CalendarLayout;
 use crate::domain::{
     EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
     EventIdentityState, EventLocation, EventProvenanceRecord, EventProvenanceRole, EventRelation,
-    EventStatus, RecurrenceRule, SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
-    TimeUncertainty,
+    EventStatus, RecurrenceRule, SourceAuthority, SourceKind, TemporalEvent, TemporalSource,
+    TimeSpec, TimeUncertainty,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
@@ -1490,7 +1490,9 @@ impl TemporalStore {
         event
             .validate_time_uncertainty()
             .context("invalid event temporal uncertainty")?;
-        event.validate_location().context("invalid event location")?;
+        event
+            .validate_location()
+            .context("invalid event location")?;
         let encoded = EncodedTime::from_time_spec(&event.time)?;
         let assertion_refs_json = encode_string_vec(&event.assertion_refs, "assertion refs")?;
         let source_refs_json = encode_string_vec(&event.source_refs, "source refs")?;
