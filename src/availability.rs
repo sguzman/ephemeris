@@ -89,12 +89,7 @@ pub fn availability_for_materialized_date_window(
         )
     })?;
 
-    availability_for_materialized_events(
-        events,
-        display_timezone,
-        window_start_utc,
-        window_end_utc,
-    )
+    availability_for_materialized_events(events, display_timezone, window_start_utc, window_end_utc)
 }
 
 pub fn availability_for_materialized_events(
@@ -516,13 +511,8 @@ mod tests {
             },
         );
 
-        let result = availability_for_materialized_date_window(
-            &[event],
-            timezone,
-            day,
-            next_day,
-        )
-        .expect("availability");
+        let result = availability_for_materialized_date_window(&[event], timezone, day, next_day)
+            .expect("availability");
 
         assert_eq!(result.busy.len(), 1);
         assert!(result.free.is_empty());
@@ -625,45 +615,51 @@ mod tests {
         let nine = NaiveTime::from_hms_opt(9, 0, 0).expect("nine");
         let five = NaiveTime::from_hms_opt(17, 0, 0).expect("five");
 
-        assert!(suggest_slots(
-            &[],
-            chrono_tz::UTC,
-            day,
-            next,
-            SlotSearch {
-                duration_minutes: 0,
-                step_minutes: 30,
-                day_start: nine,
-                day_end: five,
-            },
-        )
-        .is_err());
-        assert!(suggest_slots(
-            &[],
-            chrono_tz::UTC,
-            day,
-            next,
-            SlotSearch {
-                duration_minutes: 30,
-                step_minutes: 0,
-                day_start: nine,
-                day_end: five,
-            },
-        )
-        .is_err());
-        assert!(suggest_slots(
-            &[],
-            chrono_tz::UTC,
-            day,
-            next,
-            SlotSearch {
-                duration_minutes: 30,
-                step_minutes: 30,
-                day_start: five,
-                day_end: nine,
-            },
-        )
-        .is_err());
+        assert!(
+            suggest_slots(
+                &[],
+                chrono_tz::UTC,
+                day,
+                next,
+                SlotSearch {
+                    duration_minutes: 0,
+                    step_minutes: 30,
+                    day_start: nine,
+                    day_end: five,
+                },
+            )
+            .is_err()
+        );
+        assert!(
+            suggest_slots(
+                &[],
+                chrono_tz::UTC,
+                day,
+                next,
+                SlotSearch {
+                    duration_minutes: 30,
+                    step_minutes: 0,
+                    day_start: nine,
+                    day_end: five,
+                },
+            )
+            .is_err()
+        );
+        assert!(
+            suggest_slots(
+                &[],
+                chrono_tz::UTC,
+                day,
+                next,
+                SlotSearch {
+                    duration_minutes: 30,
+                    step_minutes: 30,
+                    day_start: five,
+                    day_end: nine,
+                },
+            )
+            .is_err()
+        );
     }
 
     #[test]
