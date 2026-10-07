@@ -10,6 +10,9 @@ use chrono_tz::Tz;
 use eframe::egui::{self, Color32, RichText};
 use uuid::Uuid;
 
+use crate::availability::{
+    BusyKind, FreeInterval, availability_for_materialized_date_window,
+};
 use crate::calendar::{
     CalendarLayout, CalendarView, calendar_title, month_days, month_grid_start, quarter_months,
     shift_focus, week_days, window_for_view, year_months,
@@ -109,6 +112,44 @@ fn parse_new_local_event_time(
         },
         date,
     ))
+}
+
+fn new_event_draft_for_free_interval(
+    interval: &FreeInterval,
+    timezone: Tz,
+) -> anyhow::Result<NewLocalEventDraft> {
+    let duration_minutes = (interval.end_utc - interval.start_utc).num_minutes();
+    if duration_minutes <= 0 {
+        anyhow::bail!("free interval has no positive duration");
+    }
+    let local_start = interval.start_utc.with_timezone(&timezone);
+    let mut draft = NewLocalEventDraft::for_date(local_start.date_naive());
+    draft.start_time = local_start.format("%H:%M").to_string();
+    draft.duration_minutes = duration_minutes.min(60).to_string();
+    Ok(draft)
+}
+
+fn format_availability_interval(
+    start_utc: DateTime<Utc>,
+    end_utc: DateTime<Utc>,
+    timezone: Tz,
+) -> String {
+    let start = start_utc.with_timezone(&timezone);
+    let end = end_utc.with_timezone(&timezone);
+    if start.date_naive() == end.date_naive() {
+        format!(
+            "{} {}-{}",
+            start.format("%a %b %-d"),
+            start.format("%H:%M"),
+            end.format("%H:%M")
+        )
+    } else {
+        format!(
+            "{} -> {}",
+            start.format("%a %b %-d %H:%M"),
+            end.format("%a %b %-d %H:%M")
+        )
+    }
 }
 
 fn parse_notification_lead_minutes(value: &str) -> anyhow::Result<u32> {
@@ -3591,6 +3632,147 @@ impl EphemerisApp {
         }
     }
 
+    fn render_availability_panel(&mut self, ui: &mut egui::Ui) {
+        let timezone = self.timezone();
+        let window = window_for_view(
+            self.state.calendar_view,
+            self.state.focus_date(),
+            self.state.week_start_monday,
+        );
+        let visible_events = self.visible_events();
+        let mut selected_free_interval = None;
+
+        ui.collapsing(
+            format!("Availability · {}", self.state.calendar_view.label()),
+            |ui| {
+                ui.small(format!(
+                    "{} through {} · {} · current query/source visibility",
+                    window.start,
+                    window.end_exclusive.pred_opt().unwrap_or(window.start),
+                    timezone
+                ));
+
+                match availability_for_materialized_date_window(
+                    &visible_events,
+                    timezone,
+                    window.start,
+                    window.end_exclusive,
+                ) {
+                    Ok(result) => {
+                        let tentative = result
+                            .busy
+                            .iter()
+                            .filter(|interval| interval.kind == BusyKind::Tentative)
+                            .count();
+                        ui.horizontal_wrapped(|ui| {
+                            ui.strong(format!("{} free interval(s)", result.free.len()));
+                            ui.small(format!(
+                                "· {} busy/tentative block(s) · {} tentative · {} skipped",
+                                result.busy.len(),
+                                tentative,
+                                result.skipped.len()
+                            ));
+                        });
+
+                        ui.add_space(4.0);
+                        ui.strong("Free");
+                        if result.free.is_empty() {
+                            ui.small("No free time in the current visible window.");
+                        }
+                        for interval in result.free.iter().take(24) {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.monospace(format_availability_interval(
+                                    interval.start_utc,
+                                    interval.end_utc,
+                                    timezone,
+                                ));
+                                let minutes = (interval.end_utc - interval.start_utc).num_minutes();
+                                ui.small(format!("{minutes} min"));
+                                if ui.small_button("New event here").clicked() {
+                                    selected_free_interval = Some(interval.clone());
+                                }
+                            });
+                        }
+                        if result.free.len() > 24 {
+                            ui.small(format!(
+                                "{} more free intervals hidden in this long view",
+                                result.free.len() - 24
+                            ));
+                        }
+
+                        ui.add_space(4.0);
+                        ui.strong("Busy");
+                        if result.busy.is_empty() {
+                            ui.small("No blocking commitments in the current visible window.");
+                        }
+                        for interval in result.busy.iter().take(24) {
+                            let kind = match interval.kind {
+                                BusyKind::Busy => "busy",
+                                BusyKind::Tentative => "tentative",
+                            };
+                            ui.horizontal_wrapped(|ui| {
+                                ui.monospace(format_availability_interval(
+                                    interval.start_utc,
+                                    interval.end_utc,
+                                    timezone,
+                                ));
+                                ui.label(&interval.event_title);
+                                ui.small(kind);
+                            });
+                        }
+                        if result.busy.len() > 24 {
+                            ui.small(format!(
+                                "{} more busy intervals hidden in this long view",
+                                result.busy.len() - 24
+                            ));
+                        }
+
+                        if !result.skipped.is_empty() {
+                            ui.add_space(4.0);
+                            ui.strong("Not used for free/busy");
+                            for skip in result.skipped.iter().take(12) {
+                                let title = visible_events
+                                    .iter()
+                                    .find(|event| event.id == skip.event_id)
+                                    .map_or_else(|| skip.event_id.to_string(), |event| {
+                                        event.normalized_title.clone()
+                                    });
+                                ui.small(format!("{title}: {}", skip.reason));
+                            }
+                            if result.skipped.len() > 12 {
+                                ui.small(format!(
+                                    "{} more skipped values hidden",
+                                    result.skipped.len() - 12
+                                ));
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        ui.colored_label(
+                            Color32::LIGHT_RED,
+                            format!("Availability calculation failed: {error:#}"),
+                        );
+                    }
+                }
+            },
+        );
+
+        if let Some(interval) = selected_free_interval {
+            match new_event_draft_for_free_interval(&interval, timezone) {
+                Ok(draft) => {
+                    self.new_local_event = Some(draft);
+                    self.last_message =
+                        Some("Prepared a new local event in the selected free interval.".to_string());
+                    self.last_error = None;
+                }
+                Err(error) => {
+                    self.last_message = None;
+                    self.last_error = Some(format!("Could not use free interval: {error:#}"));
+                }
+            }
+        }
+    }
+
     fn render_notification_center(&mut self, ui: &mut egui::Ui) {
         if self.notification_rules.is_empty() && self.notification_deliveries.is_empty() {
             return;
@@ -4006,6 +4188,7 @@ impl EphemerisApp {
         }
 
         self.render_notification_center(ui);
+        self.render_availability_panel(ui);
 
         if let Some(message) = self.last_message.as_deref() {
             ui.colored_label(Color32::LIGHT_GREEN, message);
@@ -12800,6 +12983,42 @@ mod tests {
         let parsed = draft.parsed_rule().expect("unchanged structured draft");
 
         assert_eq!(parsed.overrides, rule.overrides);
+    }
+
+    #[test]
+    fn free_interval_prefills_local_event_with_capped_one_hour_duration() {
+        let timezone = chrono_tz::America::Mexico_City;
+        let start = timezone
+            .with_ymd_and_hms(2026, 10, 7, 9, 30, 0)
+            .single()
+            .expect("local start")
+            .with_timezone(&Utc);
+        let interval = FreeInterval {
+            start_utc: start,
+            end_utc: start + ChronoDuration::hours(3),
+        };
+
+        let draft = new_event_draft_for_free_interval(&interval, timezone).expect("draft");
+        assert_eq!(draft.date, "2026-10-07");
+        assert_eq!(draft.start_time, "09:30");
+        assert_eq!(draft.duration_minutes, "60");
+        assert!(!draft.all_day);
+    }
+
+    #[test]
+    fn short_free_interval_prefills_exact_available_duration() {
+        let timezone = chrono_tz::UTC;
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 7, 9, 0, 0)
+            .single()
+            .expect("start");
+        let interval = FreeInterval {
+            start_utc: start,
+            end_utc: start + ChronoDuration::minutes(25),
+        };
+
+        let draft = new_event_draft_for_free_interval(&interval, timezone).expect("draft");
+        assert_eq!(draft.duration_minutes, "25");
     }
 
     #[test]
