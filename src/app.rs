@@ -110,6 +110,16 @@ fn parse_new_local_event_time(
     ))
 }
 
+fn parse_notification_lead_minutes(value: &str) -> anyhow::Result<u32> {
+    let value = value.trim();
+    if value.is_empty() {
+        anyhow::bail!("reminder lead time is required");
+    }
+    value
+        .parse::<u32>()
+        .map_err(|_| anyhow::anyhow!("reminder lead time must be a non-negative whole number of minutes"))
+}
+
 fn parse_optional_confidence(value: &str) -> anyhow::Result<Option<f32>> {
     let value = value.trim();
     if value.is_empty() {
@@ -2904,6 +2914,146 @@ impl EphemerisApp {
         }
     }
 
+    fn create_event_notification_rule(
+        &mut self,
+        event_id: Uuid,
+        event_title: &str,
+    ) {
+        let result = (|| -> anyhow::Result<()> {
+            let lead_minutes =
+                parse_notification_lead_minutes(&self.notification_event_lead_minutes)?;
+            let rule = NotificationRule::for_event(
+                event_id,
+                format!("{event_title} · {lead_minutes}m before"),
+                lead_minutes,
+            );
+            self.store.upsert_notification_rule(&rule)?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.last_message = Some("Added event reminder.".to_string());
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to add event reminder: {error:#}"));
+            }
+        }
+    }
+
+    fn create_saved_view_notification_rule(&mut self) {
+        let result = (|| -> anyhow::Result<()> {
+            let saved_view_id = self
+                .notification_saved_view_id
+                .ok_or_else(|| anyhow::anyhow!("select a saved view first"))?;
+            let view = self
+                .saved_views
+                .iter()
+                .find(|view| view.id == saved_view_id)
+                .ok_or_else(|| anyhow::anyhow!("saved view no longer exists"))?;
+            let lead_minutes =
+                parse_notification_lead_minutes(&self.notification_saved_view_lead_minutes)?;
+            let rule = NotificationRule::for_saved_view(
+                saved_view_id,
+                format!("{} · {lead_minutes}m before", view.name),
+                lead_minutes,
+            );
+            self.store.upsert_notification_rule(&rule)?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.last_message = Some("Added saved-view reminder rule.".to_string());
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to add saved-view reminder: {error:#}"));
+            }
+        }
+    }
+
+    fn set_notification_rule_enabled(&mut self, rule_id: Uuid, enabled: bool) {
+        let result = (|| -> anyhow::Result<()> {
+            let mut rule = self
+                .store
+                .notification_rule_by_id(rule_id)?
+                .ok_or_else(|| anyhow::anyhow!("notification rule no longer exists"))?;
+            rule.enabled = enabled;
+            rule.updated_at = Utc::now();
+            self.store.upsert_notification_rule(&rule)
+        })();
+
+        match result {
+            Ok(()) => {
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to update reminder: {error:#}"));
+            }
+        }
+    }
+
+    fn delete_notification_rule(&mut self, rule_id: Uuid) {
+        match self.store.delete_notification_rule(rule_id) {
+            Ok(true) => {
+                self.last_message = Some("Deleted reminder rule.".to_string());
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Ok(false) => {
+                self.last_message = None;
+                self.last_error = Some("Reminder rule no longer exists.".to_string());
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to delete reminder: {error:#}"));
+            }
+        }
+    }
+
+    fn refresh_notification_evaluation(&mut self) -> anyhow::Result<()> {
+        let now = Utc::now();
+        let events = self.store.list_events()?;
+        let evaluation = evaluate_notification_rules(
+            &self.notification_rules,
+            &events,
+            &self.saved_views,
+            &self.event_memberships,
+            &QueryContext::for_timezone(self.timezone()),
+            now - ChronoDuration::minutes(5),
+            now + ChronoDuration::days(7),
+        )?;
+        self.notification_occurrences = evaluation.occurrences;
+        self.notification_skipped = evaluation.skipped;
+        self.notification_eval_minute = Some(now.timestamp() / 60);
+        Ok(())
+    }
+
+    fn refresh_notification_evaluation_if_needed(&mut self) {
+        if self.notification_rules.is_empty() {
+            self.notification_occurrences.clear();
+            self.notification_skipped.clear();
+            self.notification_eval_minute = None;
+            return;
+        }
+
+        let minute = Utc::now().timestamp() / 60;
+        if self.notification_eval_minute == Some(minute) {
+            return;
+        }
+        if let Err(error) = self.refresh_notification_evaluation() {
+            self.last_error = Some(format!("Failed to evaluate reminders: {error:#}"));
+        }
+    }
+
     fn reload(&mut self) -> anyhow::Result<()> {
         self.event_revision_event_id = None;
         self.event_revisions.clear();
@@ -3098,6 +3248,9 @@ impl EphemerisApp {
             self.state.taria_last_release_id.as_deref(),
         )?;
         self.source_refresh_attempts = self.store.source_refresh_attempts(20)?;
+        self.notification_rules = self.store.list_notification_rules()?;
+        self.notification_eval_minute = None;
+        self.refresh_notification_evaluation()?;
         Ok(())
     }
 
