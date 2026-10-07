@@ -4522,7 +4522,7 @@ fn event_select_sql(suffix: &str) -> String {
             upstream_event_ref, upstream_reconciled_key,
             assertion_refs_json, source_refs_json, provenance_refs_json, renderability,
             normalized_title, raw_title, description,
-            event_type, domain, jurisdiction, institution,
+            event_type, domain, jurisdiction, institution, location_json,
             status, confidence, importance, personal_relevance,
             time_kind, start_utc, end_utc, source_timezone,
             start_date, end_date_exclusive,
