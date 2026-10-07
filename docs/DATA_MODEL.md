@@ -26,8 +26,8 @@ status
 importance?
 personal_relevance?
 confidence?
-source_timezone?
 time_spec
+time_uncertainty?
 location?
 jurisdiction?
 institution?
@@ -39,6 +39,20 @@ updated_at
 ```
 
 Not every field is mandatory. Stable semantics should become typed fields; evolving or source-specific semantics can live in extensible properties.
+
+#### Temporal placement uncertainty
+
+`confidence` answers how strongly the event/assertion itself is supported. `time_uncertainty` answers a different question: how uncertain is the event's **start placement** even when the event is otherwise accepted.
+
+The implemented first slice is a bounded optional `TimeUncertainty`:
+
+- `DateWindow { earliest, latest }` for date-only or all-day events;
+- `FloatingWindow { earliest, latest }` for floating wall-clock date-times;
+- `InstantWindow { earliest_utc, latest_utc }` for exact instants.
+
+The canonical `time` remains the representative placement. Its start must lie inside a non-zero uncertainty window. Month/year/unresolved precision remains encoded by `TimeSpec` itself and is not rewritten as uncertainty. Recurring events do not yet accept placement uncertainty because that requires explicit series-vs-occurrence uncertainty semantics.
+
+This field is persisted independently in schema v16 and survives canonical JSON interchange.
 
 ### EventOccurrence
 
