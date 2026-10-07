@@ -13,12 +13,13 @@ use crate::calendar::CalendarLayout;
 use crate::domain::{
     CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
     EventIdentityAssessment, EventIdentityState, EventLocation, EventParticipant,
-    EventProvenanceRecord, EventProvenanceRole, EventRelation, EventStatus, RecurrenceRule,
-    SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
+    EventProvenanceRecord, EventProvenanceRole, EventRelation, EventStatus, NotificationRule,
+    NotificationTarget, NotificationTrigger, RecurrenceRule, SourceAuthority, SourceKind,
+    TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 24;
+const SCHEMA_VERSION: i64 = 25;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParticipantEntityBinding {
@@ -4390,6 +4391,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         add_event_participants_column(&tx)?;
         create_canonical_entity_schema_current(&tx)?;
         create_participant_entity_binding_schema_current(&tx)?;
+        create_notification_rule_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -4508,6 +4510,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 23 {
         migrate_v23_to_v24(conn)?;
+        current = 24;
+    }
+
+    if current == 24 {
+        migrate_v24_to_v25(conn)?;
     }
 
     Ok(())
@@ -4967,6 +4974,51 @@ fn add_event_location_column(conn: &Connection) -> anyhow::Result<()> {
         .context("failed to add event location column")
 }
 
+fn create_notification_rule_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE notification_rules (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            target_kind TEXT NOT NULL
+                CHECK (target_kind IN ('event', 'saved_view')),
+            event_id TEXT REFERENCES temporal_events(id) ON DELETE CASCADE,
+            saved_view_id TEXT REFERENCES saved_views(id) ON DELETE CASCADE,
+            trigger_kind TEXT NOT NULL
+                CHECK (trigger_kind = 'before_start'),
+            lead_minutes INTEGER NOT NULL CHECK (lead_minutes >= 0),
+            properties_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (length(trim(name)) > 0),
+            CHECK (
+                (target_kind = 'event' AND event_id IS NOT NULL AND saved_view_id IS NULL)
+                OR
+                (target_kind = 'saved_view' AND saved_view_id IS NOT NULL AND event_id IS NULL)
+            )
+        );
+
+        CREATE UNIQUE INDEX notification_rules_event_trigger
+            ON notification_rules(event_id, trigger_kind, lead_minutes)
+            WHERE target_kind = 'event';
+
+        CREATE UNIQUE INDEX notification_rules_saved_view_trigger
+            ON notification_rules(saved_view_id, trigger_kind, lead_minutes)
+            WHERE target_kind = 'saved_view';
+
+        CREATE INDEX notification_rules_event
+            ON notification_rules(event_id, enabled)
+            WHERE target_kind = 'event';
+
+        CREATE INDEX notification_rules_saved_view
+            ON notification_rules(saved_view_id, enabled)
+            WHERE target_kind = 'saved_view';
+        "#,
+    )
+    .context("failed to create notification rule schema")
+}
+
 fn create_participant_entity_binding_schema_current(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -5092,6 +5144,17 @@ fn create_event_annotation_schema_current(conn: &Connection) -> anyhow::Result<(
         "#,
     )
     .context("failed to create event annotation schema")
+}
+
+fn migrate_v24_to_v25(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v24 to v25 migration")?;
+    create_notification_rule_schema_current(&tx)?;
+    tx.pragma_update(None, "user_version", 25)
+        .context("failed to set schema version 25")?;
+    tx.commit()
+        .context("failed to commit v24 to v25 schema migration")
 }
 
 fn migrate_v23_to_v24(conn: &mut Connection) -> anyhow::Result<()> {
