@@ -119,6 +119,7 @@ pub fn availability_for_materialized_events(
             &mut result,
             event.id,
             &event.normalized_title,
+            event.availability.blocks_time(),
             &occurrence,
             display_timezone,
             window_start_utc,
@@ -162,6 +163,7 @@ pub fn availability_for_events(
                 &mut result,
                 event.id,
                 &event.normalized_title,
+                event.availability.blocks_time(),
                 &occurrence,
                 display_timezone,
                 window_start_utc,
@@ -177,11 +179,15 @@ fn append_occurrence(
     result: &mut AvailabilityResult,
     event_id: Uuid,
     event_title: &str,
+    blocks_time: bool,
     occurrence: &EventOccurrence,
     display_timezone: Tz,
     window_start_utc: DateTime<Utc>,
     window_end_utc: DateTime<Utc>,
 ) {
+    if !blocks_time {
+        return;
+    }
     let Some(kind) = busy_kind(occurrence.status) else {
         return;
     };
@@ -660,6 +666,37 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn free_availability_events_do_not_block_time_even_when_tentative() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 15, 0, 0)
+            .single()
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "FYI event",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        event.status = EventStatus::Tentative;
+        event.availability = crate::domain::AvailabilityBehavior::Free;
+
+        let result = availability_for_events(
+            &[event],
+            chrono_tz::UTC,
+            start - Duration::hours(1),
+            start + Duration::hours(2),
+        )
+        .expect("availability");
+
+        assert!(result.busy.is_empty());
+        assert_eq!(result.free.len(), 1);
+        assert_eq!(result.free[0].start_utc, start - Duration::hours(1));
+        assert_eq!(result.free[0].end_utc, start + Duration::hours(2));
     }
 
     #[test]
