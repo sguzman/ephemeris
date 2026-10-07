@@ -1,5 +1,6 @@
 use chrono::{
-    DateTime, Days, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+    DateTime, Datelike, Days, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone,
+    Utc,
 };
 use chrono_tz::Tz;
 use uuid::Uuid;
@@ -49,6 +50,8 @@ pub struct SlotSearch {
     pub step_minutes: u32,
     pub day_start: NaiveTime,
     pub day_end: NaiveTime,
+    /// Monday through Sunday.
+    pub workdays: [bool; 7],
 }
 
 impl SlotSearch {
@@ -61,6 +64,9 @@ impl SlotSearch {
         }
         if self.day_end <= self.day_start {
             anyhow::bail!("daily availability end must be later than start");
+        }
+        if !self.workdays.iter().any(|enabled| *enabled) {
+            anyhow::bail!("slot search must enable at least one workday");
         }
         Ok(self)
     }
@@ -250,6 +256,15 @@ pub fn suggest_slots(
     let mut date = start_date;
 
     while date < end_exclusive {
+        let weekday_index = usize::try_from(date.weekday().num_days_from_monday())
+            .expect("weekday index is within 0..=6");
+        if !search.workdays[weekday_index] {
+            date = date
+                .checked_add_days(Days::new(1))
+                .ok_or_else(|| anyhow::anyhow!("slot-search date range overflow"))?;
+            continue;
+        }
+
         let day_start_local = date.and_time(search.day_start);
         let day_end_local = date.and_time(search.day_end);
         let day_start_utc = resolve_local(timezone, day_start_local).ok_or_else(|| {
@@ -552,6 +567,7 @@ mod tests {
                 step_minutes: 30,
                 day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("start"),
                 day_end: NaiveTime::from_hms_opt(17, 0, 0).expect("end"),
+                workdays: [true; 7],
             },
         )
         .expect("slots");
@@ -600,6 +616,7 @@ mod tests {
                 step_minutes: 30,
                 day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("start"),
                 day_end: NaiveTime::from_hms_opt(17, 0, 0).expect("end"),
+                workdays: [true; 7],
             },
         )
         .expect("slots");
@@ -611,6 +628,52 @@ mod tests {
                     .single()
                     .expect("first slot")
             )
+        );
+    }
+
+    #[test]
+    fn slot_search_skips_disabled_weekdays() {
+        let timezone = chrono_tz::UTC;
+        let friday = NaiveDate::from_ymd_opt(2026, 10, 9).expect("Friday");
+        let monday = NaiveDate::from_ymd_opt(2026, 10, 12).expect("Monday");
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 9, 9, 0, 0)
+            .single()
+            .expect("start");
+        let end = Utc
+            .with_ymd_and_hms(2026, 10, 13, 17, 0, 0)
+            .single()
+            .expect("end");
+        let slots = suggest_slots(
+            &[FreeInterval {
+                start_utc: start,
+                end_utc: end,
+            }],
+            timezone,
+            friday,
+            NaiveDate::from_ymd_opt(2026, 10, 14).expect("end date"),
+            SlotSearch {
+                duration_minutes: 60,
+                step_minutes: 60,
+                day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("start"),
+                day_end: NaiveTime::from_hms_opt(10, 0, 0).expect("end"),
+                workdays: [true, true, true, true, true, false, false],
+            },
+        )
+        .expect("slots");
+
+        assert_eq!(slots.len(), 3);
+        assert_eq!(
+            slots[0].start_utc.date_naive(),
+            friday
+        );
+        assert_eq!(
+            slots[1].start_utc.date_naive(),
+            monday
+        );
+        assert_eq!(
+            slots[2].start_utc.date_naive(),
+            monday.checked_add_days(Days::new(1)).expect("Tuesday")
         );
     }
 
@@ -632,6 +695,7 @@ mod tests {
                     step_minutes: 30,
                     day_start: nine,
                     day_end: five,
+                    workdays: [true; 7],
                 },
             )
             .is_err()
@@ -647,6 +711,7 @@ mod tests {
                     step_minutes: 0,
                     day_start: nine,
                     day_end: five,
+                    workdays: [true; 7],
                 },
             )
             .is_err()
@@ -662,6 +727,7 @@ mod tests {
                     step_minutes: 30,
                     day_start: five,
                     day_end: nine,
+                    workdays: [true; 7],
                 },
             )
             .is_err()
