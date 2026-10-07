@@ -20,7 +20,7 @@ use crate::calendar::{
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
     AvailabilityBehavior, CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
-    EventIdentityAssessment, EventIdentityState, EventParticipant, EventProvenanceRecord,
+    EventIdentityAssessment, EventIdentityState, EventLocation, EventParticipant, EventProvenanceRecord,
     EventProvenanceRole, EventRelation, EventStatus, NotificationRule, NotificationTarget,
     RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride,
     RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
@@ -1858,6 +1858,94 @@ fn parse_optional_end_date(raw: &str, start: NaiveDate) -> anyhow::Result<Option
     Ok(Some(end))
 }
 
+#[derive(Debug, Clone, Default)]
+struct EventLocationEditDraft {
+    event_id: Uuid,
+    name: String,
+    address: String,
+    locality: String,
+    region: String,
+    postal_code: String,
+    country: String,
+    latitude: String,
+    longitude: String,
+    virtual_url: String,
+}
+
+impl EventLocationEditDraft {
+    fn from_event(event: &TemporalEvent) -> Self {
+        let location = event.location.as_ref();
+        Self {
+            event_id: event.id,
+            name: location
+                .and_then(|value| value.name.clone())
+                .unwrap_or_default(),
+            address: location
+                .and_then(|value| value.address.clone())
+                .unwrap_or_default(),
+            locality: location
+                .and_then(|value| value.locality.clone())
+                .unwrap_or_default(),
+            region: location
+                .and_then(|value| value.region.clone())
+                .unwrap_or_default(),
+            postal_code: location
+                .and_then(|value| value.postal_code.clone())
+                .unwrap_or_default(),
+            country: location
+                .and_then(|value| value.country.clone())
+                .unwrap_or_default(),
+            latitude: location
+                .and_then(|value| value.latitude)
+                .map_or_else(String::new, |value| value.to_string()),
+            longitude: location
+                .and_then(|value| value.longitude)
+                .map_or_else(String::new, |value| value.to_string()),
+            virtual_url: location
+                .and_then(|value| value.virtual_url.clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    fn parsed_location(&self) -> anyhow::Result<Option<EventLocation>> {
+        let latitude = parse_optional_f64(&self.latitude, "latitude")?;
+        let longitude = parse_optional_f64(&self.longitude, "longitude")?;
+        let location = EventLocation {
+            name: optional_trimmed(&self.name),
+            address: optional_trimmed(&self.address),
+            locality: optional_trimmed(&self.locality),
+            region: optional_trimmed(&self.region),
+            postal_code: optional_trimmed(&self.postal_code),
+            country: optional_trimmed(&self.country),
+            latitude,
+            longitude,
+            virtual_url: optional_trimmed(&self.virtual_url),
+        };
+
+        let empty = location.text_values().next().is_none() && location.latitude.is_none();
+        if empty {
+            return Ok(None);
+        }
+
+        location.validate()?;
+        Ok(Some(location))
+    }
+}
+
+fn parse_optional_f64(raw: &str, label: &str) -> anyhow::Result<Option<f64>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let value = raw
+        .parse::<f64>()
+        .map_err(|_| anyhow::anyhow!("{label} must be a number"))?;
+    if !value.is_finite() {
+        anyhow::bail!("{label} must be finite");
+    }
+    Ok(Some(value))
+}
+
 #[derive(Debug, Clone)]
 struct EventDetailsEditDraft {
     event_id: Uuid,
@@ -1907,6 +1995,12 @@ enum EventDetailsEditorAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EventTimeEditorAction {
+    Save,
+    Cancel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EventLocationEditorAction {
     Save,
     Cancel,
 }
@@ -2029,6 +2123,7 @@ pub struct EphemerisApp {
     new_local_event: Option<NewLocalEventDraft>,
     event_details_editor: Option<EventDetailsEditDraft>,
     event_time_editor: Option<EventTimeEditDraft>,
+    event_location_editor: Option<EventLocationEditDraft>,
     recurrence_editor: Option<RecurrenceEditDraft>,
     notification_rules: Vec<NotificationRule>,
     notification_deliveries: Vec<NotificationDelivery>,
@@ -2146,6 +2241,7 @@ impl EphemerisApp {
             new_local_event: None,
             event_details_editor: None,
             event_time_editor: None,
+            event_location_editor: None,
             recurrence_editor: None,
             notification_rules: Vec::new(),
             notification_deliveries: Vec::new(),
@@ -3176,6 +3272,63 @@ impl EphemerisApp {
             Err(error) => {
                 self.last_message = None;
                 self.last_error = Some(format!("Failed to save event time: {error:#}"));
+            }
+        }
+    }
+
+    fn begin_event_location_edit(&mut self, event_id: Uuid) {
+        let canonical_id = self.canonical_event_id(event_id);
+        match self.store.event_by_id(canonical_id) {
+            Ok(Some(event)) if self.event_is_editable(&event) => {
+                self.event_location_editor = Some(EventLocationEditDraft::from_event(&event));
+                self.last_error = None;
+            }
+            Ok(Some(_)) => {
+                self.last_message = None;
+                self.last_error = Some(
+                    "This event comes from a read-only source and cannot be edited.".to_string(),
+                );
+            }
+            Ok(None) => {
+                self.last_message = None;
+                self.last_error = Some("The canonical event could not be found.".to_string());
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to load location editor: {error:#}"));
+            }
+        }
+    }
+
+    fn save_event_location_edit(&mut self) {
+        let Some(draft) = self.event_location_editor.clone() else {
+            return;
+        };
+
+        let result = (|| -> anyhow::Result<()> {
+            let mut event = self
+                .store
+                .event_by_id(draft.event_id)?
+                .ok_or_else(|| anyhow::anyhow!("canonical event no longer exists"))?;
+            if !self.event_is_editable(&event) {
+                anyhow::bail!("event source is read-only");
+            }
+            event.location = draft.parsed_location()?;
+            event.updated_at = Utc::now();
+            self.store.upsert_event(&event)?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.event_location_editor = None;
+                self.last_message = Some("Saved structured event location.".to_string());
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to save event location: {error:#}"));
             }
         }
     }
@@ -6909,6 +7062,7 @@ impl EphemerisApp {
         let mut topology_action = None;
         let mut participant_action = None;
         let mut event_details_action = None;
+        let mut event_location_action = None;
         let mut refresh_participant_entity_search = false;
         let mut refresh_relation_search = false;
         let mut refresh_identity_search = false;
@@ -7335,38 +7489,121 @@ impl EphemerisApp {
             if let Some(value) = event.institution.as_deref() {
                 inspector_row(ui, "Institution", value);
             }
-            if let Some(location) = event.location.as_ref() {
+            if event.location.is_some() || self.event_is_editable(&event) {
                 ui.separator();
-                ui.strong("Location");
-                if let Some(value) = location.name.as_deref() {
-                    inspector_row(ui, "Venue", value);
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong("Location");
+                    if self.event_is_editable(&event)
+                        && self
+                            .event_location_editor
+                            .as_ref()
+                            .is_none_or(|draft| draft.event_id != canonical_id)
+                        && ui.small_button("Edit location").clicked()
+                    {
+                        self.begin_event_location_edit(canonical_id);
+                    }
+                });
+
+                if let Some(location) = event.location.as_ref() {
+                    if let Some(value) = location.name.as_deref() {
+                        inspector_row(ui, "Venue", value);
+                    }
+                    if let Some(value) = location.address.as_deref() {
+                        inspector_row(ui, "Address", value);
+                    }
+                    if let Some(value) = location.locality.as_deref() {
+                        inspector_row(ui, "Locality", value);
+                    }
+                    if let Some(value) = location.region.as_deref() {
+                        inspector_row(ui, "Region", value);
+                    }
+                    if let Some(value) = location.postal_code.as_deref() {
+                        inspector_row(ui, "Postal code", value);
+                    }
+                    if let Some(value) = location.country.as_deref() {
+                        inspector_row(ui, "Country", value);
+                    }
+                    if let (Some(latitude), Some(longitude)) =
+                        (location.latitude, location.longitude)
+                    {
+                        inspector_row(
+                            ui,
+                            "Coordinates",
+                            &format!("{latitude:.6}, {longitude:.6}"),
+                        );
+                    }
+                    if let Some(value) = location.virtual_url.as_deref() {
+                        inspector_row(ui, "Virtual URL", value);
+                    }
+                } else {
+                    ui.small("No structured location.");
                 }
-                if let Some(value) = location.address.as_deref() {
-                    inspector_row(ui, "Address", value);
-                }
-                if let Some(value) = location.locality.as_deref() {
-                    inspector_row(ui, "Locality", value);
-                }
-                if let Some(value) = location.region.as_deref() {
-                    inspector_row(ui, "Region", value);
-                }
-                if let Some(value) = location.postal_code.as_deref() {
-                    inspector_row(ui, "Postal code", value);
-                }
-                if let Some(value) = location.country.as_deref() {
-                    inspector_row(ui, "Country", value);
-                }
-                if let (Some(latitude), Some(longitude)) =
-                    (location.latitude, location.longitude)
+
+                if self
+                    .event_location_editor
+                    .as_ref()
+                    .is_some_and(|draft| draft.event_id == canonical_id)
                 {
-                    inspector_row(
-                        ui,
-                        "Coordinates",
-                        &format!("{latitude:.6}, {longitude:.6}"),
-                    );
-                }
-                if let Some(value) = location.virtual_url.as_deref() {
-                    inspector_row(ui, "Virtual URL", value);
+                    ui.group(|ui| {
+                        ui.small(
+                            "Blank every field to remove the location. Latitude and longitude must be supplied together.",
+                        );
+                        let draft = self.event_location_editor.as_mut().expect("checked above");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut draft.name)
+                                .hint_text("Venue / location name"),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut draft.address)
+                                .hint_text("Street address"),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.locality)
+                                    .hint_text("Locality")
+                                    .desired_width(120.0),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.region)
+                                    .hint_text("Region")
+                                    .desired_width(100.0),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.postal_code)
+                                    .hint_text("Postal")
+                                    .desired_width(80.0),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.country)
+                                    .hint_text("Country")
+                                    .desired_width(100.0),
+                            );
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.latitude)
+                                    .hint_text("Latitude")
+                                    .desired_width(100.0),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.longitude)
+                                    .hint_text("Longitude")
+                                    .desired_width(100.0),
+                            );
+                        });
+                        ui.add(
+                            egui::TextEdit::singleline(&mut draft.virtual_url)
+                                .hint_text("Virtual meeting URL"),
+                        );
+                        ui.horizontal(|ui| {
+                            if ui.button("Save location").clicked() {
+                                event_location_action = Some(EventLocationEditorAction::Save);
+                            }
+                            if ui.small_button("Cancel").clicked() {
+                                event_location_action = Some(EventLocationEditorAction::Cancel);
+                            }
+                        });
+                    });
                 }
             }
             if !event.participants.is_empty() || self.event_is_editable(&event) {
@@ -8262,6 +8499,14 @@ impl EphemerisApp {
             Some(EventDetailsEditorAction::Save) => self.save_event_details_edit(),
             Some(EventDetailsEditorAction::Cancel) => {
                 self.event_details_editor = None;
+                self.last_error = None;
+            }
+            None => {}
+        }
+        match event_location_action {
+            Some(EventLocationEditorAction::Save) => self.save_event_location_edit(),
+            Some(EventLocationEditorAction::Cancel) => {
+                self.event_location_editor = None;
                 self.last_error = None;
             }
             None => {}
