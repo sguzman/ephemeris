@@ -33,6 +33,14 @@ pub struct CanonicalSnapshotMergeResult {
     pub events_created: usize,
     pub events_updated: usize,
     pub events_unchanged: usize,
+    pub relations_created: usize,
+    pub relations_updated: usize,
+    pub relations_unchanged: usize,
+    pub collections_created: usize,
+    pub collections_updated: usize,
+    pub collections_unchanged: usize,
+    pub collection_memberships_replaced: usize,
+    pub collection_memberships_unchanged: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2290,6 +2298,17 @@ impl TemporalStore {
         sources: &[TemporalSource],
         events: &[TemporalEvent],
     ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
+        self.merge_canonical_snapshot_with_topology(sources, events, &[], &[], &[])
+    }
+
+    pub fn merge_canonical_snapshot_with_topology(
+        &self,
+        sources: &[TemporalSource],
+        events: &[TemporalEvent],
+        relations: &[EventRelation],
+        collections: &[EventCollection],
+        collection_members: &[EventCollectionMember],
+    ) -> anyhow::Result<CanonicalSnapshotMergeResult> {
         let tx = self
             .conn
             .unchecked_transaction()
@@ -2337,6 +2356,72 @@ impl TemporalStore {
                 }
             }
 
+            let mut collections_created = 0;
+            let mut collections_updated = 0;
+            let mut collections_unchanged = 0;
+            for collection in collections {
+                match self.event_collection_by_id(collection.id)? {
+                    None => {
+                        self.upsert_event_collection(collection)?;
+                        collections_created += 1;
+                    }
+                    Some(existing) if existing == *collection => {
+                        collections_unchanged += 1;
+                    }
+                    Some(_) => {
+                        self.upsert_event_collection(collection)?;
+                        collections_updated += 1;
+                    }
+                }
+            }
+
+            let mut relations_created = 0;
+            let mut relations_updated = 0;
+            let mut relations_unchanged = 0;
+            for relation in relations {
+                match self.event_relation_by_id(relation.id)? {
+                    None => {
+                        self.upsert_event_relation(relation)?;
+                        relations_created += 1;
+                    }
+                    Some(existing) if existing == *relation => {
+                        relations_unchanged += 1;
+                    }
+                    Some(_) => {
+                        self.upsert_event_relation(relation)?;
+                        relations_updated += 1;
+                    }
+                }
+            }
+
+            let mut collection_memberships_replaced = 0;
+            let mut collection_memberships_unchanged = 0;
+            for collection in collections {
+                let mut desired = collection_members
+                    .iter()
+                    .filter(|member| member.collection_id == collection.id)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if collection.ordered {
+                    desired.sort_by_key(|member| (member.position, member.event_id));
+                } else {
+                    desired.sort_by_key(|member| member.event_id);
+                }
+
+                let existing = self.event_collection_members(collection.id)?;
+                if existing == desired {
+                    collection_memberships_unchanged += 1;
+                    continue;
+                }
+
+                let event_ids = desired
+                    .iter()
+                    .map(|member| member.event_id)
+                    .collect::<Vec<_>>();
+                self.replace_event_collection_members(collection.id, &event_ids)?;
+                collection_memberships_replaced += 1;
+            }
+
             Ok(CanonicalSnapshotMergeResult {
                 sources_created,
                 sources_updated,
@@ -2344,6 +2429,14 @@ impl TemporalStore {
                 events_created,
                 events_updated,
                 events_unchanged,
+                relations_created,
+                relations_updated,
+                relations_unchanged,
+                collections_created,
+                collections_updated,
+                collections_unchanged,
+                collection_memberships_replaced,
+                collection_memberships_unchanged,
             })
         })();
 
