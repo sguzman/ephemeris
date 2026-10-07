@@ -1490,6 +1490,7 @@ impl TemporalStore {
         event
             .validate_time_uncertainty()
             .context("invalid event temporal uncertainty")?;
+        event.validate_location().context("invalid event location")?;
         let encoded = EncodedTime::from_time_spec(&event.time)?;
         let assertion_refs_json = encode_string_vec(&event.assertion_refs, "assertion refs")?;
         let source_refs_json = encode_string_vec(&event.source_refs, "source refs")?;
@@ -1506,6 +1507,12 @@ impl TemporalStore {
             .map(serde_json::to_string)
             .transpose()
             .context("failed to encode event recurrence")?;
+        let location_json = event
+            .location
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("failed to encode event location")?;
         let tags_json = encode_string_vec(&event.tags, "event tags")?;
         let properties_json = serde_json::to_string(&event.properties)
             .context("failed to encode event properties")?;
@@ -1518,7 +1525,7 @@ impl TemporalStore {
                     upstream_event_ref, upstream_reconciled_key,
                     assertion_refs_json, source_refs_json, provenance_refs_json, renderability,
                     normalized_title, raw_title, description,
-                    event_type, domain, jurisdiction, institution,
+                    event_type, domain, jurisdiction, institution, location_json,
                     status, confidence, importance, personal_relevance,
                     time_kind, start_utc, end_utc, source_timezone,
                     start_date, end_date_exclusive,
@@ -1531,7 +1538,7 @@ impl TemporalStore {
                     :upstream_event_ref, :upstream_reconciled_key,
                     :assertion_refs_json, :source_refs_json, :provenance_refs_json, :renderability,
                     :normalized_title, :raw_title, :description,
-                    :event_type, :domain, :jurisdiction, :institution,
+                    :event_type, :domain, :jurisdiction, :institution, :location_json,
                     :status, :confidence, :importance, :personal_relevance,
                     :time_kind, :start_utc, :end_utc, :source_timezone,
                     :start_date, :end_date_exclusive,
@@ -1556,6 +1563,7 @@ impl TemporalStore {
                     domain = excluded.domain,
                     jurisdiction = excluded.jurisdiction,
                     institution = excluded.institution,
+                    location_json = excluded.location_json,
                     status = excluded.status,
                     confidence = excluded.confidence,
                     importance = excluded.importance,
@@ -1592,6 +1600,7 @@ impl TemporalStore {
                     ":domain": event.domain,
                     ":jurisdiction": event.jurisdiction,
                     ":institution": event.institution,
+                    ":location_json": location_json,
                     ":status": event.status.as_str(),
                     ":confidence": event.confidence,
                     ":importance": event.importance,
@@ -4440,7 +4449,7 @@ fn migrate_v1_to_v2(conn: &mut Connection) -> anyhow::Result<()> {
         INSERT INTO temporal_events_v2 (
             id, source_id, source_record_key,
             normalized_title, raw_title, description,
-            event_type, domain, jurisdiction, institution,
+            event_type, domain, jurisdiction, institution, location_json,
             status, confidence, importance, personal_relevance,
             time_kind, start_utc, end_utc, source_timezone,
             start_date, end_date_exclusive,
@@ -4757,6 +4766,11 @@ fn decode_event(row: &Row<'_>) -> rusqlite::Result<TemporalEvent> {
         domain: row.get("domain")?,
         jurisdiction: row.get("jurisdiction")?,
         institution: row.get("institution")?,
+        location: row
+            .get::<_, Option<String>>("location_json")?
+            .map(|raw| serde_json::from_str::<EventLocation>(&raw))
+            .transpose()
+            .map_err(to_sql_decode_error)?,
         status,
         confidence: row.get("confidence")?,
         importance: row.get("importance")?,
