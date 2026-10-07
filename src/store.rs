@@ -1455,6 +1455,8 @@ impl TemporalStore {
     }
 
     pub fn upsert_event(&self, event: &TemporalEvent) -> anyhow::Result<()> {
+        let previous = self.event_by_id(event.id)?;
+
         event
             .validate_recurrence()
             .context("invalid event recurrence definition")?;
@@ -1586,6 +1588,32 @@ impl TemporalStore {
             )
             .context("failed to upsert temporal event")?;
 
+        if previous.as_ref() != Some(event) {
+            self.record_event_revision(event)?;
+        }
+
+        Ok(())
+    }
+
+    fn record_event_revision(&self, event: &TemporalEvent) -> anyhow::Result<()> {
+        let snapshot_json =
+            serde_json::to_string(event).context("failed to encode event revision snapshot")?;
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO event_revisions (
+                    id, event_id, recorded_at, event_updated_at, snapshot_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                "#,
+                params![
+                    Uuid::new_v4().to_string(),
+                    event.id.to_string(),
+                    Utc::now().to_rfc3339(),
+                    event.updated_at.to_rfc3339(),
+                    snapshot_json,
+                ],
+            )
+            .context("failed to record event revision")?;
         Ok(())
     }
 
