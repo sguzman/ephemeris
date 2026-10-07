@@ -1625,6 +1625,51 @@ impl TemporalStore {
             .context("failed to query temporal event by id")
     }
 
+    pub fn event_revision_by_id(&self, id: Uuid) -> anyhow::Result<Option<EventRevision>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, event_id, recorded_at, event_updated_at, snapshot_json
+            FROM event_revisions
+            WHERE id = ?1
+            "#,
+        )?;
+        stmt.query_row(params![id.to_string()], decode_event_revision)
+            .optional()
+            .context("failed to query event revision by id")
+    }
+
+    pub fn event_revisions(&self, event_id: Uuid) -> anyhow::Result<Vec<EventRevision>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, event_id, recorded_at, event_updated_at, snapshot_json
+            FROM event_revisions
+            WHERE event_id = ?1
+            ORDER BY recorded_at, id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![event_id.to_string()])?;
+        let mut revisions = Vec::new();
+        while let Some(row) = rows.next()? {
+            revisions.push(decode_event_revision(row)?);
+        }
+        Ok(revisions)
+    }
+
+    pub fn latest_event_revision(&self, event_id: Uuid) -> anyhow::Result<Option<EventRevision>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, event_id, recorded_at, event_updated_at, snapshot_json
+            FROM event_revisions
+            WHERE event_id = ?1
+            ORDER BY recorded_at DESC, id DESC
+            LIMIT 1
+            "#,
+        )?;
+        stmt.query_row(params![event_id.to_string()], decode_event_revision)
+            .optional()
+            .context("failed to query latest event revision")
+    }
+
     pub fn event_by_source_record(
         &self,
         source_id: Uuid,
@@ -4549,6 +4594,25 @@ fn decode_event_identity_assessment(row: &Row<'_>) -> rusqlite::Result<EventIden
             .map_err(to_sql_decode_error)?,
         updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)
             .map_err(to_sql_decode_error)?,
+    })
+}
+
+fn decode_event_revision(row: &Row<'_>) -> rusqlite::Result<EventRevision> {
+    let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
+    let event_id =
+        Uuid::parse_str(&row.get::<_, String>("event_id")?).map_err(to_sql_decode_error)?;
+    let recorded_at = parse_datetime(&row.get::<_, String>("recorded_at")?)
+        .map_err(to_sql_decode_error)?;
+    let event_updated_at = parse_datetime(&row.get::<_, String>("event_updated_at")?)
+        .map_err(to_sql_decode_error)?;
+    let event = serde_json::from_str::<TemporalEvent>(&row.get::<_, String>("snapshot_json")?)
+        .map_err(to_sql_decode_error)?;
+    Ok(EventRevision {
+        id,
+        event_id,
+        recorded_at,
+        event_updated_at,
+        event,
     })
 }
 
