@@ -7731,7 +7731,7 @@ mod tests {
         create_canonical_entity_schema_current(&tx).expect("entity schema");
         create_participant_entity_binding_schema_current(&tx).expect("entity bindings");
         create_notification_rule_schema_current(&tx).expect("notification rules");
-        create_notification_delivery_schema_current(&tx).expect("notification deliveries");
+        create_notification_delivery_schema_v26(&tx).expect("notification deliveries");
         tx.pragma_update(None, "user_version", 26).expect("set v26");
         tx.commit().expect("commit v26 schema");
 
