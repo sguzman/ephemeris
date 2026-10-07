@@ -10,13 +10,14 @@ use uuid::Uuid;
 
 use crate::calendar::CalendarLayout;
 use crate::domain::{
-    EventCollection, EventCollectionMember, EventIdentityAssessment, EventIdentityState,
-    EventRelation, EventStatus, RecurrenceRule, SourceAuthority, SourceKind, TemporalEvent,
+    EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
+    EventIdentityState, EventRelation, EventStatus, RecurrenceRule, SourceAuthority, SourceKind,
+    TemporalEvent,
     TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 17;
+const SCHEMA_VERSION: i64 = 18;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -3037,6 +3038,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         create_event_relation_collection_schema_current(&tx)?;
         add_event_uncertainty_column(&tx)?;
         create_event_identity_schema_current(&tx)?;
+        create_event_annotation_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -3120,6 +3122,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 16 {
         migrate_v16_to_v17(conn)?;
+        current = 17;
+    }
+
+    if current == 17 {
+        migrate_v17_to_v18(conn)?;
     }
 
     Ok(())
@@ -3565,6 +3572,39 @@ fn create_event_identity_schema_current(conn: &Connection) -> anyhow::Result<()>
         "#,
     )
     .context("failed to create event identity assessment schema")
+}
+
+fn create_event_annotation_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE event_annotations (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES temporal_events(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            value_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (length(trim(kind)) > 0)
+        );
+
+        CREATE INDEX event_annotations_event
+            ON event_annotations(event_id, kind, updated_at);
+        CREATE INDEX event_annotations_kind
+            ON event_annotations(kind, updated_at);
+        "#,
+    )
+    .context("failed to create event annotation schema")
+}
+
+fn migrate_v17_to_v18(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v17 to v18 migration")?;
+    create_event_annotation_schema_current(&tx)?;
+    tx.pragma_update(None, "user_version", 18)
+        .context("failed to set schema version 18")?;
+    tx.commit()
+        .context("failed to commit v17 to v18 schema migration")
 }
 
 fn migrate_v16_to_v17(conn: &mut Connection) -> anyhow::Result<()> {
