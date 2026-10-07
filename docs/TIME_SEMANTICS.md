@@ -44,7 +44,27 @@ A range of civil dates, potentially inclusive/exclusive depending on source sema
 
 ### Approximate or uncertain time
 
-Future Taria data may include temporal uncertainty. The data model should leave room for ranges, estimated instants, or confidence metadata instead of inventing false precision.
+Temporal placement uncertainty is now a first-class canonical field rather than a future placeholder.
+
+The implemented model is an optional bounded **possible-start window** attached to an otherwise canonical event placement:
+
+- `DateWindow` uses civil dates for date-only and all-day events;
+- `FloatingWindow` uses wall-clock date-times for floating events;
+- `InstantWindow` uses UTC instants for exact events.
+
+The canonical `TimeSpec` start is still the representative placement and must lie inside the non-zero uncertainty window. The uncertainty window does **not** describe event duration and does not cause Ephemeris to smear one event across every possible date in calendar rendering.
+
+This is intentionally separate from:
+
+- coarse precision such as `Month`, `Year`, or unresolved time;
+- lifecycle/status values such as tentative, estimated, projected, or disputed;
+- general event/assertion `confidence`.
+
+Recurring events do not yet carry start-placement uncertainty because that requires an explicit decision about series-level versus occurrence-level uncertainty.
+
+Programmable views can query whether uncertainty exists and can query civil-date overlap against the possible-start window. Exact-instant windows are converted through the active display timezone for that query; floating windows remain in their asserted wall-clock coordinate system.
+
+Canonical JSON preserves the field. CSV v1 and the current iCalendar exporter reject uncertain events instead of silently erasing the semantics.
 
 ## Source timezone vs display timezone
 
