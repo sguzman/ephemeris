@@ -1798,6 +1798,11 @@ impl TemporalStore {
             }
             aliases.push(alias.trim().to_string());
         }
+        aliases.sort_by(|left, right| {
+            left.to_lowercase()
+                .cmp(&right.to_lowercase())
+                .then_with(|| left.cmp(right))
+        });
         merged.aliases = aliases;
 
         let mut external_refs = BTreeSet::new();
