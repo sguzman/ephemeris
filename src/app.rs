@@ -1410,6 +1410,7 @@ enum TopologyInspectorAction {
     DeleteRelation(Uuid),
     SetIdentityState(Uuid, EventIdentityState),
     DeleteIdentityAssessment(Uuid),
+    AddIdentityAssessment,
 }
 
 pub struct EphemerisApp {
@@ -1436,6 +1437,12 @@ pub struct EphemerisApp {
     event_relation_types: Vec<String>,
     event_identity_assessments: Vec<EventIdentityAssessment>,
     event_identity_titles: HashMap<Uuid, String>,
+    identity_search: String,
+    identity_candidates: Vec<(Uuid, String)>,
+    identity_target_id: Option<Uuid>,
+    identity_new_state: EventIdentityState,
+    identity_confidence_text: String,
+    identity_rationale: String,
     topology_edit_event_id: Option<Uuid>,
     topology_collection_choice: Option<Uuid>,
     topology_new_collection_name: String,
@@ -1509,6 +1516,12 @@ impl EphemerisApp {
             event_relation_types: Vec::new(),
             event_identity_assessments: Vec::new(),
             event_identity_titles: HashMap::new(),
+            identity_search: String::new(),
+            identity_candidates: Vec::new(),
+            identity_target_id: None,
+            identity_new_state: EventIdentityState::Candidate,
+            identity_confidence_text: String::new(),
+            identity_rationale: String::new(),
             topology_edit_event_id: None,
             topology_collection_choice: None,
             topology_new_collection_name: String::new(),
@@ -4195,6 +4208,12 @@ impl EphemerisApp {
         self.topology_relation_search.clear();
         self.topology_relation_candidates.clear();
         self.topology_relation_target_id = None;
+        self.identity_search.clear();
+        self.identity_candidates.clear();
+        self.identity_target_id = None;
+        self.identity_new_state = EventIdentityState::Candidate;
+        self.identity_confidence_text.clear();
+        self.identity_rationale.clear();
     }
 
     fn refresh_topology_relation_candidates(&mut self, event_id: Uuid) {
@@ -4215,6 +4234,28 @@ impl EphemerisApp {
                 self.topology_relation_candidates.clear();
                 self.topology_relation_target_id = None;
                 self.last_error = Some(format!("Failed to search relation targets: {error:#}"));
+            }
+        }
+    }
+
+    fn refresh_identity_candidates(&mut self, event_id: Uuid) {
+        match self
+            .store
+            .search_event_titles(&self.identity_search, Some(event_id), 20)
+        {
+            Ok(candidates) => {
+                if self
+                    .identity_target_id
+                    .is_some_and(|selected| !candidates.iter().any(|(id, _)| *id == selected))
+                {
+                    self.identity_target_id = None;
+                }
+                self.identity_candidates = candidates;
+            }
+            Err(error) => {
+                self.identity_candidates.clear();
+                self.identity_target_id = None;
+                self.last_error = Some(format!("Failed to search identity candidates: {error:#}"));
             }
         }
     }
@@ -4251,6 +4292,9 @@ impl EphemerisApp {
                 .store
                 .delete_event_identity_assessment(assessment_id)
                 .map(|_| ()),
+            TopologyInspectorAction::AddIdentityAssessment => {
+                self.create_identity_assessment_for_event(event_id)
+            }
         };
 
         match result {
@@ -4260,9 +4304,54 @@ impl EphemerisApp {
             }
             Err(error) => {
                 self.last_message = None;
-                self.last_error = Some(format!("Topology edit failed: {error:#}"));
+                self.last_error = Some(format!("Inspector edit failed: {error:#}"));
             }
         }
+    }
+
+    fn create_identity_assessment_for_event(
+        &mut self,
+        event_id: Uuid,
+    ) -> anyhow::Result<()> {
+        let target_id = self
+            .identity_target_id
+            .ok_or_else(|| anyhow::anyhow!("choose an identity comparison target"))?;
+        if self
+            .store
+            .event_identity_assessment_between(event_id, target_id)?
+            .is_some()
+        {
+            anyhow::bail!("an identity assessment for this event pair already exists");
+        }
+
+        let mut assessment = EventIdentityAssessment::new(event_id, target_id);
+        assessment.state = self.identity_new_state;
+        assessment.confidence = if self.identity_confidence_text.trim().is_empty() {
+            None
+        } else {
+            Some(
+                self.identity_confidence_text
+                    .trim()
+                    .parse::<f32>()
+                    .map_err(|_| anyhow::anyhow!("identity confidence must be a number in 0..=1"))?,
+            )
+        };
+        assessment.rationale = if self.identity_rationale.trim().is_empty() {
+            None
+        } else {
+            Some(self.identity_rationale.trim().to_string())
+        };
+        assessment.updated_at = Utc::now();
+        self.store.upsert_event_identity_assessment(&assessment)?;
+
+        self.identity_search.clear();
+        self.identity_candidates.clear();
+        self.identity_target_id = None;
+        self.identity_new_state = EventIdentityState::Candidate;
+        self.identity_confidence_text.clear();
+        self.identity_rationale.clear();
+        self.last_message = Some("Created duplicate/entity assessment.".to_string());
+        Ok(())
     }
 
     fn set_identity_assessment_state(
