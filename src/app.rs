@@ -18,12 +18,16 @@ use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
     CanonicalEntity, EventAnnotation, EventCollection, EventCollectionMember,
     EventIdentityAssessment, EventIdentityState, EventParticipant, EventProvenanceRecord,
-    EventProvenanceRole, EventRelation, EventStatus, RecurrenceFrequency,
-    RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule,
-    RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
+    EventProvenanceRole, EventRelation, EventStatus, NotificationRule, NotificationTarget,
+    NotificationTrigger, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
+    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent,
+    TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
+use crate::notifications::{
+    NotificationOccurrence, NotificationSkip, evaluate_notification_rules,
+};
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
@@ -1676,6 +1680,13 @@ pub struct EphemerisApp {
     new_local_event: Option<NewLocalEventDraft>,
     event_details_editor: Option<EventDetailsEditDraft>,
     recurrence_editor: Option<RecurrenceEditDraft>,
+    notification_rules: Vec<NotificationRule>,
+    notification_occurrences: Vec<NotificationOccurrence>,
+    notification_skipped: Vec<NotificationSkip>,
+    notification_eval_minute: Option<i64>,
+    notification_event_lead_minutes: String,
+    notification_saved_view_id: Option<Uuid>,
+    notification_saved_view_lead_minutes: String,
     dirty_state: bool,
     saved_view_name: String,
     saved_views: Vec<SavedView>,
@@ -1784,6 +1795,13 @@ impl EphemerisApp {
             new_local_event: None,
             event_details_editor: None,
             recurrence_editor: None,
+            notification_rules: Vec::new(),
+            notification_occurrences: Vec::new(),
+            notification_skipped: Vec::new(),
+            notification_eval_minute: None,
+            notification_event_lead_minutes: "15".to_string(),
+            notification_saved_view_id: None,
+            notification_saved_view_lead_minutes: "15".to_string(),
             dirty_state: false,
             saved_view_name: String::new(),
             saved_views,
