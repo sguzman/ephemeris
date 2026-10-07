@@ -5061,6 +5061,20 @@ impl EphemerisApp {
                     inspector_row(ui, "Virtual URL", value);
                 }
             }
+            if !event.participants.is_empty() {
+                ui.separator();
+                ui.strong("Participants");
+                for participant in &event.participants {
+                    let label = participant.role.as_deref().unwrap_or("Participant");
+                    inspector_row(ui, label, &participant.name);
+                    if let Some(participant_type) = participant.participant_type.as_deref() {
+                        inspector_row(ui, "Type", participant_type);
+                    }
+                    if let Some(entity_ref) = participant.entity_ref.as_deref() {
+                        inspector_row(ui, "Entity ref", entity_ref);
+                    }
+                }
+            }
             if let Some(value) = event.confidence {
                 inspector_row(ui, "Confidence", &format!("{value:.3}"));
             }
