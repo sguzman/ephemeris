@@ -62,11 +62,11 @@ Implemented:
 
 Still required:
 
-- general-purpose snapshot/history beyond the implemented Taria release snapshot model — active next slice
-- richer indexed ontology
+- richer indexed ontology — structured location is the next canonical slice
 
 Implemented canonical extensions:
 
+- immutable canonical event revision history — schema v20, atomic append-on-change semantics, persistence after live-event deletion, inspector history
 - dedicated structured provenance records/tables — schema v19, queries, inspector authoring, canonical JSON v5
 - user-owned annotations — schema v18, queries, inspector authoring, canonical JSON v4
 - duplicate/entity identity assessments — schema v17, queries, inspector authoring, canonical JSON v3
