@@ -15,16 +15,17 @@ use crate::calendar::{
 };
 use crate::csv::{export_source_csv_by_id, import_csv_file};
 use crate::domain::{
-    EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin, RecurrenceOrdinalWeekday,
-    RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
+    EventCollection, EventStatus, RecurrenceFrequency, RecurrenceOccurrenceOrigin,
+    RecurrenceOrdinalWeekday, RecurrenceOverride, RecurrenceRule, RecurrenceWeekday,
+    TemporalEvent, TemporalSource, TimeSpec,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
 use crate::interchange::import_canonical_json_file;
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
-    RgbColor, SavedView, SortDirection, SortField, SortRule, TableColumn, TemporalKind, TextField,
-    TextOperator, matches_composed_or_overlay_with_saved_views_and_membership,
+    RelationDirection, RgbColor, SavedView, SortDirection, SortField, SortRule, TableColumn,
+    TemporalKind, TextField, TextOperator, matches_composed_or_overlay_with_saved_views_and_membership,
     saved_view_reference_cycle,
 };
 use crate::state::PersistedUiState;
@@ -1411,7 +1412,9 @@ pub struct EphemerisApp {
     remote_ics_url: String,
     remote_ics_import_receiver: Option<Receiver<Result<IcsImportReport, String>>>,
     taria_current_source_ids: BTreeSet<Uuid>,
-    taria_memberships: HashMap<Uuid, EventMembership>,
+    event_memberships: HashMap<Uuid, EventMembership>,
+    event_collections: Vec<EventCollection>,
+    event_relation_types: Vec<String>,
     taria_release_status: Option<TariaReleaseStatusRecord>,
     taria_release_history: Vec<TariaReleaseHistoryEntry>,
     taria_previous_release_diff: Option<TariaReleaseDiff>,
@@ -1464,7 +1467,9 @@ impl EphemerisApp {
             remote_ics_url: String::new(),
             remote_ics_import_receiver: None,
             taria_current_source_ids: BTreeSet::new(),
-            taria_memberships: HashMap::new(),
+            event_memberships: HashMap::new(),
+            event_collections: Vec::new(),
+            event_relation_types: Vec::new(),
             taria_release_status: None,
             taria_release_history: Vec::new(),
             taria_previous_release_diff: None,
@@ -2507,9 +2512,28 @@ impl EphemerisApp {
         {
             self.selected_source_id = None;
         }
-        self.taria_memberships = self
+        self.event_memberships = self
             .store
             .taria_event_memberships_for_release(self.state.taria_last_release_id.as_deref())?;
+        for (event_id, topology) in self.store.event_relation_collection_memberships()? {
+            let membership = self.event_memberships.entry(event_id).or_default();
+            membership.collection_ids.extend(topology.collection_ids);
+            membership
+                .outgoing_relation_types
+                .extend(topology.outgoing_relation_types);
+            membership
+                .incoming_relation_types
+                .extend(topology.incoming_relation_types);
+        }
+        self.event_collections = self.store.list_event_collections()?;
+        self.event_relation_types = self
+            .store
+            .list_event_relations()?
+            .into_iter()
+            .map(|relation| relation.relation_type)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         self.taria_release_status = self
             .store
             .taria_release_status(self.state.taria_last_release_id.as_deref())?;
@@ -2722,7 +2746,7 @@ impl EphemerisApp {
                         &self.saved_views,
                         event,
                         &context,
-                        self.taria_memberships
+                        self.event_memberships
                             .get(&self.canonical_event_id(event.id)),
                     )
             })
@@ -2749,7 +2773,7 @@ impl EphemerisApp {
                         &self.saved_views,
                         event,
                         &context,
-                        self.taria_memberships
+                        self.event_memberships
                             .get(&self.canonical_event_id(event.id)),
                     )
             })
@@ -3017,6 +3041,8 @@ impl EphemerisApp {
         let membership_options = MembershipPredicateOptions {
             bundles: self.taria_bundle_refs.clone(),
             calendars: self.taria_calendar_choices.clone(),
+            collections: self.event_collections.clone(),
+            relation_types: self.event_relation_types.clone(),
         };
         ui.separator();
 
@@ -4039,7 +4065,7 @@ impl EphemerisApp {
                                     fallback: self.state.color_by,
                                     rules: &self.state.color_rules,
                                     overlays: &self.state.overlays,
-                                    memberships: &self.taria_memberships,
+                                    memberships: &self.event_memberships,
                                     occurrence_contexts: &self.occurrence_contexts,
                                     query_context: QueryContext::for_timezone(self.timezone()),
                                 },
@@ -4480,7 +4506,7 @@ impl eframe::App for EphemerisApp {
                                     fallback: self.state.color_by,
                                     rules: &self.state.color_rules,
                                     overlays: &self.state.overlays,
-                                    memberships: &self.taria_memberships,
+                                    memberships: &self.event_memberships,
                                     occurrence_contexts: &self.occurrence_contexts,
                                     query_context: QueryContext::for_timezone(timezone),
                                 },
@@ -4507,6 +4533,8 @@ impl eframe::App for EphemerisApp {
 struct MembershipPredicateOptions {
     bundles: Vec<String>,
     calendars: Vec<TariaProjectedCalendarChoice>,
+    collections: Vec<EventCollection>,
+    relation_types: Vec<String>,
 }
 
 fn render_contextual_week_start(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft) {
@@ -5685,10 +5713,12 @@ enum QueryPredicateKind {
     RelativeDateOverlaps,
     BundleMembership,
     ProjectedCalendarMembership,
+    CollectionMembership,
+    RelationType,
 }
 
 impl QueryPredicateKind {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 12] = [
         Self::Text,
         Self::TextAnyOf,
         Self::StatusAnyOf,
@@ -5699,6 +5729,8 @@ impl QueryPredicateKind {
         Self::RelativeDateOverlaps,
         Self::BundleMembership,
         Self::ProjectedCalendarMembership,
+        Self::CollectionMembership,
+        Self::RelationType,
     ];
 
     const fn label(self) -> &'static str {
@@ -5713,6 +5745,8 @@ impl QueryPredicateKind {
             Self::RelativeDateOverlaps => "Relative date window",
             Self::BundleMembership => "Taria bundle membership",
             Self::ProjectedCalendarMembership => "Taria projected calendar membership",
+            Self::CollectionMembership => "Event collection membership",
+            Self::RelationType => "Event relation type",
         }
     }
 }
@@ -5792,6 +5826,13 @@ fn default_query_predicate(kind: QueryPredicateKind) -> QueryPredicate {
                 calendar_id: String::new(),
             }
         }
+        QueryPredicateKind::CollectionMembership => QueryPredicate::CollectionMembership {
+            collection_id: Uuid::nil(),
+        },
+        QueryPredicateKind::RelationType => QueryPredicate::RelationType {
+            relation_type: String::new(),
+            direction: RelationDirection::Either,
+        },
     }
 }
 
@@ -5809,6 +5850,8 @@ fn query_predicate_kind(predicate: &QueryPredicate) -> QueryPredicateKind {
         QueryPredicate::ProjectedCalendarMembership { .. } => {
             QueryPredicateKind::ProjectedCalendarMembership
         }
+        QueryPredicate::CollectionMembership { .. } => QueryPredicateKind::CollectionMembership,
+        QueryPredicate::RelationType { .. } => QueryPredicateKind::RelationType,
     }
 }
 
@@ -6197,6 +6240,63 @@ fn render_query_predicate_editor(
                 });
             changed |= ui
                 .add(egui::TextEdit::singleline(calendar_id).hint_text("projected-calendar:..."))
+                .changed();
+        }
+        QueryPredicate::CollectionMembership { collection_id } => {
+            ui.small("Matches canonical collection/sequence membership without changing event ownership.");
+            let selected = membership_options
+                .collections
+                .iter()
+                .find(|collection| collection.id == *collection_id)
+                .map(|collection| collection.name.clone())
+                .unwrap_or_else(|| {
+                    if collection_id.is_nil() {
+                        "Select collection…".to_string()
+                    } else {
+                        collection_id.to_string()
+                    }
+                });
+            egui::ComboBox::from_id_salt(("advanced-collection-id", path))
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    for collection in &membership_options.collections {
+                        changed |= ui
+                            .selectable_value(collection_id, collection.id, &collection.name)
+                            .changed();
+                    }
+                });
+        }
+        QueryPredicate::RelationType {
+            relation_type,
+            direction,
+        } => {
+            ui.small("Matches canonical directed event relations; direction is relative to the event.");
+            ui.horizontal_wrapped(|ui| {
+                egui::ComboBox::from_id_salt(("advanced-relation-type", path))
+                    .selected_text(if relation_type.is_empty() {
+                        "Select relation type…"
+                    } else {
+                        relation_type.as_str()
+                    })
+                    .show_ui(ui, |ui| {
+                        for candidate in &membership_options.relation_types {
+                            changed |= ui
+                                .selectable_value(relation_type, candidate.clone(), candidate)
+                                .changed();
+                        }
+                    });
+                egui::ComboBox::from_id_salt(("advanced-relation-direction", path))
+                    .selected_text(direction.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in RelationDirection::ALL {
+                            changed |= ui
+                                .selectable_value(direction, candidate, candidate.label())
+                                .changed();
+                        }
+                    });
+            });
+            changed |= ui
+                .add(egui::TextEdit::singleline(relation_type).hint_text("causes, precedes, ..."))
                 .changed();
         }
     }
