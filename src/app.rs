@@ -31,8 +31,8 @@ use crate::query::{
 };
 use crate::state::PersistedUiState;
 use crate::store::{
-    SourceRefreshAttempt, TariaProjectedCalendarChoice, TariaReleaseDiff, TariaReleaseHistoryEntry,
-    TariaReleaseStatusRecord, TemporalStore,
+    EventRevision, SourceRefreshAttempt, TariaProjectedCalendarChoice, TariaReleaseDiff,
+    TariaReleaseHistoryEntry, TariaReleaseStatusRecord, TemporalStore,
 };
 use crate::taria::import_reconciled_event_set_file;
 use crate::taria_workspace::{
@@ -1446,6 +1446,8 @@ pub struct EphemerisApp {
     annotation_new_kind: String,
     annotation_new_value: String,
     event_provenance_records: Vec<EventProvenanceRecord>,
+    event_revision_event_id: Option<Uuid>,
+    event_revisions: Vec<EventRevision>,
     provenance_new_role: EventProvenanceRole,
     provenance_new_reference: String,
     provenance_new_note: String,
@@ -1533,6 +1535,8 @@ impl EphemerisApp {
             annotation_new_kind: "note".to_string(),
             annotation_new_value: String::new(),
             event_provenance_records: Vec::new(),
+            event_revision_event_id: None,
+            event_revisions: Vec::new(),
             provenance_new_role: EventProvenanceRole::Provenance,
             provenance_new_reference: String::new(),
             provenance_new_note: String::new(),
@@ -2543,6 +2547,9 @@ impl EphemerisApp {
     }
 
     fn reload(&mut self) -> anyhow::Result<()> {
+        self.event_revision_event_id = None;
+        self.event_revisions.clear();
+
         let timezone = self.timezone();
         let focus = self.state.focus_date();
         let window = window_for_view(
@@ -4717,6 +4724,21 @@ impl EphemerisApp {
             return;
         };
         let canonical_id = self.canonical_event_id(event.id);
+        if self.event_revision_event_id != Some(canonical_id) {
+            match self.store.event_revisions(canonical_id) {
+                Ok(revisions) => {
+                    self.event_revision_event_id = Some(canonical_id);
+                    self.event_revisions = revisions;
+                }
+                Err(error) => {
+                    self.event_revision_event_id = Some(canonical_id);
+                    self.event_revisions.clear();
+                    self.last_error = Some(format!("Failed to load event history: {error:#}"));
+                }
+            }
+        }
+        let revision_rows = self.event_revisions.clone();
+
         if self.topology_edit_event_id != Some(canonical_id) {
             self.reset_topology_editor(canonical_id);
         }
@@ -5582,6 +5604,49 @@ impl EphemerisApp {
                     topology_action = Some(TopologyInspectorAction::AddAnnotation);
                 }
             });
+
+            ui.separator();
+            ui.collapsing(
+                format!("Canonical history · {} revision(s)", revision_rows.len()),
+                |ui| {
+                    ui.small(
+                        "Immutable snapshots recorded after real canonical event changes since schema v20. Existing events are not backfilled retroactively.",
+                    );
+                    if revision_rows.is_empty() {
+                        ui.small("No recorded revisions yet.");
+                    }
+                    let hidden = revision_rows.len().saturating_sub(25);
+                    if hidden > 0 {
+                        ui.small(format!("{hidden} older revision(s) omitted from this panel."));
+                    }
+                    for index in (0..revision_rows.len()).rev().take(25) {
+                        let revision = &revision_rows[index];
+                        let previous = index
+                            .checked_sub(1)
+                            .and_then(|previous| revision_rows.get(previous))
+                            .map(|revision| &revision.event);
+                        ui.group(|ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(format!("Revision {}", index + 1)).strong());
+                                ui.small(event_revision_change_summary(previous, &revision.event));
+                            });
+                            inspector_row(ui, "Recorded", &revision.recorded_at.to_rfc3339());
+                            inspector_row(
+                                ui,
+                                "Event updated",
+                                &revision.event_updated_at.to_rfc3339(),
+                            );
+                            inspector_row(ui, "Title", &revision.event.normalized_title);
+                            inspector_row(ui, "Status", revision.event.status.as_str());
+                            inspector_row(
+                                ui,
+                                "Placement",
+                                &revision.event.display_time_label(self.timezone()),
+                            );
+                        });
+                    }
+                },
+            );
 
             render_time_spec(ui, &event.time, self.timezone());
 
@@ -9514,6 +9579,67 @@ fn temporal_uncertainty_labels(uncertainty: &TimeUncertainty, timezone: Tz) -> (
     }
 }
 
+fn event_revision_change_summary(
+    previous: Option<&TemporalEvent>,
+    current: &TemporalEvent,
+) -> String {
+    let Some(previous) = previous else {
+        return "created".to_string();
+    };
+
+    let mut changes = Vec::new();
+    if previous.normalized_title != current.normalized_title {
+        changes.push("title");
+    }
+    if previous.time != current.time || previous.time_uncertainty != current.time_uncertainty {
+        changes.push("time");
+    }
+    if previous.recurrence != current.recurrence {
+        changes.push("recurrence");
+    }
+    if previous.status != current.status {
+        changes.push("status");
+    }
+    if previous.description != current.description {
+        changes.push("description");
+    }
+    if previous.event_type != current.event_type
+        || previous.domain != current.domain
+        || previous.jurisdiction != current.jurisdiction
+        || previous.institution != current.institution
+    {
+        changes.push("classification");
+    }
+    if previous.confidence != current.confidence
+        || previous.importance != current.importance
+        || previous.personal_relevance != current.personal_relevance
+    {
+        changes.push("scoring");
+    }
+    if previous.source_id != current.source_id
+        || previous.source_record_key != current.source_record_key
+        || previous.upstream_event_ref != current.upstream_event_ref
+        || previous.upstream_reconciled_key != current.upstream_reconciled_key
+        || previous.assertion_refs != current.assertion_refs
+        || previous.source_refs != current.source_refs
+        || previous.provenance_refs != current.provenance_refs
+    {
+        changes.push("identity/provenance");
+    }
+    if previous.tags != current.tags {
+        changes.push("tags");
+    }
+    if previous.properties != current.properties {
+        changes.push("properties");
+    }
+
+    if changes.is_empty() {
+        "canonical metadata changed".to_string()
+    } else {
+        changes.join(", ")
+    }
+}
+
 fn inspector_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.horizontal_wrapped(|ui| {
         ui.strong(format!("{label}:"));
@@ -10019,6 +10145,35 @@ mod tests {
         draft.count_text.clear();
         draft.until_text = "10/05/2026".to_string();
         assert!(draft.parsed_rule().is_err());
+    }
+
+    #[test]
+    fn event_revision_summary_reports_semantic_changes_without_timestamps() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let original = TemporalEvent::new(
+            "Original",
+            TimeSpec::DateOnly {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        assert_eq!(event_revision_change_summary(None, &original), "created");
+
+        let mut touched = original.clone();
+        touched.updated_at = Utc::now();
+        assert_eq!(
+            event_revision_change_summary(Some(&original), &touched),
+            "canonical metadata changed"
+        );
+
+        let mut changed = touched.clone();
+        changed.normalized_title = "Changed".to_string();
+        changed.status = EventStatus::Cancelled;
+        changed.tags.push("important".to_string());
+        assert_eq!(
+            event_revision_change_summary(Some(&original), &changed),
+            "title, status, tags"
+        );
     }
 
     #[test]
