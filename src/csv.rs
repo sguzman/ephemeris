@@ -87,17 +87,61 @@ pub fn import_csv_file(
     path: impl AsRef<Path>,
 ) -> anyhow::Result<CsvImportReport> {
     let path = path.as_ref();
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read CSV file {}", path.display()))?;
-    let canonical = std::fs::canonicalize(path)
-        .with_context(|| format!("failed to canonicalize CSV file {}", path.display()))?;
-    let locator = canonical.display().to_string();
-    let external_ref = format!("csv:file:{locator}");
-    let fallback_name = canonical
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("CSV source");
-    import_csv_text(store, &raw, &external_ref, Some(&locator), fallback_name)
+    let history_target = std::fs::canonicalize(path).map_or_else(
+        |_| format!("csv:file:{}", path.display()),
+        |canonical| format!("csv:file:{}", canonical.display()),
+    );
+
+    run_recorded_import(store, &history_target, || {
+        let raw = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read CSV file {}", path.display()))?;
+        let canonical = std::fs::canonicalize(path)
+            .with_context(|| format!("failed to canonicalize CSV file {}", path.display()))?;
+        let locator = canonical.display().to_string();
+        let external_ref = format!("csv:file:{locator}");
+        let fallback_name = canonical
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("CSV source");
+        import_csv_text(store, &raw, &external_ref, Some(&locator), fallback_name)
+    })
+}
+
+fn run_recorded_import(
+    store: &TemporalStore,
+    target: &str,
+    operation: impl FnOnce() -> anyhow::Result<CsvImportReport>,
+) -> anyhow::Result<CsvImportReport> {
+    let attempt_id = store.begin_refresh_attempt("csv_file", target)?;
+    let result = operation();
+
+    let history_result = match &result {
+        Ok(report) => {
+            let summary = format!(
+                "{} events · {} created · {} updated · {} unchanged · {} retained missing",
+                report.total_events,
+                report.created,
+                report.updated,
+                report.unchanged,
+                report.retained_missing
+            );
+            store.finish_refresh_attempt(attempt_id, true, None, Some(&summary), None)
+        }
+        Err(error) => {
+            let safe_error = error.to_string();
+            store.finish_refresh_attempt(attempt_id, false, None, None, Some(&safe_error))
+        }
+    };
+
+    match (result, history_result) {
+        (Ok(report), Ok(())) => Ok(report),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(history_error)) => Err(history_error)
+            .context("CSV import succeeded but refresh history could not be completed"),
+        (Err(error), Err(history_error)) => Err(error).context(format!(
+            "refresh history also failed to complete: {history_error:#}"
+        )),
+    }
 }
 
 pub fn import_csv_text(
@@ -664,6 +708,33 @@ mod tests {
         );
         properties.properties = serde_json::json!({"not": "representable"});
         assert!(format_csv_events(&[properties]).is_err());
+    }
+
+    #[test]
+    fn csv_file_import_records_durable_success_and_failure_attempts() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let directory = tempfile::tempdir().expect("tempdir");
+        let valid = directory.path().join("valid.csv");
+        let invalid = directory.path().join("invalid.csv");
+        let raw = concat!(
+            "schema_version,record_key,title,raw_title,description,event_type,domain,jurisdiction,institution,status,confidence,importance,personal_relevance,upstream_event_ref,upstream_reconciled_key,renderability,time_kind,start,end,source_timezone\n",
+            "1,a,Alpha,,,,,,,scheduled,,,,,,,date_only,2026-10-07,,\n"
+        );
+        std::fs::write(&valid, raw).expect("write valid CSV");
+        std::fs::write(&invalid, "not,a,valid,ephemeris,csv\n").expect("write invalid CSV");
+
+        import_csv_file(&store, &valid).expect("valid import");
+        assert!(import_csv_file(&store, &invalid).is_err());
+
+        let attempts = store.source_refresh_attempts(10).expect("refresh attempts");
+        assert_eq!(attempts.len(), 2);
+        assert!(attempts.iter().all(|attempt| attempt.refresh_kind == "csv_file"));
+        assert!(attempts.iter().any(|attempt| attempt.success == Some(true)));
+        assert!(attempts.iter().any(|attempt| attempt.success == Some(false)));
+        assert!(attempts
+            .iter()
+            .filter(|attempt| attempt.success == Some(true))
+            .all(|attempt| attempt.summary.as_deref().is_some_and(|summary| summary.contains("1 events"))));
     }
 
     #[test]
