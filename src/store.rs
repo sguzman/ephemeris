@@ -1598,9 +1598,7 @@ impl TemporalStore {
             let mut entity_ids = BTreeSet::new();
             for participant in &event.participants {
                 let key = participant_entity_binding_key(participant);
-                if let Some(entity_id) =
-                    binding_entity_ids.get(&(event.id, key)).copied()
-                {
+                if let Some(entity_id) = binding_entity_ids.get(&(event.id, key)).copied() {
                     if entities_by_id.contains_key(&entity_id) {
                         entity_ids.insert(entity_id);
                     }
