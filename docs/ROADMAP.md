@@ -60,11 +60,9 @@ Implemented:
 - saved-view storage
 - recurrence foundation and exception-aware occurrence materialization, detailed under Phase 8
 
-Still required:
-
-- canonical entity registry/resolution for reusable person/organization/team/etc. identity behind participant `entity_ref`
-
 Implemented canonical extensions:
+
+- canonical entity registry/resolution — schema v23 entity registry plus schema v24 Ephemeris-local participant bindings, source-ref/exact-label/manual resolution semantics, searchable registry management, guarded merge, reverse usage, stable entity-ID/type saved-view predicates, and canonical JSON v9 preservation
 
 - structured event participants — schema v22 persistence/migration, validation, aggregate and field-specific query predicates, inspector display/editing for editable events, canonical JSON v7, and explicit CSV/VEVENT loss guards
 - structured event location — schema v21 persistence/migration, validation/query/inspector support, canonical JSON v6, and explicit CSV/VEVENT loss guards
@@ -458,7 +456,7 @@ Goals:
 
 ## Phase 10 - Personal scheduling completeness
 
-Status: **not started**
+Status: **starting — rich local event creation/editing is the current implementation frontier**
 
 Goals:
 
