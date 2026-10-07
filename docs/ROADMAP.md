@@ -65,7 +65,7 @@ Still required:
 - dedicated provenance records/tables
 - general-purpose snapshot/history tables beyond the implemented Taria release snapshot model
 - annotations
-- event relations and collections/sequences — domain types, schema-v15 persistence, query predicates, inspector visibility, relation editing, and collection membership editing implemented; ordered reordering/broader collection management next
+- event relations and collections/sequences — domain types, schema-v15 persistence, query predicates, inspector editing, ordered sequence reordering, broader collection management, and topology-aware canonical JSON v2 implemented
 - richer indexed ontology
 
 ## Phase 3 - Taria ingestion and bundle-release adoption
@@ -428,9 +428,9 @@ Next Phase 8 work:
 - remaining RFC edge semantics and uncommon selector combinations beyond the implemented secondly/minutely/hourly/daily/weekly/monthly/yearly BY-part matrix, including deliberate `BYSECOND=60` deferral until leap-second timestamps are representable without coercion
 - richer structured recurrence editing ergonomics beyond presets, structured exceptions, contextual selector visibility, and the fully structured advanced BY-selector set, especially higher-level controls for cadence/bounds and explanations for uncommon combinations
 - recurrence-exception source-adapter interoperability for external calendar payloads is bidirectional for the supported RFC subset: RRULE, strict RDATE/EXDATE parse/format, strict RECURRENCE-ID original-slot parse/format, DTSTART/DTEND transport, RFC content-line and VEVENT/VCALENDAR envelopes, typed VEVENT binding, master/detached temporal-exception assembly, canonical TemporalEvent projection, strict VCALENDAR grouping/ingestion, canonical VEVENT/VCALENDAR export, transactional local-ICS source/store import, CLI import, and GUI drag/drop import are implemented; `RANGE=THISANDFUTURE`, occurrence-specific non-temporal overrides, DURATION transport, RDATE-only recurrence, VTIMEZONE, and VALARM remain deliberately unsupported until their canonical/preservation semantics exist; stored-source ICS export and explicit local-source refresh are implemented; non-Taria refresh history/diagnostics are next
-- relations — canonical directed storage/query plus inspector create/delete UI implemented
-- collections/sequences — canonical ordered/unordered storage/query plus inspector membership/create UI implemented; sequence reordering/broader management next
-- uncertainty
+- relations — canonical directed storage/query plus inspector create/delete UI and canonical JSON v2 interchange implemented
+- collections/sequences — canonical ordered/unordered storage/query, inspector membership/create/manage UI, sequence reordering, and canonical JSON v2 interchange implemented
+- uncertainty — next canonical-model frontier
 - duplicate/entity resolution
 - advanced annotations
 
@@ -443,7 +443,7 @@ Goals:
 - ICS import/export projection — transport, local import, stored-source CLI/GUI export, explicit local refresh, and durable refresh diagnostics implemented
 - webcal/remote ICS ingestion — implemented for HTTP/HTTPS/webcal feeds with persisted ETag/Last-Modified conditional refresh and explicit HTTP 304 reporting
 - CalDAV where valuable
-- versioned native JSON import/export — implemented for canonical sources/events with transactional merge-only import
+- versioned native JSON import/export — v2 preserves canonical sources/events plus relations, collections/sequences, and memberships with v1 backward compatibility and transactional merge semantics
 - CSV import/export for representable tabular subsets — implemented as strict CSV v1 with durable refresh-attempt history
 - JSCalendar/jCal
 - optional mobile/cloud bridges
