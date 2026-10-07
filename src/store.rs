@@ -1090,84 +1090,96 @@ impl TemporalStore {
         entity.validate().context("invalid canonical entity")?;
         let properties_json = serde_json::to_string(&entity.properties)
             .context("failed to encode canonical entity properties")?;
-        let tx = self
-            .conn
-            .unchecked_transaction()
-            .context("failed to begin canonical entity transaction")?;
+        let owns_transaction = self.conn.is_autocommit();
+        if owns_transaction {
+            self.conn
+                .execute_batch("BEGIN IMMEDIATE")
+                .context("failed to begin canonical entity transaction")?;
+        }
 
         let result = (|| -> anyhow::Result<()> {
-            tx.execute(
-                r#"
-                INSERT INTO canonical_entities (
-                    id, canonical_name, entity_type, properties_json, created_at, updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                ON CONFLICT(id) DO UPDATE SET
-                    canonical_name = excluded.canonical_name,
-                    entity_type = excluded.entity_type,
-                    properties_json = excluded.properties_json,
-                    updated_at = excluded.updated_at
-                "#,
-                params![
-                    entity.id.to_string(),
-                    entity.canonical_name,
-                    entity.entity_type,
-                    properties_json,
-                    entity.created_at.to_rfc3339(),
-                    entity.updated_at.to_rfc3339(),
-                ],
-            )
-            .context("failed to upsert canonical entity")?;
-
-            tx.execute(
-                "DELETE FROM canonical_entity_aliases WHERE entity_id = ?1",
-                params![entity.id.to_string()],
-            )
-            .context("failed to replace canonical entity aliases")?;
-            for alias in &entity.aliases {
-                tx.execute(
+            self.conn
+                .execute(
                     r#"
-                    INSERT INTO canonical_entity_aliases (entity_id, alias, alias_key)
-                    VALUES (?1, ?2, ?3)
+                    INSERT INTO canonical_entities (
+                        id, canonical_name, entity_type, properties_json, created_at, updated_at
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    ON CONFLICT(id) DO UPDATE SET
+                        canonical_name = excluded.canonical_name,
+                        entity_type = excluded.entity_type,
+                        properties_json = excluded.properties_json,
+                        updated_at = excluded.updated_at
                     "#,
                     params![
                         entity.id.to_string(),
-                        alias,
-                        normalize_entity_alias(alias),
+                        entity.canonical_name,
+                        entity.entity_type,
+                        properties_json,
+                        entity.created_at.to_rfc3339(),
+                        entity.updated_at.to_rfc3339(),
                     ],
                 )
-                .with_context(|| format!("failed to add canonical entity alias {alias:?}"))?;
+                .context("failed to upsert canonical entity")?;
+
+            self.conn
+                .execute(
+                    "DELETE FROM canonical_entity_aliases WHERE entity_id = ?1",
+                    params![entity.id.to_string()],
+                )
+                .context("failed to replace canonical entity aliases")?;
+            for alias in &entity.aliases {
+                self.conn
+                    .execute(
+                        r#"
+                        INSERT INTO canonical_entity_aliases (entity_id, alias, alias_key)
+                        VALUES (?1, ?2, ?3)
+                        "#,
+                        params![
+                            entity.id.to_string(),
+                            alias,
+                            normalize_entity_alias(alias),
+                        ],
+                    )
+                    .with_context(|| format!("failed to add canonical entity alias {alias:?}"))?;
             }
 
-            tx.execute(
-                "DELETE FROM canonical_entity_external_refs WHERE entity_id = ?1",
-                params![entity.id.to_string()],
-            )
-            .context("failed to replace canonical entity external references")?;
-            for external_ref in &entity.external_refs {
-                tx.execute(
-                    r#"
-                    INSERT INTO canonical_entity_external_refs (external_ref, entity_id)
-                    VALUES (?1, ?2)
-                    "#,
-                    params![external_ref.trim(), entity.id.to_string()],
+            self.conn
+                .execute(
+                    "DELETE FROM canonical_entity_external_refs WHERE entity_id = ?1",
+                    params![entity.id.to_string()],
                 )
-                .with_context(|| {
-                    format!(
-                        "failed to claim canonical entity external reference {external_ref:?}"
+                .context("failed to replace canonical entity external references")?;
+            for external_ref in &entity.external_refs {
+                self.conn
+                    .execute(
+                        r#"
+                        INSERT INTO canonical_entity_external_refs (external_ref, entity_id)
+                        VALUES (?1, ?2)
+                        "#,
+                        params![external_ref.trim(), entity.id.to_string()],
                     )
-                })?;
+                    .with_context(|| {
+                        format!(
+                            "failed to claim canonical entity external reference {external_ref:?}"
+                        )
+                    })?;
             }
             Ok(())
         })();
 
+        if !owns_transaction {
+            return result;
+        }
+
         match result {
             Ok(()) => {
-                tx.commit()
+                self.conn
+                    .execute_batch("COMMIT")
                     .context("failed to commit canonical entity transaction")?;
                 Ok(())
             }
             Err(error) => {
-                let _ = tx.rollback();
+                let _ = self.conn.execute_batch("ROLLBACK");
                 Err(error)
             }
         }
