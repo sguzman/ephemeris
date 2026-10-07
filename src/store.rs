@@ -12,8 +12,7 @@ use crate::calendar::CalendarLayout;
 use crate::domain::{
     EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
     EventIdentityState, EventRelation, EventStatus, RecurrenceRule, SourceAuthority, SourceKind,
-    TemporalEvent,
-    TemporalSource, TimeSpec, TimeUncertainty,
+    TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
@@ -703,8 +702,8 @@ impl TemporalStore {
 
     pub fn upsert_event_annotation(&self, annotation: &EventAnnotation) -> anyhow::Result<()> {
         annotation.validate().context("invalid event annotation")?;
-        let value_json =
-            serde_json::to_string(&annotation.value).context("failed to encode annotation value")?;
+        let value_json = serde_json::to_string(&annotation.value)
+            .context("failed to encode annotation value")?;
         self.conn
             .execute(
                 r#"
@@ -743,7 +742,10 @@ impl TemporalStore {
             .context("failed to query event annotation by id")
     }
 
-    pub fn event_annotations_for_event(&self, event_id: Uuid) -> anyhow::Result<Vec<EventAnnotation>> {
+    pub fn event_annotations_for_event(
+        &self,
+        event_id: Uuid,
+    ) -> anyhow::Result<Vec<EventAnnotation>> {
         let mut stmt = self.conn.prepare(
             r#"
             SELECT id, event_id, kind, value_json, created_at, updated_at
@@ -5269,7 +5271,10 @@ mod tests {
             .expect("event query")
             .expect("event");
         assert_eq!(refreshed_event.id, canonical.id);
-        assert_eq!(refreshed_event.normalized_title, "Updated title from source");
+        assert_eq!(
+            refreshed_event.normalized_title,
+            "Updated title from source"
+        );
         assert_eq!(
             store
                 .event_annotations_for_event(canonical.id)
@@ -5277,13 +5282,17 @@ mod tests {
             vec![annotation.clone()]
         );
 
-        assert!(store
-            .delete_event_annotation(annotation.id)
-            .expect("delete annotation"));
-        assert!(store
-            .event_annotations_for_event(canonical.id)
-            .expect("annotations after delete")
-            .is_empty());
+        assert!(
+            store
+                .delete_event_annotation(annotation.id)
+                .expect("delete annotation")
+        );
+        assert!(
+            store
+                .event_annotations_for_event(canonical.id)
+                .expect("annotations after delete")
+                .is_empty()
+        );
 
         let cascade = EventAnnotation::new(canonical.id, "watched", serde_json::json!(true));
         store
@@ -5296,10 +5305,12 @@ mod tests {
                 params![canonical.id.to_string()],
             )
             .expect("delete event");
-        assert!(store
-            .event_annotation_by_id(cascade.id)
-            .expect("annotation after cascade")
-            .is_none());
+        assert!(
+            store
+                .event_annotation_by_id(cascade.id)
+                .expect("annotation after cascade")
+                .is_none()
+        );
     }
 
     #[test]
@@ -5346,10 +5357,12 @@ mod tests {
 
         let loaded = store.event_by_id(event_id).expect("query").expect("event");
         assert_eq!(loaded.normalized_title, "Pre-v18 event");
-        assert!(store
-            .event_annotations_for_event(event_id)
-            .expect("annotations")
-            .is_empty());
+        assert!(
+            store
+                .event_annotations_for_event(event_id)
+                .expect("annotations")
+                .is_empty()
+        );
     }
 
     #[test]
