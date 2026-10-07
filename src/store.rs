@@ -1661,6 +1661,41 @@ impl TemporalStore {
         Ok(resolved)
     }
 
+    pub fn canonical_entity_event_usage(
+        &self,
+    ) -> anyhow::Result<HashMap<Uuid, Vec<(Uuid, String)>>> {
+        let resolved = self.resolved_canonical_entities_by_event()?;
+        let events = self
+            .list_events()?
+            .into_iter()
+            .map(|event| (event.id, event.normalized_title))
+            .collect::<HashMap<_, _>>();
+
+        let mut usage = HashMap::<Uuid, Vec<(Uuid, String)>>::new();
+        for (event_id, entities) in resolved {
+            let title = events
+                .get(&event_id)
+                .cloned()
+                .unwrap_or_else(|| event_id.to_string());
+            for entity in entities {
+                usage
+                    .entry(entity.id)
+                    .or_default()
+                    .push((event_id, title.clone()));
+            }
+        }
+        for event_refs in usage.values_mut() {
+            event_refs.sort_by(|left, right| {
+                left.1
+                    .to_lowercase()
+                    .cmp(&right.1.to_lowercase())
+                    .then_with(|| left.0.cmp(&right.0))
+            });
+            event_refs.dedup_by_key(|(event_id, _)| *event_id);
+        }
+        Ok(usage)
+    }
+
     pub fn canonical_entities_by_exact_label(
         &self,
         label: &str,
@@ -7163,6 +7198,35 @@ mod tests {
             .resolved_canonical_entities_by_event()
             .expect("bulk resolution after unbind");
         assert!(!unresolved.contains_key(&second.id));
+    }
+
+    #[test]
+    fn canonical_entity_usage_reports_resolved_events_once() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let mut entity = CanonicalEntity::new("Ada Lovelace");
+        entity.external_refs = vec!["wikidata:Q7259".to_string()];
+        store.upsert_canonical_entity(&entity).expect("entity");
+
+        let mut event = TemporalEvent::new(
+            "Analytical Engine",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(1843, 1, 1).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        let mut by_ref = EventParticipant::new("Ada");
+        by_ref.entity_ref = Some("wikidata:Q7259".to_string());
+        event.participants.push(by_ref);
+        event
+            .participants
+            .push(EventParticipant::new("Ada Lovelace"));
+        store.upsert_event(&event).expect("event");
+
+        let usage = store.canonical_entity_event_usage().expect("usage");
+        assert_eq!(
+            usage.get(&entity.id),
+            Some(&vec![(event.id, "Analytical Engine".to_string())])
+        );
     }
 
     #[test]
