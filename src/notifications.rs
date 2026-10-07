@@ -160,7 +160,8 @@ fn evaluate_rule_for_event(
         if occurrence.status == EventStatus::Cancelled || occurrence.cancelled_by_override {
             continue;
         }
-        let Some(starts_at_utc) = notification_start_utc(&occurrence.time, context.display_timezone)
+        let Some(starts_at_utc) =
+            notification_start_utc(&occurrence.time, context.display_timezone)
         else {
             evaluation.skipped.push(NotificationSkip {
                 rule_id: rule.id,
@@ -250,12 +251,8 @@ mod tests {
 
     use super::*;
     use crate::calendar::{CalendarLayout, CalendarView};
-    use crate::domain::{
-        RecurrenceFrequency, RecurrenceOverride, RecurrenceRule,
-    };
-    use crate::query::{
-        ColorBy, EventQuery, GroupBy, SortRule, default_table_columns,
-    };
+    use crate::domain::{RecurrenceFrequency, RecurrenceOverride, RecurrenceRule};
+    use crate::query::{ColorBy, EventQuery, GroupBy, SortRule, default_table_columns};
 
     fn context() -> QueryContext {
         QueryContext::new(
@@ -317,19 +314,13 @@ mod tests {
         assert_eq!(occurrence.event_id, event.id);
         assert_eq!(occurrence.starts_at_utc, start);
         assert_eq!(occurrence.trigger_at_utc, start - Duration::minutes(15));
-        assert_eq!(
-            occurrence.id,
-            notification_occurrence_id(rule.id, event.id)
-        );
+        assert_eq!(occurrence.id, notification_occurrence_id(rule.id, event.id));
     }
 
     #[test]
     fn floating_event_uses_source_timezone_or_display_timezone() {
-        let wall = NaiveDateTime::parse_from_str(
-            "2026-10-07T09:00:00",
-            "%Y-%m-%dT%H:%M:%S",
-        )
-        .expect("wall");
+        let wall = NaiveDateTime::parse_from_str("2026-10-07T09:00:00", "%Y-%m-%dT%H:%M:%S")
+            .expect("wall");
         let mut source_tz = TemporalEvent::new(
             "Source zone",
             TimeSpec::Floating {
@@ -378,10 +369,7 @@ mod tests {
             expected_display + Duration::minutes(1),
         )
         .expect("display zone");
-        assert_eq!(
-            display_eval.occurrences[0].starts_at_utc,
-            expected_display
-        );
+        assert_eq!(display_eval.occurrences[0].starts_at_utc, expected_display);
     }
 
     #[test]
