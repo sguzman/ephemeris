@@ -540,6 +540,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
 
         let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
@@ -575,6 +576,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
 
         let encoded = format_canonical_json_snapshot(&snapshot).expect("encode");
@@ -604,6 +606,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
         let store = TemporalStore::open_in_memory().expect("store");
 
@@ -647,6 +650,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
         import_canonical_json_snapshot(&store, &initial).expect("initial merge");
 
@@ -664,6 +668,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
 
         let report = import_canonical_json_snapshot(&store, &changed).expect("changed merge");
@@ -700,6 +705,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
         assert!(dangling_snapshot.validate().is_err());
 
@@ -716,6 +722,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
         assert!(duplicate_snapshot.validate().is_err());
     }
@@ -732,6 +739,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
         assert!(snapshot.validate().is_err());
     }
@@ -771,6 +779,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: vec![annotation.clone()],
+            provenance_records: Vec::new(),
         };
         snapshot.validate().expect("valid v4 snapshot");
 
@@ -803,6 +812,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: vec![EventAnnotation::new(event.id, "watched", json!(true))],
+            provenance_records: Vec::new(),
         };
         assert!(snapshot.validate().is_err());
     }
@@ -826,6 +836,7 @@ mod tests {
                 "note",
                 json!("dangling"),
             )],
+            provenance_records: Vec::new(),
         };
         assert!(dangling.validate().is_err());
 
@@ -839,6 +850,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: vec![annotation.clone(), annotation],
+            provenance_records: Vec::new(),
         };
         assert!(duplicate.validate().is_err());
     }
@@ -867,6 +879,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: vec![assessment.clone()],
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
         snapshot.validate().expect("valid v3 snapshot");
 
@@ -909,6 +922,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: vec![EventIdentityAssessment::new(first.id, second.id)],
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
         assert!(snapshot.validate().is_err());
     }
@@ -946,6 +960,7 @@ mod tests {
             collection_members: members.clone(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
 
         let store = TemporalStore::open_in_memory().expect("store");
@@ -989,6 +1004,7 @@ mod tests {
             collection_members: Vec::new(),
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
         assert!(dangling.validate().is_err());
 
@@ -1007,6 +1023,7 @@ mod tests {
             }],
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
         assert!(malformed.validate().is_err());
     }
@@ -1046,6 +1063,7 @@ mod tests {
             ],
             identity_assessments: Vec::new(),
             annotations: Vec::new(),
+            provenance_records: Vec::new(),
         };
 
         let store = TemporalStore::open_in_memory().expect("store");
