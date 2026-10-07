@@ -188,8 +188,7 @@ mod tests {
     };
 
     fn fixture_source() -> TemporalSource {
-        let mut source =
-            TemporalSource::new("Fixture", SourceKind::Json, SourceAuthority::Manual);
+        let mut source = TemporalSource::new("Fixture", SourceKind::Json, SourceAuthority::Manual);
         source.external_ref = Some("json:test:fixture".to_string());
         source.read_only = false;
         source.properties = json!({"fixture": true});
