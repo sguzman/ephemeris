@@ -3569,10 +3569,7 @@ impl EphemerisApp {
 
     fn snooze_notification_delivery(&mut self, delivery_id: Uuid, minutes: i64) {
         let until = Utc::now() + ChronoDuration::minutes(minutes);
-        match self
-            .store
-            .snooze_notification_delivery(delivery_id, until)
-        {
+        match self.store.snooze_notification_delivery(delivery_id, until) {
             Ok(true) => {
                 self.notification_deliveries
                     .retain(|delivery| delivery.id != delivery_id);
