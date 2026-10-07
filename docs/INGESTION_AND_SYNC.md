@@ -73,6 +73,16 @@ Local ICS import is available from `ephemeris-import` and GUI drag/drop, with ex
 
 Local and remote iCalendar acquisition attempts are recorded in the generic durable refresh-attempt ledger. Remote feeds persist ETag/Last-Modified validators when available and send conditional requests on refresh; HTTP 304 is recorded and surfaced as a successful not-modified refresh without reparsing or rewriting canonical events.
 
+### CSV v1
+
+CSV is intentionally a narrower adapter than canonical JSON.
+
+The v1 schema requires a stable `record_key` per row and represents only non-recurring `instant`, `floating`, `all_day`, and `date_only` time kinds plus scalar event metadata. Imported files become first-class `SourceKind::Csv` sources keyed by canonical filesystem path. Refresh uses `(source_id, record_key)` identity, updates changed rows in place, and retains rows absent from later snapshots.
+
+Source-scoped CSV export is strict. It refuses recurrence, month/year/unknown precision, list-valued references/tags, and arbitrary properties instead of flattening them. Export always writes the v1 header even for an empty source, keeping empty exports re-importable.
+
+CLI import/export and GUI drag/drop/refresh/export are implemented.
+
 ### Native canonical JSON
 
 The versioned `ephemeris.canonical_snapshot` JSON format is the lossless interchange boundary for canonical sources/events outside SQLite. Version 1 contains `TemporalSource` and `TemporalEvent` records, preserving UUIDs, timestamps, recurrence, time semantics, and arbitrary properties. Validation rejects duplicate UUIDs, duplicate source external refs, duplicate source-record identities, dangling source references, unsupported versions, and invalid recurrence.
