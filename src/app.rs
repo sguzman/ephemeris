@@ -3567,6 +3567,29 @@ impl EphemerisApp {
         }
     }
 
+    fn snooze_notification_delivery(&mut self, delivery_id: Uuid, minutes: i64) {
+        let until = Utc::now() + ChronoDuration::minutes(minutes);
+        match self
+            .store
+            .snooze_notification_delivery(delivery_id, until)
+        {
+            Ok(true) => {
+                self.notification_deliveries
+                    .retain(|delivery| delivery.id != delivery_id);
+                self.last_message = Some(format!("Snoozed reminder for {minutes} minutes."));
+                self.last_error = None;
+            }
+            Ok(false) => {
+                self.notification_deliveries
+                    .retain(|delivery| delivery.id != delivery_id);
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to snooze reminder: {error:#}"));
+            }
+        }
+    }
+
     fn dismiss_notification_delivery(&mut self, delivery_id: Uuid) {
         match self
             .store
@@ -3629,7 +3652,7 @@ impl EphemerisApp {
             self.store.record_notification_delivery(&delivery)?;
         }
 
-        self.notification_deliveries = self.store.active_notification_deliveries()?;
+        self.notification_deliveries = self.store.due_notification_deliveries(now)?;
         self.notification_occurrences = evaluation.occurrences;
         self.notification_skipped = evaluation.skipped;
         self.notification_eval_minute = Some(now.timestamp() / 60);
@@ -4428,6 +4451,7 @@ impl EphemerisApp {
             .collect::<Vec<_>>();
         let skipped_count = self.notification_skipped.len();
         let mut dismiss = None;
+        let mut snooze = None;
 
         ui.collapsing(
             format!(
@@ -4447,6 +4471,15 @@ impl EphemerisApp {
                         ui.horizontal_wrapped(|ui| {
                             ui.label(RichText::new("DUE").color(Color32::LIGHT_RED).strong());
                             ui.strong(&delivery.event_title);
+                            if ui.small_button("10m").on_hover_text("Snooze 10 minutes").clicked() {
+                                snooze = Some((delivery.id, 10));
+                            }
+                            if ui.small_button("30m").on_hover_text("Snooze 30 minutes").clicked() {
+                                snooze = Some((delivery.id, 30));
+                            }
+                            if ui.small_button("1h").on_hover_text("Snooze 1 hour").clicked() {
+                                snooze = Some((delivery.id, 60));
+                            }
                             if ui.small_button("Dismiss").clicked() {
                                 dismiss = Some(delivery.id);
                             }
@@ -4498,7 +4531,9 @@ impl EphemerisApp {
             },
         );
 
-        if let Some(delivery_id) = dismiss {
+        if let Some((delivery_id, minutes)) = snooze {
+            self.snooze_notification_delivery(delivery_id, minutes);
+        } else if let Some(delivery_id) = dismiss {
             self.dismiss_notification_delivery(delivery_id);
         }
     }
