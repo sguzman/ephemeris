@@ -130,6 +130,9 @@ impl CanonicalJsonSnapshot {
             event
                 .validate_recurrence()
                 .with_context(|| format!("event {} has invalid recurrence", event.id))?;
+            event
+                .validate_time_uncertainty()
+                .with_context(|| format!("event {} has invalid temporal uncertainty", event.id))?;
         }
 
         if self.version >= 2 {
