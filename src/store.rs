@@ -11,12 +11,13 @@ use uuid::Uuid;
 use crate::calendar::CalendarLayout;
 use crate::domain::{
     EventAnnotation, EventCollection, EventCollectionMember, EventIdentityAssessment,
-    EventIdentityState, EventRelation, EventStatus, RecurrenceRule, SourceAuthority, SourceKind,
-    TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
+    EventIdentityState, EventProvenanceRecord, EventProvenanceRole, EventRelation, EventStatus,
+    RecurrenceRule, SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec,
+    TimeUncertainty,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 18;
+const SCHEMA_VERSION: i64 = 19;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -712,6 +713,132 @@ impl TemporalStore {
             )
             .context("failed to delete saved view")?;
         Ok(())
+    }
+
+    pub fn upsert_event_provenance_record(
+        &self,
+        record: &EventProvenanceRecord,
+    ) -> anyhow::Result<()> {
+        record.validate().context("invalid event provenance record")?;
+        let properties_json = serde_json::to_string(&record.properties)
+            .context("failed to encode event provenance properties")?;
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO event_provenance_records (
+                    id, event_id, role, reference, source_id,
+                    note, properties_json, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                ON CONFLICT(id) DO UPDATE SET
+                    event_id = excluded.event_id,
+                    role = excluded.role,
+                    reference = excluded.reference,
+                    source_id = excluded.source_id,
+                    note = excluded.note,
+                    properties_json = excluded.properties_json,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    record.id.to_string(),
+                    record.event_id.to_string(),
+                    record.role.as_str(),
+                    record.reference,
+                    record.source_id.map(|value| value.to_string()),
+                    record.note,
+                    properties_json,
+                    record.created_at.to_rfc3339(),
+                    record.updated_at.to_rfc3339(),
+                ],
+            )
+            .context("failed to upsert event provenance record")?;
+        Ok(())
+    }
+
+    pub fn event_provenance_record_by_id(
+        &self,
+        id: Uuid,
+    ) -> anyhow::Result<Option<EventProvenanceRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, event_id, role, reference, source_id,
+                   note, properties_json, created_at, updated_at
+            FROM event_provenance_records
+            WHERE id = ?1
+            "#,
+        )?;
+        stmt.query_row(params![id.to_string()], decode_event_provenance_record)
+            .optional()
+            .context("failed to query event provenance record by id")
+    }
+
+    pub fn event_provenance_records_for_event(
+        &self,
+        event_id: Uuid,
+    ) -> anyhow::Result<Vec<EventProvenanceRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, event_id, role, reference, source_id,
+                   note, properties_json, created_at, updated_at
+            FROM event_provenance_records
+            WHERE event_id = ?1
+            ORDER BY role, reference COLLATE NOCASE, created_at, id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![event_id.to_string()])?;
+        let mut records = Vec::new();
+        while let Some(row) = rows.next()? {
+            records.push(decode_event_provenance_record(row)?);
+        }
+        Ok(records)
+    }
+
+    pub fn event_provenance_records_for_source(
+        &self,
+        source_id: Uuid,
+    ) -> anyhow::Result<Vec<EventProvenanceRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, event_id, role, reference, source_id,
+                   note, properties_json, created_at, updated_at
+            FROM event_provenance_records
+            WHERE source_id = ?1
+            ORDER BY event_id, role, reference COLLATE NOCASE, id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![source_id.to_string()])?;
+        let mut records = Vec::new();
+        while let Some(row) = rows.next()? {
+            records.push(decode_event_provenance_record(row)?);
+        }
+        Ok(records)
+    }
+
+    pub fn list_event_provenance_records(&self) -> anyhow::Result<Vec<EventProvenanceRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, event_id, role, reference, source_id,
+                   note, properties_json, created_at, updated_at
+            FROM event_provenance_records
+            ORDER BY event_id, role, reference COLLATE NOCASE, id
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut records = Vec::new();
+        while let Some(row) = rows.next()? {
+            records.push(decode_event_provenance_record(row)?);
+        }
+        Ok(records)
+    }
+
+    pub fn delete_event_provenance_record(&self, id: Uuid) -> anyhow::Result<bool> {
+        let changed = self
+            .conn
+            .execute(
+                "DELETE FROM event_provenance_records WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .context("failed to delete event provenance record")?;
+        Ok(changed != 0)
     }
 
     pub fn upsert_event_annotation(&self, annotation: &EventAnnotation) -> anyhow::Result<()> {
@@ -3196,6 +3323,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         add_event_uncertainty_column(&tx)?;
         create_event_identity_schema_current(&tx)?;
         create_event_annotation_schema_current(&tx)?;
+        create_event_provenance_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -3284,6 +3412,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 17 {
         migrate_v17_to_v18(conn)?;
+        current = 18;
+    }
+
+    if current == 18 {
+        migrate_v18_to_v19(conn)?;
     }
 
     Ok(())
@@ -3731,6 +3864,34 @@ fn create_event_identity_schema_current(conn: &Connection) -> anyhow::Result<()>
     .context("failed to create event identity assessment schema")
 }
 
+fn create_event_provenance_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE event_provenance_records (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES temporal_events(id) ON DELETE CASCADE,
+            role TEXT NOT NULL
+                CHECK (role IN ('assertion', 'source', 'provenance')),
+            reference TEXT NOT NULL,
+            source_id TEXT REFERENCES temporal_sources(id) ON DELETE SET NULL,
+            note TEXT,
+            properties_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (length(trim(reference)) > 0),
+            UNIQUE (event_id, role, reference)
+        );
+
+        CREATE INDEX event_provenance_records_event
+            ON event_provenance_records(event_id, role, reference);
+        CREATE INDEX event_provenance_records_source
+            ON event_provenance_records(source_id, event_id)
+            WHERE source_id IS NOT NULL;
+        "#,
+    )
+    .context("failed to create event provenance schema")
+}
+
 fn create_event_annotation_schema_current(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -3751,6 +3912,17 @@ fn create_event_annotation_schema_current(conn: &Connection) -> anyhow::Result<(
         "#,
     )
     .context("failed to create event annotation schema")
+}
+
+fn migrate_v18_to_v19(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v18 to v19 migration")?;
+    create_event_provenance_schema_current(&tx)?;
+    tx.pragma_update(None, "user_version", 19)
+        .context("failed to set schema version 19")?;
+    tx.commit()
+        .context("failed to commit v18 to v19 schema migration")
 }
 
 fn migrate_v17_to_v18(conn: &mut Connection) -> anyhow::Result<()> {
@@ -4203,6 +4375,33 @@ fn decode_source(row: &Row<'_>) -> rusqlite::Result<TemporalSource> {
         properties,
         created_at,
         updated_at,
+    })
+}
+
+fn decode_event_provenance_record(row: &Row<'_>) -> rusqlite::Result<EventProvenanceRecord> {
+    let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
+    let event_id =
+        Uuid::parse_str(&row.get::<_, String>("event_id")?).map_err(to_sql_decode_error)?;
+    let source_id = row
+        .get::<_, Option<String>>("source_id")?
+        .map(|raw| Uuid::parse_str(&raw))
+        .transpose()
+        .map_err(to_sql_decode_error)?;
+    let role_raw: String = row.get("role")?;
+    let role = EventProvenanceRole::parse(&role_raw)
+        .ok_or_else(|| to_sql_decode_error(anyhow!("invalid provenance role {role_raw:?}")))?;
+    Ok(EventProvenanceRecord {
+        id,
+        event_id,
+        role,
+        reference: row.get("reference")?,
+        source_id,
+        note: row.get("note")?,
+        properties: decode_json_value(row, "properties_json")?,
+        created_at: parse_datetime(&row.get::<_, String>("created_at")?)
+            .map_err(to_sql_decode_error)?,
+        updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)
+            .map_err(to_sql_decode_error)?,
     })
 }
 
