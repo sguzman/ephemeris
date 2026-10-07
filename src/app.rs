@@ -43,6 +43,15 @@ use crate::taria_workspace::{
 
 const TARIA_STALE_AFTER_HOURS: i64 = 7 * 24;
 
+fn optional_trimmed(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
 fn is_ics_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
