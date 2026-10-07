@@ -5735,6 +5735,44 @@ mod tests {
     }
 
     #[test]
+    fn event_revision_failure_rolls_back_live_event_write() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        store
+            .conn
+            .execute_batch(
+                r#"
+                CREATE TRIGGER reject_event_revision_insert
+                BEFORE INSERT ON event_revisions
+                BEGIN
+                    SELECT RAISE(ABORT, 'revision insert blocked');
+                END;
+                "#,
+            )
+            .expect("install failing history trigger");
+
+        let event = TemporalEvent::new(
+            "Atomic history",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        assert!(store.upsert_event(&event).is_err());
+        assert!(
+            store
+                .event_by_id(event.id)
+                .expect("event query after failed history append")
+                .is_none()
+        );
+        assert!(
+            store
+                .event_revisions(event.id)
+                .expect("history query after failed append")
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn import_refresh_records_one_revision_per_real_change() {
         let store = TemporalStore::open_in_memory().expect("store");
         let source = TemporalSource::new("Feed", SourceKind::Ics, SourceAuthority::Official);
