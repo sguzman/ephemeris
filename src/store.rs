@@ -701,6 +701,92 @@ impl TemporalStore {
         Ok(())
     }
 
+    pub fn upsert_event_annotation(&self, annotation: &EventAnnotation) -> anyhow::Result<()> {
+        annotation.validate().context("invalid event annotation")?;
+        let value_json =
+            serde_json::to_string(&annotation.value).context("failed to encode annotation value")?;
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO event_annotations (
+                    id, event_id, kind, value_json, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(id) DO UPDATE SET
+                    event_id = excluded.event_id,
+                    kind = excluded.kind,
+                    value_json = excluded.value_json,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    annotation.id.to_string(),
+                    annotation.event_id.to_string(),
+                    annotation.kind,
+                    value_json,
+                    annotation.created_at.to_rfc3339(),
+                    annotation.updated_at.to_rfc3339(),
+                ],
+            )
+            .context("failed to upsert event annotation")?;
+        Ok(())
+    }
+
+    pub fn event_annotation_by_id(&self, id: Uuid) -> anyhow::Result<Option<EventAnnotation>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, event_id, kind, value_json, created_at, updated_at
+            FROM event_annotations
+            WHERE id = ?1
+            "#,
+        )?;
+        stmt.query_row(params![id.to_string()], decode_event_annotation)
+            .optional()
+            .context("failed to query event annotation by id")
+    }
+
+    pub fn event_annotations_for_event(&self, event_id: Uuid) -> anyhow::Result<Vec<EventAnnotation>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, event_id, kind, value_json, created_at, updated_at
+            FROM event_annotations
+            WHERE event_id = ?1
+            ORDER BY kind COLLATE NOCASE, created_at, id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![event_id.to_string()])?;
+        let mut annotations = Vec::new();
+        while let Some(row) = rows.next()? {
+            annotations.push(decode_event_annotation(row)?);
+        }
+        Ok(annotations)
+    }
+
+    pub fn list_event_annotations(&self) -> anyhow::Result<Vec<EventAnnotation>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, event_id, kind, value_json, created_at, updated_at
+            FROM event_annotations
+            ORDER BY event_id, kind COLLATE NOCASE, created_at, id
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut annotations = Vec::new();
+        while let Some(row) = rows.next()? {
+            annotations.push(decode_event_annotation(row)?);
+        }
+        Ok(annotations)
+    }
+
+    pub fn delete_event_annotation(&self, id: Uuid) -> anyhow::Result<bool> {
+        let changed = self
+            .conn
+            .execute(
+                "DELETE FROM event_annotations WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .context("failed to delete event annotation")?;
+        Ok(changed != 0)
+    }
+
     pub fn upsert_event_identity_assessment(
         &self,
         assessment: &EventIdentityAssessment,
@@ -4046,6 +4132,22 @@ fn decode_source(row: &Row<'_>) -> rusqlite::Result<TemporalSource> {
         properties,
         created_at,
         updated_at,
+    })
+}
+
+fn decode_event_annotation(row: &Row<'_>) -> rusqlite::Result<EventAnnotation> {
+    let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
+    let event_id =
+        Uuid::parse_str(&row.get::<_, String>("event_id")?).map_err(to_sql_decode_error)?;
+    Ok(EventAnnotation {
+        id,
+        event_id,
+        kind: row.get("kind")?,
+        value: decode_json_value(row, "value_json")?,
+        created_at: parse_datetime(&row.get::<_, String>("created_at")?)
+            .map_err(to_sql_decode_error)?,
+        updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)
+            .map_err(to_sql_decode_error)?,
     })
 }
 
