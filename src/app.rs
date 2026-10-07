@@ -4563,6 +4563,15 @@ impl EphemerisApp {
             })
             .cloned()
             .collect::<Vec<_>>();
+        let identity_rows = self
+            .event_identity_assessments
+            .iter()
+            .filter(|assessment| {
+                assessment.left_event_id == canonical_id
+                    || assessment.right_event_id == canonical_id
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         let mut topology_action = None;
         let mut refresh_relation_search = false;
 
@@ -5088,6 +5097,69 @@ impl EphemerisApp {
                     topology_action = Some(TopologyInspectorAction::AddRelation);
                 }
             });
+
+            if !identity_rows.is_empty() {
+                ui.separator();
+                ui.strong("Duplicate / entity resolution");
+                ui.small(
+                    "Identity assessments are external evidence about canonical events; changing state does not merge or delete either event.",
+                );
+
+                for assessment in &identity_rows {
+                    let counterpart_id = if assessment.left_event_id == canonical_id {
+                        assessment.right_event_id
+                    } else {
+                        assessment.left_event_id
+                    };
+                    let counterpart = self
+                        .event_identity_titles
+                        .get(&counterpart_id)
+                        .map_or_else(|| counterpart_id.to_string(), Clone::clone);
+                    ui.group(|ui| {
+                        ui.label(RichText::new(&counterpart).strong());
+                        ui.small(counterpart_id.to_string());
+
+                        let mut state = assessment.state;
+                        egui::ComboBox::from_id_salt(("identity-state", assessment.id))
+                            .selected_text(state.as_str())
+                            .show_ui(ui, |ui| {
+                                for candidate in EventIdentityState::ALL {
+                                    ui.selectable_value(
+                                        &mut state,
+                                        candidate,
+                                        candidate.as_str(),
+                                    );
+                                }
+                            });
+                        if state != assessment.state {
+                            topology_action = Some(TopologyInspectorAction::SetIdentityState(
+                                assessment.id,
+                                state,
+                            ));
+                        }
+
+                        if let Some(confidence) = assessment.confidence {
+                            inspector_row(ui, "Identity confidence", &format!("{confidence:.3}"));
+                        }
+                        if let Some(rationale) = assessment.rationale.as_deref()
+                            && !rationale.trim().is_empty()
+                        {
+                            ui.small(rationale);
+                        }
+                        if ui
+                            .small_button("Delete assessment")
+                            .on_hover_text(
+                                "Delete only this identity assessment; neither event is deleted",
+                            )
+                            .clicked()
+                        {
+                            topology_action = Some(
+                                TopologyInspectorAction::DeleteIdentityAssessment(assessment.id),
+                            );
+                        }
+                    });
+                }
+            }
 
             render_time_spec(ui, &event.time, self.timezone());
 
