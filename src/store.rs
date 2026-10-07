@@ -6938,6 +6938,210 @@ mod tests {
     }
 
     #[test]
+    fn notification_rules_roundtrip_enforce_uniqueness_and_cascade_with_targets() {
+        use crate::calendar::{CalendarLayout, CalendarView};
+        use crate::query::{
+            ColorBy, EventQuery, GroupBy, SavedView, SortRule, default_table_columns,
+        };
+
+        let store = TemporalStore::open_in_memory().expect("store");
+        let day = NaiveDate::from_ymd_opt(2026, 10, 8).expect("day");
+        let event = TemporalEvent::new(
+            "Reminder target",
+            TimeSpec::Instant {
+                start_utc: Utc
+                    .with_ymd_and_hms(2026, 10, 8, 15, 0, 0)
+                    .single()
+                    .expect("instant"),
+                end_utc: None,
+                source_timezone: Some("America/Mexico_City".to_string()),
+            },
+        );
+        store.upsert_event(&event).expect("event");
+
+        let view = SavedView {
+            id: Uuid::new_v4(),
+            name: "Reminder view".to_string(),
+            query: EventQuery::default(),
+            hidden_source_ids: BTreeSet::new(),
+            calendar_view: CalendarView::Month,
+            calendar_layout: CalendarLayout::Grid,
+            group_by: GroupBy::Date,
+            sort_rules: vec![SortRule::default()],
+            color_by: ColorBy::Status,
+            color_rules: Vec::new(),
+            composition_layers: Vec::new(),
+            overlays: Vec::new(),
+            table_columns: default_table_columns(),
+            display_timezone: "America/Mexico_City".to_string(),
+            week_start_monday: false,
+        };
+        store.upsert_saved_view(&view).expect("view");
+
+        let mut event_rule = NotificationRule::for_event(event.id, "15 minutes before", 15);
+        event_rule.properties = serde_json::json!({"channel": "in_app"});
+        store
+            .upsert_notification_rule(&event_rule)
+            .expect("event notification");
+        assert_eq!(
+            store
+                .notification_rule_by_id(event_rule.id)
+                .expect("rule query")
+                .expect("event rule"),
+            event_rule
+        );
+        assert_eq!(
+            store
+                .notification_rules_for_event(event.id)
+                .expect("event rules"),
+            vec![event_rule.clone()]
+        );
+
+        let view_rule = NotificationRule::for_saved_view(view.id, "One hour before", 60);
+        store
+            .upsert_notification_rule(&view_rule)
+            .expect("view notification");
+        assert_eq!(
+            store
+                .notification_rules_for_saved_view(view.id)
+                .expect("view rules"),
+            vec![view_rule.clone()]
+        );
+        assert_eq!(
+            store.list_notification_rules().expect("rules").len(),
+            2
+        );
+
+        let duplicate = NotificationRule::for_event(event.id, "Duplicate semantic trigger", 15);
+        assert!(
+            store
+                .upsert_notification_rule(&duplicate)
+                .expect_err("duplicate event trigger must fail")
+                .to_string()
+                .contains("failed to upsert notification rule")
+        );
+
+        let mut invalid = NotificationRule::for_event(event.id, " ", 5);
+        invalid.updated_at = Utc::now();
+        assert!(
+            store
+                .upsert_notification_rule(&invalid)
+                .expect_err("blank rule name must fail")
+                .to_string()
+                .contains("invalid notification rule")
+        );
+
+        store
+            .conn
+            .execute(
+                "DELETE FROM temporal_events WHERE id = ?1",
+                params![event.id.to_string()],
+            )
+            .expect("delete event");
+        assert!(
+            store
+                .notification_rule_by_id(event_rule.id)
+                .expect("event rule after cascade")
+                .is_none()
+        );
+        assert!(store
+            .notification_rule_by_id(view_rule.id)
+            .expect("view rule remains")
+            .is_some());
+
+        store.delete_saved_view(view.id).expect("delete view");
+        assert!(
+            store
+                .notification_rule_by_id(view_rule.id)
+                .expect("view rule after cascade")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn v24_migration_adds_notification_rules_without_rewriting_existing_data() {
+        use crate::calendar::{CalendarLayout, CalendarView};
+        use crate::query::{
+            ColorBy, EventQuery, GroupBy, SavedView, SortRule, default_table_columns,
+        };
+
+        let mut conn = Connection::open_in_memory().expect("connection");
+        configure_connection(&conn).expect("configure");
+
+        let tx = conn.transaction().expect("schema transaction");
+        create_schema_v2(&tx).expect("base schema");
+        add_event_recurrence_column(&tx).expect("recurrence");
+        create_saved_views_schema_current(&tx).expect("saved views");
+        create_taria_release_schema_current(&tx).expect("taria");
+        create_refresh_history_schema_current(&tx).expect("refresh history");
+        create_event_relation_collection_schema_current(&tx).expect("topology");
+        add_event_uncertainty_column(&tx).expect("uncertainty");
+        create_event_identity_schema_current(&tx).expect("identity");
+        create_event_annotation_schema_current(&tx).expect("annotations");
+        create_event_provenance_schema_current(&tx).expect("provenance");
+        create_event_revision_schema_current(&tx).expect("revisions");
+        add_event_location_column(&tx).expect("location");
+        add_event_participants_column(&tx).expect("participants");
+        create_canonical_entity_schema_current(&tx).expect("entities");
+        create_participant_entity_binding_schema_current(&tx).expect("entity bindings");
+        tx.pragma_update(None, "user_version", 24).expect("set v24");
+        tx.commit().expect("commit v24");
+
+        let store_v24 = TemporalStore {
+            conn,
+            path: None,
+        };
+        let event = TemporalEvent::new(
+            "Pre-v25 event",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 8).expect("day"),
+                end_exclusive: None,
+            },
+        );
+        store_v24.upsert_event(&event).expect("event");
+        let view = SavedView {
+            id: Uuid::new_v4(),
+            name: "Pre-v25 view".to_string(),
+            query: EventQuery::default(),
+            hidden_source_ids: BTreeSet::new(),
+            calendar_view: CalendarView::Month,
+            calendar_layout: CalendarLayout::Grid,
+            group_by: GroupBy::Date,
+            sort_rules: vec![SortRule::default()],
+            color_by: ColorBy::Status,
+            color_rules: Vec::new(),
+            composition_layers: Vec::new(),
+            overlays: Vec::new(),
+            table_columns: default_table_columns(),
+            display_timezone: "America/Mexico_City".to_string(),
+            week_start_monday: false,
+        };
+        store_v24.upsert_saved_view(&view).expect("view");
+
+        let mut conn = store_v24.conn;
+        migrate(&mut conn).expect("migrate");
+        let store = TemporalStore { conn, path: None };
+        assert_eq!(store.schema_version().expect("version"), 25);
+        assert_eq!(
+            store
+                .event_by_id(event.id)
+                .expect("event query")
+                .expect("event"),
+            event
+        );
+        assert_eq!(store.list_saved_views().expect("views"), vec![view.clone()]);
+
+        let rule = NotificationRule::for_saved_view(view.id, "Migrated reminder", 30);
+        store
+            .upsert_notification_rule(&rule)
+            .expect("notification after migration");
+        assert_eq!(
+            store.list_notification_rules().expect("rules"),
+            vec![rule]
+        );
+    }
+
+    #[test]
     fn schema_bootstraps_at_current_version() {
         let store = TemporalStore::open_in_memory().expect("store");
         assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
