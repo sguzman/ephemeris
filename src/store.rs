@@ -17,7 +17,7 @@ use crate::domain::{
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 19;
+const SCHEMA_VERSION: i64 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -144,6 +144,15 @@ pub struct SourceRefreshAttempt {
     pub release_id: Option<String>,
     pub summary: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventRevision {
+    pub id: Uuid,
+    pub event_id: Uuid,
+    pub recorded_at: DateTime<Utc>,
+    pub event_updated_at: DateTime<Utc>,
+    pub event: TemporalEvent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
