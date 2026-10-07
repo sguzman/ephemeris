@@ -5768,7 +5768,9 @@ mod tests {
         speaker.properties = serde_json::json!({"keynote": true});
         event.participants.push(speaker);
 
-        store.upsert_event(&event).expect("persist participant event");
+        store
+            .upsert_event(&event)
+            .expect("persist participant event");
         assert_eq!(
             store
                 .event_by_id(event.id)
