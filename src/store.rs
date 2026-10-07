@@ -4539,10 +4539,12 @@ mod tests {
             .expect("excluded search");
         assert_eq!(excluded, vec![(beta.id, "Beta Review".to_string())]);
 
-        assert!(store
-            .search_event_titles("", None, 10)
-            .expect("empty search")
-            .is_empty());
+        assert!(
+            store
+                .search_event_titles("", None, 10)
+                .expect("empty search")
+                .is_empty()
+        );
     }
 
     #[test]
