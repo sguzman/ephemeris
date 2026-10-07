@@ -18,6 +18,7 @@ use crate::domain::{
     RecurrenceOverride, RecurrenceRule, RecurrenceWeekday, TemporalEvent, TemporalSource, TimeSpec,
 };
 use crate::ics::{IcsImportReport, export_ics_source_by_id, import_ics_file, import_remote_ics};
+use crate::interchange::import_canonical_json_file;
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
@@ -44,6 +45,12 @@ fn is_ics_path(path: &std::path::Path) -> bool {
         .is_some_and(|value| {
             value.eq_ignore_ascii_case("ics") || value.eq_ignore_ascii_case("ical")
         })
+}
+
+fn is_canonical_json_path(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.ends_with(".ephemeris.json"))
 }
 
 fn default_ics_export_path(source: &TemporalSource) -> String {
@@ -1449,10 +1456,37 @@ impl EphemerisApp {
     }
 
     fn import_dropped_path(&mut self, path: &std::path::Path) {
-        if is_ics_path(path) {
+        if is_canonical_json_path(path) {
+            self.import_canonical_json_path(path);
+        } else if is_ics_path(path) {
             self.import_ics_path(path);
         } else {
             self.import_taria_path(path);
+        }
+    }
+
+    fn import_canonical_json_path(&mut self, path: &std::path::Path) {
+        match import_canonical_json_file(&self.store, path) {
+            Ok(report) => {
+                self.last_message = Some(format!(
+                    "Merged canonical snapshot: sources {} created, {} updated, {} unchanged; events {} created, {} updated, {} unchanged",
+                    report.sources_created,
+                    report.sources_updated,
+                    report.sources_unchanged,
+                    report.events_created,
+                    report.events_updated,
+                    report.events_unchanged
+                ));
+                self.last_error = None;
+                self.reload_or_report();
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!(
+                    "Failed to import canonical snapshot {}: {error:#}",
+                    path.display()
+                ));
+            }
         }
     }
 
@@ -7956,6 +7990,19 @@ mod tests {
         assert!(is_ics_path(std::path::Path::new("/tmp/CALENDAR.ICAL")));
         assert!(!is_ics_path(std::path::Path::new("/tmp/events.json")));
         assert!(!is_ics_path(std::path::Path::new("/tmp/no-extension")));
+    }
+
+    #[test]
+    fn dropped_import_routing_distinguishes_canonical_json_from_taria_json() {
+        assert!(is_canonical_json_path(std::path::Path::new(
+            "/tmp/full.ephemeris.json"
+        )));
+        assert!(!is_canonical_json_path(std::path::Path::new(
+            "/tmp/reconciled-event-set.json"
+        )));
+        assert!(!is_canonical_json_path(std::path::Path::new(
+            "/tmp/calendar.ics"
+        )));
     }
 
     fn refresh_attempt(
