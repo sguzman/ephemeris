@@ -10,12 +10,13 @@ use uuid::Uuid;
 
 use crate::calendar::CalendarLayout;
 use crate::domain::{
-    EventCollection, EventCollectionMember, EventRelation, EventStatus, RecurrenceRule,
-    SourceAuthority, SourceKind, TemporalEvent, TemporalSource, TimeSpec, TimeUncertainty,
+    EventCollection, EventCollectionMember, EventIdentityAssessment, EventIdentityState,
+    EventRelation, EventStatus, RecurrenceRule, SourceAuthority, SourceKind, TemporalEvent,
+    TemporalSource, TimeSpec, TimeUncertainty,
 };
 use crate::query::{EventMembership, SavedView, saved_view_reference_cycle};
 
-const SCHEMA_VERSION: i64 = 16;
+const SCHEMA_VERSION: i64 = 17;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportBatchResult {
@@ -694,6 +695,149 @@ impl TemporalStore {
             )
             .context("failed to delete saved view")?;
         Ok(())
+    }
+
+    pub fn upsert_event_identity_assessment(
+        &self,
+        assessment: &EventIdentityAssessment,
+    ) -> anyhow::Result<()> {
+        assessment
+            .validate()
+            .context("invalid event identity assessment")?;
+        let properties_json = serde_json::to_string(&assessment.properties)
+            .context("failed to encode event identity assessment properties")?;
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO event_identity_assessments (
+                    id, left_event_id, right_event_id, state,
+                    confidence, rationale, properties_json,
+                    created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                ON CONFLICT(id) DO UPDATE SET
+                    left_event_id = excluded.left_event_id,
+                    right_event_id = excluded.right_event_id,
+                    state = excluded.state,
+                    confidence = excluded.confidence,
+                    rationale = excluded.rationale,
+                    properties_json = excluded.properties_json,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    assessment.id.to_string(),
+                    assessment.left_event_id.to_string(),
+                    assessment.right_event_id.to_string(),
+                    assessment.state.as_str(),
+                    assessment.confidence,
+                    assessment.rationale,
+                    properties_json,
+                    assessment.created_at.to_rfc3339(),
+                    assessment.updated_at.to_rfc3339(),
+                ],
+            )
+            .context("failed to upsert event identity assessment")?;
+        Ok(())
+    }
+
+    pub fn event_identity_assessment_by_id(
+        &self,
+        id: Uuid,
+    ) -> anyhow::Result<Option<EventIdentityAssessment>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, left_event_id, right_event_id, state,
+                   confidence, rationale, properties_json,
+                   created_at, updated_at
+            FROM event_identity_assessments
+            WHERE id = ?1
+            "#,
+        )?;
+        stmt.query_row(params![id.to_string()], decode_event_identity_assessment)
+            .optional()
+            .context("failed to query event identity assessment by id")
+    }
+
+    pub fn event_identity_assessment_between(
+        &self,
+        first_event_id: Uuid,
+        second_event_id: Uuid,
+    ) -> anyhow::Result<Option<EventIdentityAssessment>> {
+        if first_event_id == second_event_id {
+            return Ok(None);
+        }
+        let (left, right) = if first_event_id <= second_event_id {
+            (first_event_id, second_event_id)
+        } else {
+            (second_event_id, first_event_id)
+        };
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, left_event_id, right_event_id, state,
+                   confidence, rationale, properties_json,
+                   created_at, updated_at
+            FROM event_identity_assessments
+            WHERE left_event_id = ?1 AND right_event_id = ?2
+            "#,
+        )?;
+        stmt.query_row(
+            params![left.to_string(), right.to_string()],
+            decode_event_identity_assessment,
+        )
+        .optional()
+        .context("failed to query event identity assessment pair")
+    }
+
+    pub fn event_identity_assessments_for_event(
+        &self,
+        event_id: Uuid,
+    ) -> anyhow::Result<Vec<EventIdentityAssessment>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, left_event_id, right_event_id, state,
+                   confidence, rationale, properties_json,
+                   created_at, updated_at
+            FROM event_identity_assessments
+            WHERE left_event_id = ?1 OR right_event_id = ?1
+            ORDER BY state, left_event_id, right_event_id, id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![event_id.to_string()])?;
+        let mut assessments = Vec::new();
+        while let Some(row) = rows.next()? {
+            assessments.push(decode_event_identity_assessment(row)?);
+        }
+        Ok(assessments)
+    }
+
+    pub fn list_event_identity_assessments(
+        &self,
+    ) -> anyhow::Result<Vec<EventIdentityAssessment>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, left_event_id, right_event_id, state,
+                   confidence, rationale, properties_json,
+                   created_at, updated_at
+            FROM event_identity_assessments
+            ORDER BY state, left_event_id, right_event_id, id
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut assessments = Vec::new();
+        while let Some(row) = rows.next()? {
+            assessments.push(decode_event_identity_assessment(row)?);
+        }
+        Ok(assessments)
+    }
+
+    pub fn delete_event_identity_assessment(&self, id: Uuid) -> anyhow::Result<bool> {
+        let changed = self
+            .conn
+            .execute(
+                "DELETE FROM event_identity_assessments WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .context("failed to delete event identity assessment")?;
+        Ok(changed != 0)
     }
 
     pub fn upsert_event_relation(&self, relation: &EventRelation) -> anyhow::Result<()> {
@@ -2850,6 +2994,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         create_refresh_history_schema_current(&tx)?;
         create_event_relation_collection_schema_current(&tx)?;
         add_event_uncertainty_column(&tx)?;
+        create_event_identity_schema_current(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .context("failed to set schema version")?;
         tx.commit().context("failed to commit schema migration")?;
@@ -2928,6 +3073,11 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current == 15 {
         migrate_v15_to_v16(conn)?;
+        current = 16;
+    }
+
+    if current == 16 {
+        migrate_v16_to_v17(conn)?;
     }
 
     Ok(())
@@ -3343,6 +3493,47 @@ fn create_event_relation_collection_schema_current(conn: &Connection) -> anyhow:
         "#,
     )
     .context("failed to create event relation/collection schema")
+}
+
+fn create_event_identity_schema_current(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE event_identity_assessments (
+            id TEXT PRIMARY KEY,
+            left_event_id TEXT NOT NULL REFERENCES temporal_events(id) ON DELETE CASCADE,
+            right_event_id TEXT NOT NULL REFERENCES temporal_events(id) ON DELETE CASCADE,
+            state TEXT NOT NULL
+                CHECK (state IN ('candidate', 'same_event', 'distinct')),
+            confidence REAL,
+            rationale TEXT,
+            properties_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (left_event_id < right_event_id),
+            CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
+            UNIQUE (left_event_id, right_event_id)
+        );
+
+        CREATE INDEX event_identity_assessments_left
+            ON event_identity_assessments(left_event_id, state);
+        CREATE INDEX event_identity_assessments_right
+            ON event_identity_assessments(right_event_id, state);
+        CREATE INDEX event_identity_assessments_state
+            ON event_identity_assessments(state);
+        "#,
+    )
+    .context("failed to create event identity assessment schema")
+}
+
+fn migrate_v16_to_v17(conn: &mut Connection) -> anyhow::Result<()> {
+    let tx = conn
+        .transaction()
+        .context("failed to start v16 to v17 migration")?;
+    create_event_identity_schema_current(&tx)?;
+    tx.pragma_update(None, "user_version", 17)
+        .context("failed to set schema version 17")?;
+    tx.commit()
+        .context("failed to commit v16 to v17 schema migration")
 }
 
 fn migrate_v15_to_v16(conn: &mut Connection) -> anyhow::Result<()> {
@@ -3773,6 +3964,33 @@ fn decode_source(row: &Row<'_>) -> rusqlite::Result<TemporalSource> {
         properties,
         created_at,
         updated_at,
+    })
+}
+
+fn decode_event_identity_assessment(
+    row: &Row<'_>,
+) -> rusqlite::Result<EventIdentityAssessment> {
+    let id = Uuid::parse_str(&row.get::<_, String>("id")?).map_err(to_sql_decode_error)?;
+    let left_event_id =
+        Uuid::parse_str(&row.get::<_, String>("left_event_id")?).map_err(to_sql_decode_error)?;
+    let right_event_id =
+        Uuid::parse_str(&row.get::<_, String>("right_event_id")?).map_err(to_sql_decode_error)?;
+    let state_raw: String = row.get("state")?;
+    let state = EventIdentityState::parse(&state_raw).ok_or_else(|| {
+        to_sql_decode_error(anyhow!("invalid event identity assessment state {state_raw:?}"))
+    })?;
+    Ok(EventIdentityAssessment {
+        id,
+        left_event_id,
+        right_event_id,
+        state,
+        confidence: row.get("confidence")?,
+        rationale: row.get("rationale")?,
+        properties: decode_json_value(row, "properties_json")?,
+        created_at: parse_datetime(&row.get::<_, String>("created_at")?)
+            .map_err(to_sql_decode_error)?,
+        updated_at: parse_datetime(&row.get::<_, String>("updated_at")?)
+            .map_err(to_sql_decode_error)?,
     })
 }
 
