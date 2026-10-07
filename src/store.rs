@@ -7507,6 +7507,95 @@ mod tests {
     }
 
     #[test]
+    fn notification_delivery_snooze_hides_until_deadline_then_becomes_due_again() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 15, 0, 0)
+            .single()
+            .expect("start");
+        let trigger = start - chrono::Duration::minutes(15);
+        let delivered_at = trigger + chrono::Duration::minutes(1);
+        let event = TemporalEvent::new(
+            "Snooze target",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: None,
+                source_timezone: None,
+            },
+        );
+        store.upsert_event(&event).expect("event");
+        let rule = NotificationRule::for_event(event.id, "Reminder", 15);
+        store.upsert_notification_rule(&rule).expect("rule");
+
+        let occurrence = crate::notifications::NotificationOccurrence {
+            id: Uuid::new_v4(),
+            rule_id: rule.id,
+            rule_name: rule.name.clone(),
+            event_id: event.id,
+            occurrence_id: event.id,
+            event_title: event.normalized_title.clone(),
+            trigger_at_utc: trigger,
+            starts_at_utc: start,
+            lead_minutes: 15,
+        };
+        let delivery = NotificationDelivery::from_occurrence(&occurrence, delivered_at);
+        store
+            .record_notification_delivery(&delivery)
+            .expect("delivery");
+
+        assert_eq!(
+            store
+                .due_notification_deliveries(delivered_at)
+                .expect("initial due"),
+            vec![delivery.clone()]
+        );
+
+        let snoozed_until = delivered_at + chrono::Duration::minutes(30);
+        assert!(
+            store
+                .snooze_notification_delivery(delivery.id, snoozed_until)
+                .expect("snooze")
+        );
+        assert!(
+            store
+                .due_notification_deliveries(snoozed_until - chrono::Duration::seconds(1))
+                .expect("due before snooze deadline")
+                .is_empty()
+        );
+
+        let due = store
+            .due_notification_deliveries(snoozed_until)
+            .expect("due at snooze deadline");
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].id, delivery.id);
+        assert_eq!(due[0].snoozed_until, Some(snoozed_until));
+        assert_eq!(
+            store
+                .active_notification_deliveries()
+                .expect("active while snoozed")
+                .len(),
+            1
+        );
+
+        assert!(
+            store
+                .dismiss_notification_delivery(
+                    delivery.id,
+                    snoozed_until + chrono::Duration::minutes(1),
+                )
+                .expect("dismiss")
+        );
+        assert!(
+            !store
+                .snooze_notification_delivery(
+                    delivery.id,
+                    snoozed_until + chrono::Duration::hours(1),
+                )
+                .expect("snooze dismissed delivery")
+        );
+    }
+
+    #[test]
     fn notification_delivery_cascades_with_rule_and_event() {
         let store = TemporalStore::open_in_memory().expect("store");
         let start = Utc
