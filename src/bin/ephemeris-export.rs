@@ -2,6 +2,7 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use anyhow::{Context, anyhow};
+use ephemeris::csv::export_source_csv_by_id;
 use ephemeris::domain::{SourceKind, TemporalSource};
 use ephemeris::ics::{export_ics_source_by_id, ics_file_external_ref};
 use ephemeris::interchange::export_canonical_json_file;
@@ -42,6 +43,28 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if selector == OsStr::new("--csv") {
+        let source_selector = args
+            .next()
+            .ok_or_else(|| anyhow!(usage()))?
+            .to_string_lossy()
+            .into_owned();
+        let output_path = args
+            .next()
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow!(usage()))?;
+        if args.next().is_some() {
+            return Err(anyhow!(usage()));
+        }
+        let source = resolve_source(&store, &source_selector)?;
+        let report = export_source_csv_by_id(&store, source.id, &output_path)?;
+        println!("Exported CSV projection: {}", source.name);
+        println!("Source ID: {}", report.source_id);
+        println!("Events: {}", report.total_events);
+        println!("Output: {}", report.output_path.display());
+        return Ok(());
+    }
+
     let output_path = args
         .next()
         .map(PathBuf::from)
@@ -66,6 +89,7 @@ fn usage() -> &'static str {
     "usage:
   ephemeris-export --list
   ephemeris-export --canonical-json <output.ephemeris.json>
+  ephemeris-export --csv <source-id|external-ref|exact-name> <output.csv>
   ephemeris-export <source-id|external-ref|source-file|exact-name> <output.ics>"
 }
 
@@ -98,6 +122,34 @@ fn list_ics_sources(store: &TemporalStore) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_source(store: &TemporalStore, selector: &str) -> anyhow::Result<TemporalSource> {
+    if let Ok(id) = Uuid::parse_str(selector) {
+        return store
+            .source_by_id(id)?
+            .ok_or_else(|| anyhow!("temporal source {id} does not exist"));
+    }
+
+    if let Some(source) = store.source_by_external_ref(selector)? {
+        return Ok(source);
+    }
+
+    let matches = store
+        .list_sources()?
+        .into_iter()
+        .filter(|source| source.name == selector)
+        .collect::<Vec<_>>();
+
+    match matches.as_slice() {
+        [source] => Ok(source.clone()),
+        [] => Err(anyhow!(
+            "no temporal source matches {selector:?}; use the Sources panel or --list where applicable to inspect identities"
+        )),
+        _ => Err(anyhow!(
+            "multiple temporal sources are named {selector:?}; select by source ID"
+        )),
+    }
 }
 
 fn resolve_ics_source(store: &TemporalStore, selector: &str) -> anyhow::Result<TemporalSource> {
@@ -168,6 +220,37 @@ mod tests {
         "END:VEVENT\r\n",
         "END:VCALENDAR\r\n"
     );
+
+    #[test]
+    fn generic_source_resolution_accepts_non_ics_sources_for_csv_projection() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let mut source = TemporalSource::new(
+            "CSV projection fixture",
+            SourceKind::Manual,
+            ephemeris::domain::SourceAuthority::Manual,
+        );
+        source.external_ref = Some("manual:csv-projection".to_string());
+        store.upsert_source(&source).expect("save source");
+
+        assert_eq!(
+            resolve_source(&store, &source.id.to_string())
+                .expect("resolve by id")
+                .id,
+            source.id
+        );
+        assert_eq!(
+            resolve_source(&store, "manual:csv-projection")
+                .expect("resolve by external ref")
+                .id,
+            source.id
+        );
+        assert_eq!(
+            resolve_source(&store, "CSV projection fixture")
+                .expect("resolve by name")
+                .id,
+            source.id
+        );
+    }
 
     #[test]
     fn source_resolution_accepts_id_external_ref_and_exact_name() {
