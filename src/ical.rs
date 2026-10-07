@@ -54,6 +54,7 @@ pub enum IcalRecurrenceError {
     MissingMaster(String),
     DuplicateMaster(String),
     UnsupportedCanonicalStatus(String),
+    UnsupportedTemporalUncertainty(&'static str),
     InvalidTimezone(String),
     TemporalKindMismatch {
         property: &'static str,
@@ -167,6 +168,10 @@ impl fmt::Display for IcalRecurrenceError {
             Self::UnsupportedCanonicalStatus(status) => {
                 write!(formatter, "canonical event status {status} has no lossless VEVENT STATUS mapping")
             }
+            Self::UnsupportedTemporalUncertainty(kind) => write!(
+                formatter,
+                "VEVENT transport cannot losslessly represent {kind} temporal uncertainty"
+            ),
             Self::InvalidTimezone(value) => {
                 write!(formatter, "unsupported or invalid iCalendar TZID {value}")
             }
@@ -448,6 +453,11 @@ pub fn export_temporal_event(
     event: &TemporalEvent,
 ) -> Result<Vec<IcalVevent>, IcalRecurrenceError> {
     event.validate_recurrence()?;
+    if let Some(uncertainty) = event.time_uncertainty.as_ref() {
+        return Err(IcalRecurrenceError::UnsupportedTemporalUncertainty(
+            uncertainty.kind_name(),
+        ));
+    }
 
     let template = stored_ical_master(event)?;
     let uid = stored_ical_uid(event)
