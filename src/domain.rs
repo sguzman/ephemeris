@@ -1116,6 +1116,117 @@ impl fmt::Display for EventRelationError {
 
 impl std::error::Error for EventRelationError {}
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventIdentityState {
+    #[default]
+    Candidate,
+    SameEvent,
+    Distinct,
+}
+
+impl EventIdentityState {
+    pub const ALL: [Self; 3] = [Self::Candidate, Self::SameEvent, Self::Distinct];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Candidate => "candidate",
+            Self::SameEvent => "same_event",
+            Self::Distinct => "distinct",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "candidate" => Some(Self::Candidate),
+            "same_event" => Some(Self::SameEvent),
+            "distinct" => Some(Self::Distinct),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventIdentityAssessment {
+    pub id: Uuid,
+    pub left_event_id: Uuid,
+    pub right_event_id: Uuid,
+    pub state: EventIdentityState,
+    pub confidence: Option<f32>,
+    pub rationale: Option<String>,
+    pub properties: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl EventIdentityAssessment {
+    pub fn new(first_event_id: Uuid, second_event_id: Uuid) -> Self {
+        let (left_event_id, right_event_id) = if first_event_id <= second_event_id {
+            (first_event_id, second_event_id)
+        } else {
+            (second_event_id, first_event_id)
+        };
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            left_event_id,
+            right_event_id,
+            state: EventIdentityState::Candidate,
+            confidence: None,
+            rationale: None,
+            properties: Value::Object(Default::default()),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), EventIdentityAssessmentError> {
+        if self.left_event_id == self.right_event_id {
+            return Err(EventIdentityAssessmentError::SameEventId(self.left_event_id));
+        }
+        if self.left_event_id > self.right_event_id {
+            return Err(EventIdentityAssessmentError::NonCanonicalPair {
+                left: self.left_event_id,
+                right: self.right_event_id,
+            });
+        }
+        if self
+            .confidence
+            .is_some_and(|confidence| !confidence.is_finite() || !(0.0..=1.0).contains(&confidence))
+        {
+            return Err(EventIdentityAssessmentError::InvalidConfidence);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventIdentityAssessmentError {
+    SameEventId(Uuid),
+    NonCanonicalPair { left: Uuid, right: Uuid },
+    InvalidConfidence,
+}
+
+impl fmt::Display for EventIdentityAssessmentError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SameEventId(event_id) => write!(
+                formatter,
+                "identity assessment cannot compare event {event_id} with itself"
+            ),
+            Self::NonCanonicalPair { left, right } => write!(
+                formatter,
+                "identity assessment pair must use canonical UUID order: {left} before {right}"
+            ),
+            Self::InvalidConfidence => {
+                formatter.write_str("identity assessment confidence must be finite and within 0..=1")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EventIdentityAssessmentError {}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventCollection {
     pub id: Uuid,
@@ -4495,6 +4606,52 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
+    #[test]
+    fn identity_assessment_canonicalizes_pairs_and_validates_confidence() {
+        let low = Uuid::parse_str("00000000-0000-0000-0000-000000000001").expect("low");
+        let high = Uuid::parse_str("00000000-0000-0000-0000-000000000002").expect("high");
+
+        let mut assessment = EventIdentityAssessment::new(high, low);
+        assert_eq!(assessment.left_event_id, low);
+        assert_eq!(assessment.right_event_id, high);
+        assert_eq!(assessment.state, EventIdentityState::Candidate);
+        assert_eq!(assessment.validate(), Ok(()));
+
+        assessment.state = EventIdentityState::SameEvent;
+        assessment.confidence = Some(0.92);
+        assessment.rationale = Some("same source facts and temporal placement".to_string());
+        assert_eq!(assessment.validate(), Ok(()));
+
+        assessment.confidence = Some(1.1);
+        assert_eq!(
+            assessment.validate(),
+            Err(EventIdentityAssessmentError::InvalidConfidence)
+        );
+    }
+
+    #[test]
+    fn identity_assessment_rejects_self_and_noncanonical_pairs() {
+        let low = Uuid::parse_str("00000000-0000-0000-0000-000000000001").expect("low");
+        let high = Uuid::parse_str("00000000-0000-0000-0000-000000000002").expect("high");
+
+        let self_assessment = EventIdentityAssessment::new(low, low);
+        assert_eq!(
+            self_assessment.validate(),
+            Err(EventIdentityAssessmentError::SameEventId(low))
+        );
+
+        let mut reversed = EventIdentityAssessment::new(low, high);
+        reversed.left_event_id = high;
+        reversed.right_event_id = low;
+        assert_eq!(
+            reversed.validate(),
+            Err(EventIdentityAssessmentError::NonCanonicalPair {
+                left: high,
+                right: low,
+            })
+        );
+    }
 
     #[test]
     fn temporal_uncertainty_validates_supported_coordinate_systems() {
