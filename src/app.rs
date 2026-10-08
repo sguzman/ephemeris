@@ -2269,7 +2269,31 @@ impl EventTimeEditDraft {
                 })
             }
             EventTimeEditKind::AllDay | EventTimeEditKind::DateOnly => {
-                let end_exclusive = parse_optional_end_date(&self.end_date, date)?;
+                let end_exclusive = match self.uncertain_origin.as_ref() {
+                    Some((
+                        TimeSpec::AllDay {
+                            start: original_start,
+                            end_exclusive: original_end,
+                        }
+                        | TimeSpec::DateOnly {
+                            start: original_start,
+                            end_exclusive: original_end,
+                        },
+                        _,
+                    )) => {
+                        let displacement = date - *original_start;
+                        original_end
+                            .map(|value| {
+                                value.checked_add_signed(displacement).ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "shifted exclusive end date exceeds supported range"
+                                    )
+                                })
+                            })
+                            .transpose()?
+                    }
+                    _ => parse_optional_end_date(&self.end_date, date)?,
+                };
                 Ok(match self.kind {
                     EventTimeEditKind::AllDay => TimeSpec::AllDay {
                         start: date,
