@@ -13,7 +13,8 @@ use uuid::Uuid;
 use crate::availability::{
     AlternativeSlots, BusyKind, FreeInterval, SlotSearch, alternative_days_for_candidate,
     alternative_slots_for_candidate, availability_for_materialized_date_window,
-    conflicts_for_candidate_event, conflicts_for_recurring_occurrence, suggest_slots,
+    conflicts_for_canceled_recurring_occurrence, conflicts_for_candidate_event,
+    conflicts_for_recurring_occurrence, suggest_slots,
 };
 use crate::calendar::{
     CalendarLayout, CalendarView, calendar_title, month_days, month_grid_start, quarter_months,
@@ -2661,19 +2662,25 @@ fn focused_recurrence_conflict_warning(
     if previous_active && proposed_time == previous_time {
         return Ok(None);
     }
-    if !previous_active {
-        anyhow::bail!("restoring cancelled recurrence slots requires separate conflict handling");
-    }
-
     let corpus = store.list_events()?;
-    let check = conflicts_for_recurring_occurrence(
-        &corpus,
-        event.id,
-        original,
-        previous_time,
-        proposed_time,
-        timezone,
-    )?;
+    let check = if previous_active {
+        conflicts_for_recurring_occurrence(
+            &corpus,
+            event.id,
+            original,
+            previous_time,
+            proposed_time,
+            timezone,
+        )?
+    } else {
+        conflicts_for_canceled_recurring_occurrence(
+            &corpus,
+            event.id,
+            original,
+            proposed_time,
+            timezone,
+        )?
+    };
     if check.conflicts.is_empty() && check.skipped.is_empty() {
         return Ok(None);
     }
