@@ -456,11 +456,12 @@ Goals:
 
 ## Phase 10 - Personal scheduling completeness
 
-Status: **active — durable reminders, Busy/Free scheduling, conflict-aware authoring, recurrence occurrence alternatives, bounded-uncertainty placement editing, richer quick-create, and structured location editing are implemented**
+Status: **active — durable reminders, Busy/Free scheduling, conflict-aware authoring, recurrence occurrence alternatives, bounded-uncertainty placement editing and creation, richer quick-create, and structured location/participant authoring are implemented**
 
 Implemented:
 
-- richer local event creation with description, event type, domain, lifecycle status, Busy/Free behavior, and multi-day all-day exclusive-end authoring
+- richer local event creation with description, event type, domain, lifecycle status, Busy/Free behavior, named participants, optional venue/address/virtual meeting URL, and multi-day all-day exclusive-end authoring
+- bounded possible-start uncertainty authoring at creation for all-day and exact-time events, with strict local DST-bound validation, representative-start inclusion, and provisional second-Save acknowledgment for newly active Busy events
 - canonical time editing for writable non-recurring instant/floating/all-day/date-only events, including conservative bounded-uncertainty moves with source-clock, duration, precision, stale-draft, and confirmation safeguards
 - structured writable-event location editing
 - event- and saved-view-targeted before-start reminder rules with durable delivery, dismissal, snooze, early wake, and separate Due/Snoozed/Upcoming states
