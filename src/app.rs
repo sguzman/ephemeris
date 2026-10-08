@@ -34,7 +34,6 @@ use crate::interchange::import_canonical_json_file;
 use crate::notifications::{
     NotificationDelivery, NotificationOccurrence, NotificationSkip, evaluate_notification_rules,
 };
-use crate::scheduling::move_uncertain_placement;
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
@@ -42,6 +41,7 @@ use crate::query::{
     TemporalKind, TextField, TextOperator,
     matches_composed_or_overlay_with_saved_views_and_membership, saved_view_reference_cycle,
 };
+use crate::scheduling::move_uncertain_placement;
 use crate::state::PersistedUiState;
 use crate::store::{
     EventRevision, ParticipantEntityResolution, SourceRefreshAttempt, TariaProjectedCalendarChoice,
@@ -2150,9 +2150,10 @@ impl EventTimeEditDraft {
                     duration_minutes,
                     end_date: String::new(),
                     conflict_confirmation: None,
-                    uncertain_origin: event.time_uncertainty.as_ref().map(|window| {
-                        (event.time.clone(), window.clone())
-                    }),
+                    uncertain_origin: event
+                        .time_uncertainty
+                        .as_ref()
+                        .map(|window| (event.time.clone(), window.clone())),
                 })
             }
             TimeSpec::Floating {
@@ -2171,9 +2172,10 @@ impl EventTimeEditDraft {
                     .map_or_else(String::new, |end| (end - *start).num_minutes().to_string()),
                 end_date: String::new(),
                 conflict_confirmation: None,
-                    uncertain_origin: event.time_uncertainty.as_ref().map(|window| {
-                        (event.time.clone(), window.clone())
-                    }),
+                    uncertain_origin: event
+                    .time_uncertainty
+                    .as_ref()
+                    .map(|window| (event.time.clone(), window.clone())),
             }),
             TimeSpec::AllDay {
                 start,
@@ -2187,9 +2189,10 @@ impl EventTimeEditDraft {
                 duration_minutes: String::new(),
                 end_date: end_exclusive.map_or_else(String::new, |value| value.to_string()),
                 conflict_confirmation: None,
-                    uncertain_origin: event.time_uncertainty.as_ref().map(|window| {
-                        (event.time.clone(), window.clone())
-                    }),
+                    uncertain_origin: event
+                    .time_uncertainty
+                    .as_ref()
+                    .map(|window| (event.time.clone(), window.clone())),
             }),
             TimeSpec::DateOnly {
                 start,
@@ -2203,9 +2206,10 @@ impl EventTimeEditDraft {
                 duration_minutes: String::new(),
                 end_date: end_exclusive.map_or_else(String::new, |value| value.to_string()),
                 conflict_confirmation: None,
-                    uncertain_origin: event.time_uncertainty.as_ref().map(|window| {
-                        (event.time.clone(), window.clone())
-                    }),
+                    uncertain_origin: event
+                    .time_uncertainty
+                    .as_ref()
+                    .map(|window| (event.time.clone(), window.clone())),
             }),
             TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
                 anyhow::bail!(
