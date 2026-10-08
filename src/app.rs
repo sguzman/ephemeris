@@ -8626,9 +8626,10 @@ impl EphemerisApp {
                 .is_some_and(|draft| draft.event_id == self.canonical_event_id(event.id))
             {
                 ui.separator();
+                let display_timezone = self.timezone();
                 let action = {
                     let draft = self.recurrence_editor.as_mut().expect("checked above");
-                    render_recurrence_editor(ui, draft, timezone)
+                    render_recurrence_editor(ui, draft, display_timezone)
                 };
                 match action {
                     Some(RecurrenceEditorAction::Save) => self.save_recurrence_edit(false),
@@ -11000,7 +11001,7 @@ fn render_recurrence_editor(
             action = Some(RecurrenceEditorAction::Remove);
         }
     });
-    action
+    action.or(focused_action)
 }
 
 fn render_color_rules_editor(
