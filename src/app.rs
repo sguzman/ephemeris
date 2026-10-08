@@ -8628,18 +8628,24 @@ impl EphemerisApp {
                             } else {
                                 "duration min · blank keeps no explicit end"
                             });
+                        } else if uncertain {
+                            let derived_end = draft.parsed_time().ok().and_then(|time| match time {
+                                TimeSpec::AllDay { end_exclusive, .. }
+                                | TimeSpec::DateOnly { end_exclusive, .. } => end_exclusive,
+                                _ => None,
+                            });
+                            if let Some(end) = derived_end {
+                                ui.small(format!("derived exclusive end: {end}"));
+                            } else {
+                                ui.small("implicit one-day span; exclusive end remains absent");
+                            }
                         } else {
-                            ui.add_enabled(
-                                !uncertain,
+                            ui.add(
                                 egui::TextEdit::singleline(&mut draft.end_date)
                                     .hint_text("end exclusive YYYY-MM-DD")
                                     .desired_width(185.0),
                             );
-                            ui.small(if uncertain {
-                                "fixed exclusive-end shape and civil-day span"
-                            } else {
-                                "optional end-exclusive date"
-                            });
+                            ui.small("optional end-exclusive date");
                         }
                     });
 
