@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`aa6b12085337e364c4eeb6a48a2d3419d6bf709c`
+`e17b294acb4a8d868dfbdacbe19adc85d859a480`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **638 library tests** pass
+- **641 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -150,7 +150,7 @@ Definite all-day conflicts now offer later civil-date alternatives from the full
 
 The focused recurrence-exception editor supports writable materialized occurrences. **Edit this occurrence** preserves the original slot even for already-moved instances, with explicit Move/Cancel/Keep actions. **Find later openings** now searches the full canonical Busy corpus off the egui thread and suppresses only the selected occurrence while leaving sister instances active. Returned suggestions are guarded by draft identity, current stored recurrence, original-slot identity, time kind, exact duration, and source timezone/DST behavior. Applying one drafts a single occurrence override; neither opening nor searching commits a change.
 
-Saving a focused move now checks its proposed interval against the full canonical calendar. Conflicts require a deliberate second Save of an unchanged override; a cancellation creates no Busy commitment. Other recurrence selectors/occurrences cannot be edited accidentally through the focused path. Previously canceled original slots can now be reactivated explicitly: reactivation is checked against the full external corpus and every still-active sister instance, with unchanged-save acknowledgement for definite or provisional conflicts. Automatic later-slot suggestions remain available for active occurrences; reactivation suggestions are a separate unfinished path. If a potential overlapping uncertain commitment cannot be checked, the occurrence Save now raises an explicit provisional-availability warning requiring the same second-save acknowledgement, rather than interpreting missing definite conflicts as certainty. Unsupported or uncertain placements do not become invented free time.
+Saving a focused move now checks its proposed interval against the full canonical calendar. Conflicts require a deliberate second Save of an unchanged override; a cancellation creates no Busy commitment. Other recurrence selectors/occurrences cannot be edited accidentally through the focused path. Previously canceled original slots can now be reactivated explicitly: reactivation is checked against the full external corpus and every still-active sister instance, with unchanged-save acknowledgement for definite or provisional conflicts. Automatic alternatives now cover cancelled-slot reactivation too, retaining all active sister occurrences as blockers. A free original slot can be offered alongside later openings, including civil all-day restoration across DST; applying any suggestion edits only the selected original-slot override, and Save remains authoritative. The editor also offers an explicit Restore original occurrence action. If a potential overlapping uncertain commitment cannot be checked, the occurrence Save now raises an explicit provisional-availability warning requiring the same second-save acknowledgement, rather than interpreting missing definite conflicts as certainty. Unsupported or uncertain placements do not become invented free time.
 
 The next Phase 10 frontier is carefully specified uncertainty-aware rescheduling and remaining occurrence/series scheduling policies. Recurring master-time changes, attendee/invitation exchange, and system notifications remain deliberately unimplemented rather than promised; in-app reminders are functional. See [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) for the user workflow.
 

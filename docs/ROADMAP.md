@@ -475,13 +475,13 @@ Implemented:
 - focused original-slot recurrence editing for writable occurrences, including moved occurrences, without shifting the series master
 - nonblocking alternative-slot suggestions for a definite recurring instance while preserving its other sister occurrences, source time kind, duration, and DST behavior
 - save-time individual-occurrence conflict detection against the full canonical corpus, with explicit second-save confirmation of conflicting moves, cancellation, and cancelled-slot reactivation (including uncertain availability warnings)
+- cancelled-occurrence restoration suggestions using the full Busy corpus with sister instances preserved, optional free original-slot selection, background search, civil all-day DST safeguards, and Save-time confirmation
 
 Remaining goals:
 
 - attendee/invitation exchange where justified by real scheduling workflows
 - uncertainty-aware rescheduling only after its temporal and confirmation semantics are specified
 - recurring master-time editing only when occurrence identity and existing exceptions can be preserved
-- automatic alternative-slot suggestions for canceled-slot reactivation, with original-slot identity and explicit activation semantics
 - optional system notification delivery only with a fully specified local-first lifecycle
 - careful extension of time editing to recurring masters only when exception identity can remain correct
 
