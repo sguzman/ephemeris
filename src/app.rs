@@ -2185,10 +2185,7 @@ pub struct EphemerisApp {
     saved_views: Vec<SavedView>,
 }
 
-fn details_change_requires_conflict_check(
-    before: &TemporalEvent,
-    after: &TemporalEvent,
-) -> bool {
+fn details_change_requires_conflict_check(before: &TemporalEvent, after: &TemporalEvent) -> bool {
     let blocks = |event: &TemporalEvent| {
         event.availability.blocks_time()
             && !matches!(
@@ -13200,18 +13197,24 @@ mod tests {
 
         let mut confirmed = changed.clone();
         confirmed.status = EventStatus::Confirmed;
-        assert!(!details_change_requires_conflict_check(&changed, &confirmed));
+        assert!(!details_change_requires_conflict_check(
+            &changed, &confirmed
+        ));
 
         let mut cancelled = changed.clone();
         cancelled.status = EventStatus::Cancelled;
-        assert!(!details_change_requires_conflict_check(&changed, &cancelled));
+        assert!(!details_change_requires_conflict_check(
+            &changed, &cancelled
+        ));
 
         let mut date_only = changed.clone();
         date_only.time = TimeSpec::DateOnly {
             start: NaiveDate::from_ymd_opt(2026, 10, 8).expect("date"),
             end_exclusive: None,
         };
-        assert!(!details_change_requires_conflict_check(&original, &date_only));
+        assert!(!details_change_requires_conflict_check(
+            &original, &date_only
+        ));
     }
 
     #[test]
