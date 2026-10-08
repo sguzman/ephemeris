@@ -8532,16 +8532,24 @@ impl EphemerisApp {
                 inspector_row(ui, "Time kind", event.time.kind_name());
                 let time_edit_supported = self.event_is_editable(&event)
                     && event.recurrence.is_none()
-                    && event.time_uncertainty.is_none()
                     && matches!(
                         event.time,
                         TimeSpec::Instant { .. }
                             | TimeSpec::Floating { .. }
                             | TimeSpec::AllDay { .. }
                             | TimeSpec::DateOnly { .. }
-                    );
+                    )
+                    && (event.time_uncertainty.is_none()
+                        || EventTimeEditDraft::from_event(&event, self.timezone()).is_ok());
                 if ui
-                    .add_enabled(time_edit_supported, egui::Button::new("Edit time"))
+                    .add_enabled(
+                        time_edit_supported,
+                        egui::Button::new(if event.time_uncertainty.is_some() {
+                            "Move uncertain placement"
+                        } else {
+                            "Edit time"
+                        }),
+                    )
                     .clicked()
                 {
                     self.begin_event_time_edit(canonical_id);
@@ -8559,6 +8567,12 @@ impl EphemerisApp {
                 ui.group(|ui| {
                     ui.strong("Edit canonical time");
                     let draft = self.event_time_editor.as_mut().expect("checked above");
+                    let uncertain = draft.uncertain_origin.is_some();
+                    if uncertain {
+                        ui.small(
+                            "Moving the representative start also moves its entire bounded possible-start window. Duration, precision, and source clock stay unchanged. Save twice to acknowledge provisional availability.",
+                        );
+                    }
                     ui.small(format!("Kind: {}", draft.kind.label()));
                     if let Some(timezone) = draft.timezone_label() {
                         ui.small(format!("Clock context: {timezone}"));
@@ -8575,19 +8589,29 @@ impl EphemerisApp {
                                     .hint_text("HH:MM")
                                     .desired_width(75.0),
                             );
-                            ui.add(
+                            ui.add_enabled(
+                                !uncertain,
                                 egui::TextEdit::singleline(&mut draft.duration_minutes)
                                     .hint_text("minutes")
                                     .desired_width(90.0),
                             );
-                            ui.small("duration min · blank keeps no explicit end");
+                            ui.small(if uncertain {
+                                "fixed duration (minutes)"
+                            } else {
+                                "duration min · blank keeps no explicit end"
+                            });
                         } else {
-                            ui.add(
+                            ui.add_enabled(
+                                !uncertain,
                                 egui::TextEdit::singleline(&mut draft.end_date)
                                     .hint_text("end exclusive YYYY-MM-DD")
                                     .desired_width(185.0),
                             );
-                            ui.small("optional end-exclusive date");
+                            ui.small(if uncertain {
+                                "fixed exclusive-end shape and civil-day span"
+                            } else {
+                                "optional end-exclusive date"
+                            });
                         }
                     });
 
