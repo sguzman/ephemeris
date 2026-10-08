@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`e17b294acb4a8d868dfbdacbe19adc85d859a480`
+`3ecc5f63c20d5cff479c5ecf76726bbaa46a69a9`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **641 library tests** pass
+- **649 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -138,9 +138,9 @@ Phase 10 personal scheduling is now materially underway. Canonical events have e
 
 Reminder workflows are end-to-end in-app: event- and saved-view-targeted before-start rules persist in SQLite, recurrence-aware evaluation materializes due occurrences, deliveries deduplicate durably, and active reminders survive restart. The reminder center supports dismissal, 10m/30m/1h/custom snooze, a separate snoozed list with due-again deadlines, and early Wake now. The delivery identity is preserved across snooze/wake/dismiss; these actions never manufacture a second notification delivery.
 
-Local authoring is also broader now. Quick-create captures description, event type, domain, lifecycle status, and Busy/Free behavior in addition to date/time. Writable non-recurring exact, floating, all-day, and date-only events have a canonical time editor that preserves their temporal kind and source clock context; recurring masters and uncertain placements are deliberately blocked rather than mutated unsafely. Writable events can also add/edit/remove the full structured location object, including venue/address/locality/region/postal/country, paired coordinates, and virtual URL, with canonical validation.
+Local authoring is also broader now. Quick-create captures description, event type, domain, lifecycle status, and Busy/Free behavior in addition to date/time. Writable non-recurring exact, floating, all-day, and date-only events have a canonical time editor that preserves temporal kind and source clock context. Bounded-uncertainty events with representable editor precision can also be moved: the representative time and entire possible-start interval shift together, with duration, source clock, civil span, and original uncertainty protected. Recurring masters and unrepresentable precision remain blocked. Writable events can also add/edit/remove the full structured location object, including venue/address/locality/region/postal/country, paired coordinates, and virtual URL, with canonical validation.
 
-Conflict-aware authoring now checks concrete, non-recurring Busy commitments when they are created, moved, or newly activated through a details edit. Detected collisions require an explicit second save with unchanged scheduling fields; ordinary metadata edits and already-blocking status transitions do not require the extra confirmation. Recurring-master and uncertainty-aware placement changes remain deliberately outside this guardrail until their semantics can be checked safely.
+Conflict-aware authoring now checks concrete, non-recurring Busy commitments when they are created, moved, or newly activated through a details edit. Detected collisions require an explicit second save with unchanged scheduling fields; ordinary metadata edits and already-blocking status transitions do not require the extra confirmation. Recurring-master changes remain outside this definite-interval collision check. Bounded-uncertainty placement moves instead require an explicit second Save acknowledging provisional availability; they cannot be certified conflict-free from the representative start.
 
 For definite timed creation and editing conflicts, the inspector offers up to four later candidate slots across the next 15 days, respecting saved work-hour/weekday/step preferences. Unlike the display-filtered Availability panel, proposals consult the full canonical event corpus. The alternatives are computed on a background worker with a separate SQLite connection rather than blocking the egui render loop; completed suggestions are discarded if the original scheduling draft has changed, closed, or been replaced by another editor instance with identical scheduling fields. The synchronous save-time conflict check remains authoritative. Applying a suggestion preserves title/metadata, event time kind, source clock context, and duration; it clears prior conflict confirmation so saving the new time checks again. Unrepresentable or DST-ambiguous clock translations are rejected, not silently shifted.
 
@@ -152,7 +152,7 @@ The focused recurrence-exception editor supports writable materialized occurrenc
 
 Saving a focused move now checks its proposed interval against the full canonical calendar. Conflicts require a deliberate second Save of an unchanged override; a cancellation creates no Busy commitment. Other recurrence selectors/occurrences cannot be edited accidentally through the focused path. Previously canceled original slots can now be reactivated explicitly: reactivation is checked against the full external corpus and every still-active sister instance, with unchanged-save acknowledgement for definite or provisional conflicts. Automatic alternatives now cover cancelled-slot reactivation too, retaining all active sister occurrences as blockers. A free original slot can be offered alongside later openings, including civil all-day restoration across DST; applying any suggestion edits only the selected original-slot override, and Save remains authoritative. The editor also offers an explicit Restore original occurrence action. If a potential overlapping uncertain commitment cannot be checked, the occurrence Save now raises an explicit provisional-availability warning requiring the same second-save acknowledgement, rather than interpreting missing definite conflicts as certainty. Unsupported or uncertain placements do not become invented free time.
 
-The next Phase 10 frontier is carefully specified uncertainty-aware rescheduling and remaining occurrence/series scheduling policies. Recurring master-time changes, attendee/invitation exchange, and system notifications remain deliberately unimplemented rather than promised; in-app reminders are functional. See [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) for the user workflow.
+The uncertainty-preserving non-recurring rescheduling boundary and its GUI workflow are now implemented and verified, including bounded instant/floating/civil start windows, stale-draft protection, strict time precision and duration guards, source-timezone/DST validation, derived exclusive end for multi-day civil moves, and second-Save acknowledgement. Next Phase 10 work should address carefully specified remaining occurrence/series scheduling policies and optional delivery integrations rather than flattening uncertain or recurring source semantics. Recurring master-time changes, attendee/invitation exchange, and system notifications remain deliberately unimplemented rather than promised; in-app reminders are functional. See [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) for the user workflow.
 
 ## Documentation roles
 

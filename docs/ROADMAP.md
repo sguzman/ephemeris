@@ -456,12 +456,12 @@ Goals:
 
 ## Phase 10 - Personal scheduling completeness
 
-Status: **active — durable reminders, Busy/Free scheduling, conflict-aware authoring and occurrence-level alternative slots, uncertainty-aware availability diagnostics, richer quick-create, time editing, and structured location editing are implemented**
+Status: **active — durable reminders, Busy/Free scheduling, conflict-aware authoring, recurrence occurrence alternatives, bounded-uncertainty placement editing, richer quick-create, and structured location editing are implemented**
 
 Implemented:
 
 - richer local event creation with description, event type, domain, lifecycle status, Busy/Free behavior, and multi-day all-day exclusive-end authoring
-- canonical time editing for writable non-recurring instant/floating/all-day/date-only events, with recurrence/uncertainty guardrails
+- canonical time editing for writable non-recurring instant/floating/all-day/date-only events, including conservative bounded-uncertainty moves with source-clock, duration, precision, stale-draft, and confirmation safeguards
 - structured writable-event location editing
 - event- and saved-view-targeted before-start reminder rules with durable delivery, dismissal, snooze, early wake, and separate Due/Snoozed/Upcoming states
 - conflict-aware local event creation and time editing, plus new-blocking status/availability transitions with explicit second-save confirmation
@@ -476,11 +476,11 @@ Implemented:
 - nonblocking alternative-slot suggestions for a definite recurring instance while preserving its other sister occurrences, source time kind, duration, and DST behavior
 - save-time individual-occurrence conflict detection against the full canonical corpus, with explicit second-save confirmation of conflicting moves, cancellation, and cancelled-slot reactivation (including uncertain availability warnings)
 - cancelled-occurrence restoration suggestions using the full Busy corpus with sister instances preserved, optional free original-slot selection, background search, civil all-day DST safeguards, and Save-time confirmation
+- bounded-uncertainty non-recurring time moves that translate full possible-start windows, reject unsupported clock/duration/precision changes, derive multi-day exclusive ends, and require provisional second-Save acknowledgement
 
 Remaining goals:
 
 - attendee/invitation exchange where justified by real scheduling workflows
-- uncertainty-aware rescheduling only after its temporal and confirmation semantics are specified
 - recurring master-time editing only when occurrence identity and existing exceptions can be preserved
 - optional system notification delivery only with a fully specified local-first lifecycle
 - careful extension of time editing to recurring masters only when exception identity can remain correct
