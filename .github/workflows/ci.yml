@@ -14,11 +14,20 @@ jobs:
       - name: Install native egui dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y             libxcb-render0-dev             libxcb-shape0-dev             libxcb-xfixes0-dev             libxkbcommon-dev             libssl-dev
+          sudo apt-get install -y \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libssl-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      # Pinned rust-cache v2.9.2: reuses Cargo dependencies across commits.
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
 
       - name: Format
         run: cargo fmt --check
