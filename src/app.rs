@@ -197,6 +197,111 @@ fn format_availability_interval(
     }
 }
 
+fn render_conflict_alternatives(
+    ui: &mut egui::Ui,
+    confirmation: &ConflictConfirmation,
+    timezone: Tz,
+) -> Option<FreeInterval> {
+    if let Some(note) = confirmation.alternative_note.as_deref() {
+        ui.small(note);
+    }
+    if confirmation.alternatives.is_empty() {
+        return None;
+    }
+
+    ui.small("Try a later open slot (full stored calendar, configured work hours):");
+    let mut selected = None;
+    ui.horizontal_wrapped(|ui| {
+        for slot in &confirmation.alternatives {
+            let label = format_availability_interval(slot.start_utc, slot.end_utc, timezone);
+            if ui.small_button(label).clicked() {
+                selected = Some(slot.clone());
+            }
+        }
+    });
+    selected
+}
+
+fn apply_alternative_to_new_draft(
+    draft: &mut NewLocalEventDraft,
+    slot: &FreeInterval,
+    timezone: Tz,
+) -> anyhow::Result<()> {
+    let mut next = draft.clone();
+    let local = slot.start_utc.with_timezone(&timezone);
+    next.date = local.date_naive().to_string();
+    next.start_time = local.format("%H:%M").to_string();
+    next.duration_minutes = (slot.end_utc - slot.start_utc).num_minutes().to_string();
+    next.all_day = false;
+    next.conflict_confirmation = None;
+
+    let (time, _) = parse_new_local_event_time(&next, timezone)?;
+    if !matches!(
+        time,
+        TimeSpec::Instant {
+            start_utc,
+            end_utc: Some(end_utc),
+            ..
+        } if start_utc == slot.start_utc && end_utc == slot.end_utc
+    ) {
+        anyhow::bail!("suggested slot cannot be represented exactly in the current timezone");
+    }
+    *draft = next;
+    Ok(())
+}
+
+fn apply_alternative_to_time_draft(
+    draft: &mut EventTimeEditDraft,
+    slot: &FreeInterval,
+    display_timezone: Tz,
+) -> anyhow::Result<()> {
+    let timezone = match &draft.kind {
+        EventTimeEditKind::Instant { edit_timezone, .. } => *edit_timezone,
+        EventTimeEditKind::Floating {
+            source_timezone: Some(raw),
+        } => raw
+            .parse::<Tz>()
+            .map_err(|_| anyhow::anyhow!("invalid floating source timezone {raw:?}"))?,
+        EventTimeEditKind::Floating {
+            source_timezone: None,
+        } => display_timezone,
+        EventTimeEditKind::AllDay | EventTimeEditKind::DateOnly => {
+            anyhow::bail!("timed alternatives do not apply to date-only or all-day edits")
+        }
+    };
+
+    let mut next = draft.clone();
+    let local = slot.start_utc.with_timezone(&timezone);
+    next.date = local.date_naive().to_string();
+    next.start_time = local.format("%H:%M").to_string();
+    next.duration_minutes = (slot.end_utc - slot.start_utc).num_minutes().to_string();
+    next.conflict_confirmation = None;
+
+    let exact = match next.parsed_time()? {
+        TimeSpec::Instant {
+            start_utc,
+            end_utc: Some(end_utc),
+            ..
+        } => start_utc == slot.start_utc && end_utc == slot.end_utc,
+        TimeSpec::Floating {
+            start,
+            end: Some(end),
+            ..
+        } => {
+            let resolved_start = timezone.from_local_datetime(&start).single();
+            let resolved_end = timezone.from_local_datetime(&end).single();
+            resolved_start.is_some_and(|value| value.with_timezone(&Utc) == slot.start_utc)
+                && resolved_end.is_some_and(|value| value.with_timezone(&Utc) == slot.end_utc)
+        }
+        _ => false,
+    };
+    if !exact {
+        anyhow::bail!("suggested slot cannot be represented exactly in the source clock context");
+    }
+    *draft = next;
+    Ok(())
+}
+
 fn parse_notification_lead_minutes(value: &str) -> anyhow::Result<u32> {
     let value = value.trim();
     if value.is_empty() {
@@ -5105,6 +5210,7 @@ impl EphemerisApp {
             let timezone_name = self.state.display_timezone.clone();
             let mut save = false;
             let mut cancel = false;
+            let mut selected_alternative = None;
             ui.group(|ui| {
                 ui.strong("New local event");
                 ui.small(format!(
@@ -5183,6 +5289,8 @@ impl EphemerisApp {
                 });
                 if let Some(confirmation) = &draft.conflict_confirmation {
                     ui.colored_label(Color32::YELLOW, &confirmation.warning);
+                    selected_alternative =
+                        render_conflict_alternatives(ui, confirmation, self.timezone());
                 }
                 ui.horizontal(|ui| {
                     if ui
@@ -5199,7 +5307,17 @@ impl EphemerisApp {
                     }
                 });
             });
-            if save {
+            if let Some(slot) = selected_alternative {
+                let timezone = self.timezone();
+                if let Some(draft) = self.new_local_event.as_mut() {
+                    match apply_alternative_to_new_draft(draft, &slot, timezone) {
+                        Ok(()) => self.last_error = None,
+                        Err(error) => {
+                            self.last_error = Some(format!("Cannot use alternate slot: {error:#}"));
+                        }
+                    }
+                }
+            } else if save {
                 self.save_new_local_event();
             } else if cancel {
                 self.new_local_event = None;
@@ -7560,6 +7678,7 @@ impl EphemerisApp {
                 .as_ref()
                 .is_some_and(|draft| draft.event_id == canonical_id)
             {
+                let mut selected_alternative = None;
                 ui.group(|ui| {
                     ui.strong("Edit canonical time");
                     let draft = self.event_time_editor.as_mut().expect("checked above");
@@ -7597,6 +7716,15 @@ impl EphemerisApp {
 
                     if let Some(confirmation) = &draft.conflict_confirmation {
                         ui.colored_label(Color32::YELLOW, &confirmation.warning);
+                        let timezone = match &draft.kind {
+                            EventTimeEditKind::Instant { edit_timezone, .. } => *edit_timezone,
+                            EventTimeEditKind::Floating {
+                                source_timezone: Some(raw),
+                            } => raw.parse::<Tz>().unwrap_or(self.timezone()),
+                            _ => self.timezone(),
+                        };
+                        selected_alternative =
+                            render_conflict_alternatives(ui, confirmation, timezone);
                     }
 
                     let mut action = None;
@@ -7617,6 +7745,18 @@ impl EphemerisApp {
                         None => {}
                     }
                 });
+                if let Some(slot) = selected_alternative {
+                    let timezone = self.timezone();
+                    if let Some(draft) = self.event_time_editor.as_mut() {
+                        match apply_alternative_to_time_draft(draft, &slot, timezone) {
+                            Ok(()) => self.last_error = None,
+                            Err(error) => {
+                                self.last_error =
+                                    Some(format!("Cannot use alternate slot: {error:#}"));
+                            }
+                        }
+                    }
+                }
             }
             inspector_row(
                 ui,
