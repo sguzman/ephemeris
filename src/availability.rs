@@ -329,18 +329,23 @@ pub fn availability_for_events(
     };
     let mut result = AvailabilityResult::default();
     for event in events {
+        if event.time_uncertainty.is_some()
+            && potential_uncertain_busy_overlap(
+                event,
+                display_timezone,
+                window_start_utc,
+                window_end_utc,
+            )
+            && skip_uncertain_blocker(event, &mut result)
+        {
+            continue;
+        }
+
         let occurrences = event
             .occurrences_in_window(start_date, end_exclusive, display_timezone)
             .map_err(|error| {
                 anyhow::anyhow!("failed to expand availability event {}: {error}", event.id)
             })?;
-
-        if event.time_uncertainty.is_some()
-            && potential_uncertain_busy_overlap(event, display_timezone, window_start_utc, window_end_utc)
-            && skip_uncertain_blocker(event, &mut result)
-        {
-            continue;
-        }
 
         for occurrence in occurrences {
             append_occurrence(
