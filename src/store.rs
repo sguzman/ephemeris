@@ -2637,13 +2637,13 @@ impl TemporalStore {
         if self.event_by_id(event.id)?.is_some() {
             anyhow::bail!("local event {} already exists", event.id);
         }
-        if let Some(reminder) = reminder {
-            if !matches!(
+        if let Some(reminder) = reminder
+            && !matches!(
                 reminder.target,
                 NotificationTarget::Event { event_id } if event_id == event.id
-            ) {
-                anyhow::bail!("quick-create reminder must target the new event");
-            }
+            )
+        {
+            anyhow::bail!("quick-create reminder must target the new event");
         }
 
         let tx = self
