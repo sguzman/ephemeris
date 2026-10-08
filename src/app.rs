@@ -2674,7 +2674,7 @@ fn focused_recurrence_conflict_warning(
         proposed_time,
         timezone,
     )?;
-    if check.conflicts.is_empty() {
+    if check.conflicts.is_empty() && check.skipped.is_empty() {
         return Ok(None);
     }
     let mut names = check
@@ -2686,7 +2686,11 @@ fn focused_recurrence_conflict_warning(
         .collect::<Vec<_>>();
     let extra = names.len().saturating_sub(4);
     names.truncate(4);
-    let mut warning = format!("Recurring occurrence conflicts with {}.", names.join(", "));
+    let mut warning = if names.is_empty() {
+        "The proposed recurring occurrence has provisional availability.".to_string()
+    } else {
+        format!("Recurring occurrence conflicts with {}.", names.join(", "))
+    };
     if extra != 0 {
         warning.push_str(&format!(" +{extra} more."));
     }
