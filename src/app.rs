@@ -73,7 +73,7 @@ fn parse_new_local_event_time(
         return Ok((
             TimeSpec::AllDay {
                 start: date,
-                end_exclusive: None,
+                end_exclusive: parse_optional_end_date(&draft.end_date, date)?,
             },
             date,
         ));
@@ -302,15 +302,27 @@ fn apply_alternative_to_new_draft(
     let mut next = draft.clone();
     if next.all_day {
         let (start, end) = civil_alternative_dates(slot, timezone)?;
-        if (end - start).num_days() != 1 {
-            anyhow::bail!("quick-create all-day events must retain a one-day span");
+        let (previous_time, _) = parse_new_local_event_time(&next, timezone)?;
+        let TimeSpec::AllDay {
+            start: previous_start,
+            end_exclusive: previous_end,
+        } = previous_time
+        else {
+            anyhow::bail!("quick-create no longer represents an all-day event");
+        };
+        let previous_duration = previous_end.map_or(1, |value| (value - previous_start).num_days());
+        if previous_duration != (end - start).num_days() {
+            anyhow::bail!("suggested all-day interval changes the original civil-day duration");
         }
         next.date = start.to_string();
+        next.end_date = previous_end.map_or_else(String::new, |_| end.to_string());
         next.conflict_confirmation = None;
         let (time, _) = parse_new_local_event_time(&next, timezone)?;
-        if !matches!(time, TimeSpec::AllDay { start: value, end_exclusive: None } if value == start)
-        {
-            anyhow::bail!("suggested all-day date changed time kind or duration");
+        if time != (TimeSpec::AllDay {
+            start,
+            end_exclusive: previous_end.map(|_| end),
+        }) {
+            anyhow::bail!("suggested all-day interval cannot be represented by quick-create");
         }
         *draft = next;
         return Ok(());
@@ -1867,6 +1879,7 @@ struct NewLocalEventDraft {
     all_day: bool,
     start_time: String,
     duration_minutes: String,
+    end_date: String,
     conflict_confirmation: Option<ConflictConfirmation>,
 }
 
@@ -1884,6 +1897,7 @@ impl NewLocalEventDraft {
             all_day: false,
             start_time: "09:00".to_string(),
             duration_minutes: "60".to_string(),
+            end_date: String::new(),
             conflict_confirmation: None,
         }
     }
@@ -5553,6 +5567,16 @@ impl EphemerisApp {
                         ui.small("min");
                     }
                 });
+                if draft.all_day {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("End (exclusive)");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut draft.end_date)
+                                .hint_text("YYYY-MM-DD · blank = one day")
+                                .desired_width(210.0),
+                        );
+                    });
+                }
                 if let Some(confirmation) = &draft.conflict_confirmation {
                     ui.colored_label(Color32::YELLOW, &confirmation.warning);
                     selected_alternative =
