@@ -14132,7 +14132,9 @@ mod tests {
             cancelled: true,
         });
         event.recurrence = Some(rule.clone());
-        store.upsert_event(&event).expect("persist cancelled series");
+        store
+            .upsert_event(&event)
+            .expect("persist cancelled series");
         let mut draft = RecurrenceEditDraft::from_event(&event);
         draft.focus_occurrence(&original).expect("focus");
 
@@ -14142,25 +14144,18 @@ mod tests {
             replacement: Some(second),
             cancelled: false,
         };
-        let warning = focused_recurrence_conflict_warning(
-            &store,
-            chrono_tz::UTC,
-            &event,
-            &draft,
-            &restored,
-        )
-        .expect("restoration conflict")
-        .expect("warning");
+        let warning =
+            focused_recurrence_conflict_warning(&store, chrono_tz::UTC, &event, &draft, &restored)
+                .expect("restoration conflict")
+                .expect("warning");
         assert!(warning.contains("Series"));
         assert!(warning.contains("Save again"));
 
         restored.overrides.clear();
         assert!(
-            focused_recurrence_conflict_warning(
-                &store, chrono_tz::UTC, &event, &draft, &restored
-            )
-            .expect("restoring original slot")
-            .is_none()
+            focused_recurrence_conflict_warning(&store, chrono_tz::UTC, &event, &draft, &restored)
+                .expect("restoring original slot")
+                .is_none()
         );
     }
 
