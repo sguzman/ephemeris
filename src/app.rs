@@ -1170,6 +1170,7 @@ struct RecurrenceEditDraft {
     override_text: String,
     override_rows: Vec<RecurrenceOverrideEditRow>,
     base_time: TimeSpec,
+    focused_occurrence_original: Option<TimeSpec>,
 }
 
 impl RecurrenceEditDraft {
@@ -1234,8 +1235,23 @@ impl RecurrenceEditDraft {
             override_text,
             override_rows,
             base_time: event.time.clone(),
+            focused_occurrence_original: None,
             rule,
         }
+    }
+
+    /// A focused editor is only a view over the existing series definition.
+    /// Selecting an occurrence never modifies the recurrence or creates a
+    /// phantom override; the user must explicitly choose Move or Cancel.
+    fn focus_occurrence(&mut self, original: &TimeSpec) -> Result<(), String> {
+        if !self.had_recurrence {
+            return Err("this event does not have a recurrence series".to_string());
+        }
+        if original.kind_name() != self.base_time.kind_name() {
+            return Err("occurrence time kind differs from the series".to_string());
+        }
+        self.focused_occurrence_original = Some(original.clone());
+        Ok(())
     }
 
     fn apply_preset(&mut self, preset: RecurrencePreset) {
@@ -4010,6 +4026,21 @@ impl EphemerisApp {
                 self.last_message = None;
                 self.last_error = Some(format!("Failed to load recurrence editor: {error:#}"));
             }
+        }
+    }
+
+    fn begin_occurrence_override_edit(&mut self, occurrence_id: Uuid) {
+        let Some(context) = self.occurrence_contexts.get(&occurrence_id).cloned() else {
+            self.last_error = Some("Selected event has no recurrence occurrence identity.".to_string());
+            return;
+        };
+        self.begin_recurrence_edit(context.event_id);
+        if let Some(draft) = self.recurrence_editor.as_mut()
+            && draft.event_id == context.event_id
+            && let Err(error) = draft.focus_occurrence(&context.original_time)
+        {
+            self.last_message = None;
+            self.last_error = Some(format!("Cannot focus recurring occurrence: {error}"));
         }
     }
 
@@ -8085,8 +8116,15 @@ impl EphemerisApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.strong("Recurrence");
-                    if self.event_is_editable(&event) && ui.small_button("Edit series").clicked() {
-                        self.begin_recurrence_edit(event.id);
+                    if self.event_is_editable(&event) {
+                        if ui.small_button("Edit series").clicked() {
+                            self.begin_recurrence_edit(canonical_id);
+                        }
+                        if self.occurrence_contexts.contains_key(&event.id)
+                            && ui.small_button("Edit this occurrence").clicked()
+                        {
+                            self.begin_occurrence_override_edit(event.id);
+                        }
                     }
                 });
                 inspector_row(ui, "Frequency", rule.frequency.as_str());
@@ -10306,6 +10344,79 @@ fn render_structured_recurrence_overrides(ui: &mut egui::Ui, draft: &mut Recurre
         });
 }
 
+fn render_focused_occurrence_override(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft) {
+    let Some(original) = draft.focused_occurrence_original.as_ref() else {
+        return;
+    };
+    let slot = format_exception_start_value(original);
+    ui.group(|ui| {
+        ui.strong("Selected occurrence");
+        ui.small(format!("Original recurrence slot: {slot}"));
+        ui.small("Only this original slot is affected. Changes are not stored until Save.");
+
+        let existing = draft
+            .override_rows
+            .iter()
+            .position(|row| row.original_text == slot);
+        if let Some(index) = existing {
+            let row = &mut draft.override_rows[index];
+            let mut changed = false;
+            ui.horizontal_wrapped(|ui| {
+                let action_before = row.action;
+                egui::ComboBox::from_id_salt("focused-occurrence-action")
+                    .selected_text(row.action.label())
+                    .show_ui(ui, |ui| {
+                        for action in [
+                            RecurrenceOverrideEditAction::Move,
+                            RecurrenceOverrideEditAction::Cancel,
+                            RecurrenceOverrideEditAction::CancelMove,
+                            RecurrenceOverrideEditAction::Keep,
+                        ] {
+                            ui.selectable_value(&mut row.action, action, action.label());
+                        }
+                    });
+                changed |= row.action != action_before;
+                if row.action.needs_replacement() {
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut row.replacement_text)
+                                .hint_text(recurrence_exception_value_hint(&draft.base_time))
+                                .desired_width(180.0),
+                        )
+                        .changed();
+                }
+            });
+            if ui.small_button("Remove occurrence override").clicked() {
+                draft.override_rows.remove(index);
+                changed = true;
+            }
+            if changed {
+                draft.override_text = format_recurrence_override_edit_rows(&draft.override_rows);
+            }
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                if ui.small_button("Move this occurrence").clicked() {
+                    draft.override_rows.push(RecurrenceOverrideEditRow {
+                        original_text: slot.clone(),
+                        action: RecurrenceOverrideEditAction::Move,
+                        replacement_text: String::new(),
+                    });
+                    draft.override_text = format_recurrence_override_edit_rows(&draft.override_rows);
+                }
+                if ui.small_button("Cancel this occurrence").clicked() {
+                    draft.override_rows.push(RecurrenceOverrideEditRow {
+                        original_text: slot.clone(),
+                        action: RecurrenceOverrideEditAction::Cancel,
+                        replacement_text: String::new(),
+                    });
+                    draft.override_text = format_recurrence_override_edit_rows(&draft.override_rows);
+                }
+            });
+            ui.small("No override yet; opening this editor does not modify the series.");
+        }
+    });
+}
+
 fn render_recurrence_editor(
     ui: &mut egui::Ui,
     draft: &mut RecurrenceEditDraft,
@@ -10316,6 +10427,8 @@ fn render_recurrence_editor(
         "Add recurrence"
     });
     ui.small("Edits the canonical series definition, not the selected materialized occurrence.");
+
+    render_focused_occurrence_override(ui, draft);
 
     ui.label("Quick presets");
     ui.horizontal_wrapped(|ui| {
