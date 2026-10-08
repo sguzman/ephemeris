@@ -1085,6 +1085,53 @@ mod tests {
     }
 
     #[test]
+    fn all_day_alternatives_use_civil_midnights_on_dst_transition_days() {
+        let timezone = chrono_tz::America::New_York;
+        for (original_date, target_date, expected_hours) in [
+            (
+                NaiveDate::from_ymd_opt(2026, 3, 7).expect("spring original"),
+                NaiveDate::from_ymd_opt(2026, 3, 8).expect("spring transition"),
+                23,
+            ),
+            (
+                NaiveDate::from_ymd_opt(2026, 10, 31).expect("fall original"),
+                NaiveDate::from_ymd_opt(2026, 11, 1).expect("fall transition"),
+                25,
+            ),
+        ] {
+            let candidate = TemporalEvent::new(
+                "Day across clock transition",
+                TimeSpec::AllDay {
+                    start: original_date,
+                    end_exclusive: None,
+                },
+            );
+            let suggestions = alternative_days_for_candidate(
+                &[],
+                &candidate,
+                timezone,
+                None,
+                [true; 7],
+                1,
+            )
+            .expect("all-day alternatives");
+            let slot = suggestions.slots.first().expect("next day");
+            assert_eq!(
+                slot.start_utc.with_timezone(&timezone).date_naive(),
+                target_date
+            );
+            assert_eq!(
+                slot.end_utc.with_timezone(&timezone).date_naive(),
+                target_date.succ_opt().expect("next civil day")
+            );
+            assert_eq!(
+                (slot.end_utc - slot.start_utc).num_hours(),
+                expected_hours
+            );
+        }
+    }
+
+    #[test]
     fn all_day_alternatives_filter_start_weekday_and_hidden_blockers() {
         let tz = chrono_tz::UTC;
         let start = NaiveDate::from_ymd_opt(2026, 10, 7).expect("start");
