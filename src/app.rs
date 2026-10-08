@@ -14115,6 +14115,86 @@ mod tests {
     use super::*;
 
     #[test]
+    fn uncertain_time_editor_moves_entire_window_and_preserves_original_draft() {
+        let anchor = Utc
+            .with_ymd_and_hms(2026, 10, 8, 15, 0, 0)
+            .single()
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "Possible appointment",
+            TimeSpec::Instant {
+                start_utc: anchor,
+                end_utc: Some(anchor + ChronoDuration::hours(1)),
+                source_timezone: Some("UTC".to_string()),
+            },
+        );
+        let original_window = TimeUncertainty::InstantWindow {
+            earliest_utc: anchor - ChronoDuration::hours(2),
+            latest_utc: anchor + ChronoDuration::hours(1),
+        };
+        event.time_uncertainty = Some(original_window.clone());
+        let mut draft = EventTimeEditDraft::from_event(&event, chrono_tz::UTC)
+            .expect("uncertain time draft");
+        assert_eq!(
+            draft.uncertain_origin,
+            Some((event.time.clone(), original_window))
+        );
+        draft.date = "2026-10-10".to_string();
+        let proposed = draft.parsed_time().expect("proposed time");
+        let moved = move_uncertain_placement(&event, &proposed).expect("window move");
+        assert_eq!(
+            moved.time_uncertainty,
+            Some(TimeUncertainty::InstantWindow {
+                earliest_utc: anchor + ChronoDuration::days(2) - ChronoDuration::hours(2),
+                latest_utc: anchor + ChronoDuration::days(2) + ChronoDuration::hours(1),
+            })
+        );
+        assert_ne!(event.time, moved.time);
+        assert!(draft.conflict_confirmation.is_none());
+        let confirmation = ConflictConfirmation::for_event(
+            &moved,
+            "Provisional uncertain placement".to_string(),
+        );
+        assert!(confirmation.matches(&moved));
+        draft.date = "2026-10-11".to_string();
+        let changed = move_uncertain_placement(
+            &event,
+            &draft.parsed_time().expect("new proposal"),
+        )
+        .expect("changed window");
+        assert!(!confirmation.matches(&changed));
+    }
+
+    #[test]
+    fn uncertain_time_editor_refuses_subminute_loss_and_recurring_master() {
+        let anchor = Utc
+            .with_ymd_and_hms(2026, 10, 8, 15, 0, 30)
+            .single()
+            .expect("subminute start");
+        let mut event = TemporalEvent::new(
+            "Precise uncertain appointment",
+            TimeSpec::Instant {
+                start_utc: anchor,
+                end_utc: Some(anchor + ChronoDuration::hours(1)),
+                source_timezone: Some("UTC".to_string()),
+            },
+        );
+        event.time_uncertainty = Some(TimeUncertainty::InstantWindow {
+            earliest_utc: anchor - ChronoDuration::minutes(30),
+            latest_utc: anchor + ChronoDuration::minutes(30),
+        });
+        assert!(EventTimeEditDraft::from_event(&event, chrono_tz::UTC).is_err());
+        event.time = TimeSpec::Instant {
+            start_utc: anchor - ChronoDuration::seconds(30),
+            end_utc: Some(anchor + ChronoDuration::hours(1) - ChronoDuration::seconds(30)),
+            source_timezone: Some("UTC".to_string()),
+        };
+        assert!(EventTimeEditDraft::from_event(&event, chrono_tz::UTC).is_ok());
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
+        assert!(EventTimeEditDraft::from_event(&event, chrono_tz::UTC).is_err());
+    }
+
+    #[test]
     fn focused_recurrence_conflict_confirmation_keeps_sister_slots_busy() {
         let store = TemporalStore::open_in_memory().expect("store");
         let start = Utc
