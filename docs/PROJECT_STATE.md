@@ -146,7 +146,9 @@ For definite timed creation and editing conflicts, the inspector offers up to fo
 
 Free/busy now treats bounded uncertain start placement as **uncheckable**, not definitely occupied at the representative time. The evaluator checks possible-start windows in instant, floating and civil-date coordinates even when the representative event start is outside the requested window. Skipped/uncheckable events are reported in the Availability panel with an explicit provisional-results warning and inspector navigation. Proposals remain advisory when some stored events cannot be checked.
 
-The next Phase 10 frontier is **defining additional scheduling semantics carefully**: evaluate concrete all-day alternatives and recurring candidate edits only after establishing a precise original-slot/exception identity policy. Attendee/invitation exchange and system notifications remain deliberately unimplemented rather than promised; in-app reminders are functional. See [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) for the user workflow.
+Definite all-day conflicts now offer later civil-date alternatives from the full canonical corpus in a background worker. Eligible start dates respect configured weekdays, preserve the original civil-day span across DST, and retain save-time confirmation and draft-identity safeguards. Quick-create also supports an explicit exclusive end date for multi-day all-day events. Date-only facts remain distinct from all-day Busy commitments.
+
+The next Phase 10 frontier is **safe recurring occurrence rescheduling** with explicit original-slot/exception identity semantics, rather than moving recurrence masters blindly. Attendee/invitation exchange and system notifications remain deliberately unimplemented rather than promised; in-app reminders are functional. See [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) for the user workflow.
 
 ## Documentation roles
 
