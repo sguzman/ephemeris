@@ -476,7 +476,8 @@ Implemented:
 Remaining goals:
 
 - attendee/invitation exchange where justified by real scheduling workflows
-- optional refinement of alternative search and availability diagnostics for recurring and uncertainty-aware rescheduling once their exact semantics are specified
+- focused original-slot editing for a selected recurring occurrence — implemented for writable sources with explicit Move/Cancel/Keep and canonical recurrence validation
+- optional conflict-aware alternative search for recurring individual-occurrence moves and uncertainty-aware rescheduling once their exact semantics are specified
 - optional system notification delivery only with a fully specified local-first lifecycle
 - careful extension of time editing to recurring masters only when exception identity can remain correct
 
