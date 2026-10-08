@@ -5,6 +5,12 @@ on:
     branches: ["main"]
   pull_request:
 
+# Frequent direct commits should verify the latest branch head, not keep
+# obsolete native builds queued behind it. Pull-request refs remain separate.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust:
     runs-on: ubuntu-latest
