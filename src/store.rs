@@ -880,6 +880,43 @@ impl TemporalStore {
         Ok(deliveries)
     }
 
+    pub fn snoozed_notification_deliveries(
+        &self,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<Vec<NotificationDelivery>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, rule_id, event_id, occurrence_id,
+                rule_name, event_title,
+                trigger_at_utc, starts_at_utc, lead_minutes,
+                delivered_at, snoozed_until, dismissed_at
+            FROM notification_deliveries
+            WHERE dismissed_at IS NULL
+              AND snoozed_until > ?1
+            ORDER BY snoozed_until, id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![now.to_rfc3339()])?;
+        let mut deliveries = Vec::new();
+        while let Some(row) = rows.next()? {
+            deliveries.push(decode_notification_delivery(row)?);
+        }
+        Ok(deliveries)
+    }
+
+    pub fn clear_notification_snooze(&self, id: Uuid) -> anyhow::Result<bool> {
+        let changed = self.conn.execute(
+            r#"
+            UPDATE notification_deliveries
+            SET snoozed_until = NULL
+            WHERE id = ?1 AND dismissed_at IS NULL AND snoozed_until IS NOT NULL
+            "#,
+            params![id.to_string()],
+        ).context("failed to wake snoozed notification delivery")?;
+        Ok(changed != 0)
+    }
+
     pub fn snooze_notification_delivery(
         &self,
         id: Uuid,
