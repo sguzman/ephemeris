@@ -11,7 +11,7 @@ use eframe::egui::{self, Color32, RichText};
 use uuid::Uuid;
 
 use crate::availability::{
-    BusyKind, FreeInterval, SlotSearch, alternative_slots_for_candidate,
+    AlternativeSlots, BusyKind, FreeInterval, SlotSearch, alternative_slots_for_candidate,
     availability_for_materialized_date_window, conflicts_for_candidate_event, suggest_slots,
 };
 use crate::calendar::{
@@ -2197,6 +2197,12 @@ enum TopologyInspectorAction {
     DeleteProvenance(Uuid),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConflictAlternativeTarget {
+    NewEvent,
+    TimeEdit(Uuid),
+}
+
 pub struct EphemerisApp {
     store: TemporalStore,
     state: PersistedUiState,
@@ -2212,6 +2218,11 @@ pub struct EphemerisApp {
     csv_export_path: String,
     remote_ics_url: String,
     remote_ics_import_receiver: Option<Receiver<Result<IcsImportReport, String>>>,
+    conflict_alternative_receiver: Option<(
+        ConflictAlternativeTarget,
+        TemporalEvent,
+        Receiver<Result<AlternativeSlots, String>>,
+    )>,
     taria_current_source_ids: BTreeSet<Uuid>,
     event_memberships: HashMap<Uuid, EventMembership>,
     canonical_entities: Vec<CanonicalEntity>,
@@ -2350,6 +2361,7 @@ impl EphemerisApp {
             csv_export_path: String::new(),
             remote_ics_url: String::new(),
             remote_ics_import_receiver: None,
+            conflict_alternative_receiver: None,
             taria_current_source_ids: BTreeSet::new(),
             event_memberships: HashMap::new(),
             canonical_entities: Vec::new(),
@@ -3380,10 +3392,11 @@ impl EphemerisApp {
     }
 
     fn confirmation_with_alternatives(
-        &self,
+        &mut self,
         event: &TemporalEvent,
         warning: String,
         exclude_event_id: Option<Uuid>,
+        target: ConflictAlternativeTarget,
     ) -> ConflictConfirmation {
         let mut confirmation = ConflictConfirmation::for_event(event, warning);
         if !matches!(
@@ -3393,7 +3406,14 @@ impl EphemerisApp {
             return confirmation;
         }
 
-        let result = (|| -> anyhow::Result<_> {
+        let prerequisites = (|| -> anyhow::Result<_> {
+            let database_path = self
+                .store
+                .path()
+                .map(std::path::Path::to_path_buf)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("background suggestions require a file-backed database")
+                })?;
             let preferences = parse_slot_search(
                 &self.state.availability_duration_minutes,
                 &self.state.availability_step_minutes,
@@ -3401,28 +3421,31 @@ impl EphemerisApp {
                 &self.state.availability_day_end,
                 self.state.availability_workdays,
             )?;
-            alternative_slots_for_candidate(
-                &self.store.list_events()?,
-                event,
-                self.timezone(),
-                exclude_event_id,
-                preferences,
-                4,
-            )
+            Ok((database_path, preferences))
         })();
 
-        match result {
-            Ok(result) => {
-                confirmation.alternatives = result.slots;
-                if !result.skipped.is_empty() {
-                    confirmation.alternative_note = Some(format!(
-                        "Alternatives are advisory: {} stored event(s) could not be evaluated.",
-                        result.skipped.len()
-                    ));
-                } else if confirmation.alternatives.is_empty() {
-                    confirmation.alternative_note =
-                        Some("No later matching slot in the next 15 days.".to_string());
-                }
+        match prerequisites {
+            Ok((database_path, preferences)) => {
+                confirmation.alternative_note = Some("Finding later open slots…".to_string());
+                let candidate = event.clone();
+                let display_timezone = self.timezone();
+                let (sender, receiver) = mpsc::channel();
+                self.conflict_alternative_receiver = Some((target, candidate.clone(), receiver));
+                std::thread::spawn(move || {
+                    let result = (|| -> anyhow::Result<AlternativeSlots> {
+                        let store = TemporalStore::open(database_path)?;
+                        alternative_slots_for_candidate(
+                            &store.list_events()?,
+                            &candidate,
+                            display_timezone,
+                            exclude_event_id,
+                            preferences,
+                            4,
+                        )
+                    })()
+                    .map_err(|error| format!("{error:#}"));
+                    let _ = sender.send(result);
+                });
             }
             Err(error) => {
                 confirmation.alternative_note =
@@ -3430,6 +3453,79 @@ impl EphemerisApp {
             }
         }
         confirmation
+    }
+
+    fn poll_conflict_alternatives(&mut self) {
+        let completed = match self.conflict_alternative_receiver.as_ref() {
+            Some((_, _, receiver)) => match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => Some(Err(
+                    "Alternative-slot worker exited without a result".to_string(),
+                )),
+            },
+            None => None,
+        };
+        let Some(result) = completed else {
+            return;
+        };
+        let Some((target, candidate, _)) = self.conflict_alternative_receiver.take() else {
+            return;
+        };
+        let display_timezone = self.timezone();
+
+        let confirmation = match target {
+            ConflictAlternativeTarget::NewEvent => self.new_local_event.as_mut().and_then(|draft| {
+                let is_current = draft
+                    .conflict_confirmation
+                    .as_ref()
+                    .is_some_and(|confirmation| confirmation.matches(&candidate))
+                    && draft.status == candidate.status
+                    && draft.availability == candidate.availability
+                    && parse_new_local_event_time(draft, display_timezone)
+                        .is_ok_and(|(time, _)| time == candidate.time);
+                is_current
+                    .then_some(draft)
+                    .and_then(|draft| draft.conflict_confirmation.as_mut())
+            }),
+            ConflictAlternativeTarget::TimeEdit(event_id) => {
+                self.event_time_editor.as_mut().and_then(|draft| {
+                    let is_current = draft.event_id == event_id
+                        && draft
+                            .conflict_confirmation
+                            .as_ref()
+                            .is_some_and(|confirmation| confirmation.matches(&candidate))
+                        && draft
+                            .parsed_time()
+                            .is_ok_and(|time| time == candidate.time);
+                    is_current
+                        .then_some(draft)
+                        .and_then(|draft| draft.conflict_confirmation.as_mut())
+                })
+            }
+        };
+
+        if let Some(confirmation) = confirmation {
+            match result {
+                Ok(alternatives) => {
+                    confirmation.alternatives = alternatives.slots;
+                    confirmation.alternative_note = if !alternatives.skipped.is_empty() {
+                        Some(format!(
+                            "Advisory: {} stored event(s) could not be checked.",
+                            alternatives.skipped.len()
+                        ))
+                    } else if confirmation.alternatives.is_empty() {
+                        Some("No later matching slot in the next 15 days.".to_string())
+                    } else {
+                        None
+                    };
+                }
+                Err(error) => {
+                    confirmation.alternative_note =
+                        Some(format!("Alternatives unavailable: {error}"));
+                }
+            }
+        }
     }
 
     fn begin_new_local_event(&mut self) {
@@ -3464,7 +3560,12 @@ impl EphemerisApp {
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
                 let confirmation =
-                    self.confirmation_with_alternatives(&event, warning.clone(), None);
+                    self.confirmation_with_alternatives(
+                        &event,
+                        warning.clone(),
+                        None,
+                        ConflictAlternativeTarget::NewEvent,
+                    );
                 if let Some(current) = self.new_local_event.as_mut() {
                     current.conflict_confirmation = Some(confirmation);
                 }
@@ -3550,7 +3651,12 @@ impl EphemerisApp {
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
                 let confirmation =
-                    self.confirmation_with_alternatives(&event, warning.clone(), Some(event.id));
+                    self.confirmation_with_alternatives(
+                        &event,
+                        warning.clone(),
+                        Some(event.id),
+                        ConflictAlternativeTarget::TimeEdit(event.id),
+                    );
                 if let Some(current) = self.event_time_editor.as_mut() {
                     current.conflict_confirmation = Some(confirmation);
                 }
@@ -9071,8 +9177,12 @@ impl eframe::App for EphemerisApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_taria_workspace_update();
         self.poll_remote_ics_import();
+        self.poll_conflict_alternatives();
         self.refresh_notification_evaluation_if_needed();
-        if self.taria_update_receiver.is_some() || self.remote_ics_import_receiver.is_some() {
+        if self.taria_update_receiver.is_some()
+            || self.remote_ics_import_receiver.is_some()
+            || self.conflict_alternative_receiver.is_some()
+        {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         } else if self.notification_rules.iter().any(|rule| rule.enabled) {
             ui.ctx().request_repaint_after(Duration::from_secs(30));
