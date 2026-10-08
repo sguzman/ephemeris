@@ -7600,6 +7600,35 @@ mod tests {
                 .is_empty()
         );
 
+        let pending = store
+            .snoozed_notification_deliveries(delivered_at)
+            .expect("snoozed before deadline");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, delivery.id);
+        assert!(
+            store
+                .snoozed_notification_deliveries(snoozed_until)
+                .expect("not snoozed at deadline")
+                .is_empty()
+        );
+
+        assert!(store
+            .clear_notification_snooze(delivery.id)
+            .expect("wake reminder"));
+        assert!(!store
+            .clear_notification_snooze(delivery.id)
+            .expect("idempotent wake"));
+        assert_eq!(
+            store
+                .due_notification_deliveries(delivered_at)
+                .expect("immediately due after wake")
+                .len(),
+            1
+        );
+        assert!(store
+            .snooze_notification_delivery(delivery.id, snoozed_until)
+            .expect("re-snooze"));
+
         let due = store
             .due_notification_deliveries(snoozed_until)
             .expect("due at snooze deadline");
