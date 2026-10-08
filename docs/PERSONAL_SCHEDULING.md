@@ -57,6 +57,8 @@ Before-start reminders currently require exact or floating DATE-TIME events. All
 
 Ephemeris does not yet implement an attendee/invitation exchange workflow or CalDAV scheduling. It does not silently invite participants merely because they are listed in canonical event metadata.
 
-Recurring master-time changes, unsupported uncertain placements, and external source-owned fields remain protected behind their existing semantic boundaries.
+For a writable recurring event, select a materialized occurrence and choose **Edit this occurrence** in the inspector. The recurrence editor opens a focused section identifying the **original recurrence slot**, even when the selected occurrence has already moved. Choose **Move this occurrence** or **Cancel this occurrence**, supply a replacement start when moving, then explicitly Save. Existing overrides can also be changed or removed. Merely opening the focused editor does not create an override or modify the series. Original-slot identity is checked through the established recurrence validation path; the series master time is not shifted.
+
+Recurring master-time changes, automatic conflict-slot suggestions for recurring occurrences, unsupported uncertain placements, and external source-owned fields remain protected behind their existing semantic boundaries.
 
 For data semantics see [TIME_SEMANTICS.md](TIME_SEMANTICS.md). For persistence and source ownership see [DATA_MODEL.md](DATA_MODEL.md) and [INGESTION_AND_SYNC.md](INGESTION_AND_SYNC.md). Current verification and priorities live in [PROJECT_STATE.md](PROJECT_STATE.md) and [ROADMAP.md](ROADMAP.md).
