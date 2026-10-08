@@ -251,12 +251,8 @@ pub fn alternative_slots_for_recurring_occurrence(
     if max_suggestions == 0 {
         return Ok(AlternativeSlots::default());
     }
-    let (source, corpus) = corpus_without_recurring_occurrence(
-        events,
-        series_event_id,
-        original_slot,
-        current_time,
-    )?;
+    let (source, corpus) =
+        corpus_without_recurring_occurrence(events, series_event_id, original_slot, current_time)?;
 
     let mut candidate = source.clone();
     candidate.time = current_time.clone();
@@ -298,12 +294,8 @@ pub fn conflicts_for_recurring_occurrence(
     proposed_time: &TimeSpec,
     display_timezone: Tz,
 ) -> anyhow::Result<ConflictCheck> {
-    let (source, corpus) = corpus_without_recurring_occurrence(
-        events,
-        series_event_id,
-        original_slot,
-        current_time,
-    )?;
+    let (source, corpus) =
+        corpus_without_recurring_occurrence(events, series_event_id, original_slot, current_time)?;
     let mut candidate = source;
     candidate.time = proposed_time.clone();
     candidate.recurrence = None;
