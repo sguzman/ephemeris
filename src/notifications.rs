@@ -328,10 +328,10 @@ fn notification_start_utc(time: &TimeSpec, display_timezone: Tz) -> Option<DateT
             source_timezone,
             ..
         } => {
-            let timezone = source_timezone
-                .as_deref()
-                .and_then(|raw| raw.parse::<Tz>().ok())
-                .unwrap_or(display_timezone);
+            let timezone = match source_timezone.as_deref() {
+                Some(raw) => raw.parse::<Tz>().ok()?,
+                None => display_timezone,
+            };
             match timezone.from_local_datetime(start) {
                 LocalResult::Single(value) => Some(value.with_timezone(&Utc)),
                 LocalResult::Ambiguous(first, second) => {
@@ -350,6 +350,12 @@ fn notification_start_utc(time: &TimeSpec, display_timezone: Tz) -> Option<DateT
 
 fn unsupported_time_reason(time: &TimeSpec) -> String {
     match time {
+        TimeSpec::Floating {
+            source_timezone: Some(raw),
+            ..
+        } if raw.parse::<Tz>().is_err() => {
+            format!("floating event has invalid source timezone {raw:?}")
+        }
         TimeSpec::Floating { .. } => {
             "floating start falls in a nonexistent local wall-clock interval".to_string()
         }
@@ -406,6 +412,21 @@ mod tests {
             display_timezone: "America/Mexico_City".to_string(),
             week_start_monday: false,
         }
+    }
+
+    #[test]
+    fn invalid_floating_timezone_is_reported_instead_of_reinterpreted() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 8)
+            .expect("date")
+            .and_hms_opt(9, 0, 0)
+            .expect("time");
+        let time = TimeSpec::Floating {
+            start,
+            end: None,
+            source_timezone: Some("Not/A_Zone".to_string()),
+        };
+        assert!(notification_start_utc(&time, chrono_tz::UTC).is_none());
+        assert!(unsupported_time_reason(&time).contains("invalid source timezone"));
     }
 
     #[test]
