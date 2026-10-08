@@ -1573,10 +1573,18 @@ mod tests {
         assert_eq!(suggestions.slots.len(), 2);
         assert_eq!(suggestions.slots[0].start_utc, uncertain_start);
         assert!(!suggestions.slots.iter().any(|slot| slot.start_utc == start));
-        assert!(!suggestions.slots.iter().any(|slot| {
-            slot.start_utc == start + Duration::days(1)
-        }));
-        assert!(suggestions.skipped.iter().any(|skip| skip.event_id == uncertain.id));
+        assert!(
+            !suggestions
+                .slots
+                .iter()
+                .any(|slot| { slot.start_utc == start + Duration::days(1) })
+        );
+        assert!(
+            suggestions
+                .skipped
+                .iter()
+                .any(|skip| skip.event_id == uncertain.id)
+        );
     }
 
     #[test]
