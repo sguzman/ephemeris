@@ -1067,7 +1067,7 @@ mod tests {
             .single()
             .expect("window");
         let result = availability_for_events(
-            &[event.clone()],
+            std::slice::from_ref(&event),
             chrono_tz::UTC,
             window_start,
             window_start + Duration::days(1),
