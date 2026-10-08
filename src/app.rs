@@ -10957,7 +10957,7 @@ fn render_focused_occurrence_override(
     let cancelled = draft.parsed_rule().ok().is_some_and(|rule| {
         rule.overrides
             .iter()
-            .any(|value| value.original == *original && value.cancelled)
+            .any(|value| value.original == original && value.cancelled)
     });
     let mut action = None;
     let button_label = if cancelled {
