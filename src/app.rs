@@ -12,9 +12,9 @@ use uuid::Uuid;
 
 use crate::availability::{
     AlternativeSlots, BusyKind, FreeInterval, SlotSearch, alternative_days_for_candidate,
-    alternative_slots_for_candidate, availability_for_materialized_date_window,
-    conflicts_for_canceled_recurring_occurrence, conflicts_for_candidate_event,
-    conflicts_for_recurring_occurrence, suggest_slots,
+    alternative_slots_for_canceled_recurring_occurrence, alternative_slots_for_candidate,
+    availability_for_materialized_date_window, conflicts_for_canceled_recurring_occurrence,
+    conflicts_for_candidate_event, conflicts_for_recurring_occurrence, suggest_slots,
 };
 use crate::calendar::{
     CalendarLayout, CalendarView, calendar_title, month_days, month_grid_start, quarter_months,
@@ -4394,6 +4394,10 @@ impl EphemerisApp {
                 search,
                 timezone,
             )) => {
+                let was_cancelled = rule
+                    .overrides
+                    .iter()
+                    .any(|value| value.original == original && value.cancelled);
                 let (sender, receiver) = mpsc::channel();
                 self.recurrence_alternative_receiver = Some(RecurrenceAlternativeWorker {
                     draft_token,
@@ -4412,9 +4416,15 @@ impl EphemerisApp {
                     let result = (|| -> anyhow::Result<AlternativeSlots> {
                         let store = TemporalStore::open(database_path)?;
                         let events = store.list_events()?;
-                        crate::availability::alternative_slots_for_recurring_occurrence(
-                            &events, event_id, &original, &current, timezone, search, 4,
-                        )
+                        if was_cancelled {
+                            alternative_slots_for_canceled_recurring_occurrence(
+                                &events, event_id, &original, timezone, search, 4,
+                            )
+                        } else {
+                            crate::availability::alternative_slots_for_recurring_occurrence(
+                                &events, event_id, &original, &current, timezone, search, 4,
+                            )
+                        }
                     })()
                     .map_err(|error| format!("{error:#}"));
                     let _ = sender.send(result);
