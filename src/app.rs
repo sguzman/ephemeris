@@ -13525,6 +13525,82 @@ mod tests {
     }
 
     #[test]
+    fn multi_day_quick_create_alternative_keeps_exclusive_end_and_metadata() {
+        let timezone = chrono_tz::America::New_York;
+        let original_date = NaiveDate::from_ymd_opt(2026, 10, 30).expect("start");
+        let target_date = NaiveDate::from_ymd_opt(2026, 11, 4).expect("target");
+        let target_end = target_date
+            .checked_add_days(chrono::Days::new(3))
+            .expect("target end");
+        let mut draft = NewLocalEventDraft::for_date(original_date);
+        draft.all_day = true;
+        draft.end_date = original_date
+            .checked_add_days(chrono::Days::new(3))
+            .expect("original end")
+            .to_string();
+        draft.title = "Three-day workshop".to_string();
+        draft.description = "Carry original notes".to_string();
+        let before = parse_new_local_event_time(&draft, timezone)
+            .expect("original event")
+            .0;
+        assert_eq!(
+            before,
+            TimeSpec::AllDay {
+                start: original_date,
+                end_exclusive: original_date.checked_add_days(chrono::Days::new(3)),
+            }
+        );
+        let boundary = |date: NaiveDate| {
+            timezone
+                .from_local_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight"))
+                .single()
+                .expect("unique midnight")
+                .with_timezone(&Utc)
+        };
+        let slot = FreeInterval {
+            start_utc: boundary(target_date),
+            end_utc: boundary(target_end),
+        };
+        apply_alternative_to_new_draft(&mut draft, &slot, timezone)
+            .expect("apply alternative");
+        assert_eq!(draft.title, "Three-day workshop");
+        assert_eq!(draft.description, "Carry original notes");
+        assert!(draft.all_day);
+        assert_eq!(draft.date, target_date.to_string());
+        assert_eq!(draft.end_date, target_end.to_string());
+        assert_eq!(
+            parse_new_local_event_time(&draft, timezone)
+                .expect("rescheduled")
+                .0,
+            TimeSpec::AllDay {
+                start: target_date,
+                end_exclusive: Some(target_end),
+            }
+        );
+    }
+
+    #[test]
+    fn all_day_quick_create_requires_exclusive_end_after_start() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 7).expect("start");
+        let mut draft = NewLocalEventDraft::for_date(start);
+        draft.all_day = true;
+        draft.end_date = start.to_string();
+        assert!(parse_new_local_event_time(&draft, chrono_tz::UTC).is_err());
+        draft.end_date = "invalid".to_string();
+        assert!(parse_new_local_event_time(&draft, chrono_tz::UTC).is_err());
+        draft.end_date = String::new();
+        assert_eq!(
+            parse_new_local_event_time(&draft, chrono_tz::UTC)
+                .expect("one-day fallback")
+                .0,
+            TimeSpec::AllDay {
+                start,
+                end_exclusive: None,
+            }
+        );
+    }
+
+    #[test]
     fn all_day_time_edit_alternative_preserves_explicit_civil_day_span() {
         let timezone = chrono_tz::America::New_York;
         let original_start = NaiveDate::from_ymd_opt(2026, 10, 30).expect("start");
