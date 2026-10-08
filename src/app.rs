@@ -10702,9 +10702,7 @@ fn render_focused_occurrence_override(
     draft: &mut RecurrenceEditDraft,
     timezone: Tz,
 ) -> Option<RecurrenceEditorAction> {
-    let Some(original) = draft.focused_occurrence_original.as_ref() else {
-        return None;
-    };
+    let original = draft.focused_occurrence_original.as_ref()?;
     if draft.alternative_rule.is_some()
         && draft.alternative_rule.as_ref() != draft.parsed_rule().ok().as_ref()
     {
