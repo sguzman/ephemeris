@@ -4090,15 +4090,41 @@ impl EphemerisApp {
             if event.recurrence.is_some() {
                 anyhow::bail!("recurring event master time editing is not supported yet");
             }
-            if event.time_uncertainty.is_some() {
-                anyhow::bail!(
-                    "uncertain event placement must be edited with uncertainty-aware controls"
-                );
+            let proposed_time = draft.parsed_time()?;
+            if let Some((original_time, original_uncertainty)) = &draft.uncertain_origin {
+                if event.time != *original_time
+                    || event.time_uncertainty.as_ref() != Some(original_uncertainty)
+                {
+                    anyhow::bail!(
+                        "uncertain event changed since the editor opened; reopen its time editor"
+                    );
+                }
+                if proposed_time != event.time {
+                    event = move_uncertain_placement(&event, &proposed_time)?;
+                    let warning = "Moving an uncertain event shifts its entire possible-start window. Its availability cannot be certified from the representative time. Save again without changing the proposed time to acknowledge this provisional placement.";
+                    if draft
+                        .conflict_confirmation
+                        .as_ref()
+                        .is_none_or(|confirmation| !confirmation.matches(&event))
+                    {
+                        if let Some(current) = self.event_time_editor.as_mut() {
+                            current.conflict_confirmation =
+                                Some(ConflictConfirmation::for_event(&event, warning.to_string()));
+                        }
+                        anyhow::bail!("{warning}");
+                    }
+                }
+            } else {
+                if event.time_uncertainty.is_some() {
+                    anyhow::bail!(
+                        "event acquired bounded uncertainty since the editor opened; reopen it"
+                    );
+                }
+                event.time = proposed_time;
             }
 
-            event.time = draft.parsed_time()?;
-
-            if let Some(warning) = self.scheduling_conflict_warning(&event, Some(event.id))?
+            if draft.uncertain_origin.is_none()
+                && let Some(warning) = self.scheduling_conflict_warning(&event, Some(event.id))?
                 && draft
                     .conflict_confirmation
                     .as_ref()
