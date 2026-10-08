@@ -1879,7 +1879,7 @@ impl EventTimeEditDraft {
                 source_timezone,
             } => Ok(Self {
                 draft_token: Uuid::new_v4(),
-                    event_id: event.id,
+                event_id: event.id,
                 kind: EventTimeEditKind::Floating {
                     source_timezone: source_timezone.clone(),
                 },
@@ -1895,7 +1895,7 @@ impl EventTimeEditDraft {
                 end_exclusive,
             } => Ok(Self {
                 draft_token: Uuid::new_v4(),
-                    event_id: event.id,
+                event_id: event.id,
                 kind: EventTimeEditKind::AllDay,
                 date: start.to_string(),
                 start_time: String::new(),
@@ -1908,7 +1908,7 @@ impl EventTimeEditDraft {
                 end_exclusive,
             } => Ok(Self {
                 draft_token: Uuid::new_v4(),
-                    event_id: event.id,
+                event_id: event.id,
                 kind: EventTimeEditKind::DateOnly,
                 date: start.to_string(),
                 start_time: String::new(),
@@ -13226,13 +13226,16 @@ mod tests {
                 source_timezone: None,
             },
         );
-        let original = EventTimeEditDraft::from_event(&event, chrono_tz::UTC)
-            .expect("first editor");
-        let reopened = EventTimeEditDraft::from_event(&event, chrono_tz::UTC)
-            .expect("reopened editor");
+        let original =
+            EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("first editor");
+        let reopened =
+            EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("reopened editor");
         assert_eq!(original.event_id, reopened.event_id);
         assert_ne!(original.draft_token, reopened.draft_token);
-        assert_eq!(original.parsed_time().expect("time"), reopened.parsed_time().expect("time"));
+        assert_eq!(
+            original.parsed_time().expect("time"),
+            reopened.parsed_time().expect("time")
+        );
     }
 
     #[test]
