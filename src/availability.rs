@@ -1068,15 +1068,9 @@ mod tests {
                 end_exclusive: Some(start + Days::new(4)),
             },
         );
-        let results = alternative_days_for_candidate(
-            &[first_block],
-            &candidate,
-            tz,
-            None,
-            [true; 7],
-            2,
-        )
-        .expect("alternatives");
+        let results =
+            alternative_days_for_candidate(&[first_block], &candidate, tz, None, [true; 7], 2)
+                .expect("alternatives");
 
         let first = &results.slots[0];
         assert_eq!(
@@ -1136,15 +1130,10 @@ mod tests {
                 end_exclusive: None,
             },
         );
-        assert!(alternative_days_for_candidate(
-            &[],
-            &candidate,
-            chrono_tz::UTC,
-            None,
-            [true; 7],
-            2
-        )
-        .is_err());
+        assert!(
+            alternative_days_for_candidate(&[], &candidate, chrono_tz::UTC, None, [true; 7], 2)
+                .is_err()
+        );
 
         candidate.time = TimeSpec::AllDay {
             start,
