@@ -192,11 +192,9 @@ fn new_local_reminder_from_draft(
     if !draft.reminder_enabled {
         return Ok(None);
     }
-    let minutes = draft
-        .reminder_minutes
-        .trim()
-        .parse::<u32>()
-        .map_err(|_| anyhow::anyhow!("reminder lead time must be a nonnegative whole number of minutes"))?;
+    let minutes = draft.reminder_minutes.trim().parse::<u32>().map_err(|_| {
+        anyhow::anyhow!("reminder lead time must be a nonnegative whole number of minutes")
+    })?;
     if minutes > 10_080 {
         anyhow::bail!("reminder lead time cannot exceed seven days");
     }
@@ -15002,9 +15000,11 @@ mod tests {
         let mut draft = NewLocalEventDraft::for_date(day);
         draft.title = "Review".to_string();
         let (event, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
-        assert!(new_local_reminder_from_draft(&draft, &event)
-            .expect("disabled")
-            .is_none());
+        assert!(
+            new_local_reminder_from_draft(&draft, &event)
+                .expect("disabled")
+                .is_none()
+        );
         draft.reminder_enabled = true;
         draft.reminder_minutes = "45".to_string();
         let reminder = new_local_reminder_from_draft(&draft, &event)
