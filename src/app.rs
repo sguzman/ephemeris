@@ -185,6 +185,28 @@ fn validate_quick_create_possible_start(
     Ok(())
 }
 
+fn new_local_reminder_from_draft(
+    draft: &NewLocalEventDraft,
+    event: &TemporalEvent,
+) -> anyhow::Result<Option<NotificationRule>> {
+    if !draft.reminder_enabled {
+        return Ok(None);
+    }
+    let minutes = draft
+        .reminder_minutes
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| anyhow::anyhow!("reminder lead time must be a nonnegative whole number of minutes"))?;
+    if minutes > 10_080 {
+        anyhow::bail!("reminder lead time cannot exceed seven days");
+    }
+    Ok(Some(NotificationRule::for_event(
+        event.id,
+        format!("Reminder: {}", event.normalized_title),
+        minutes,
+    )))
+}
+
 fn newly_created_uncertain_event_requires_confirmation(event: &TemporalEvent) -> bool {
     event.time_uncertainty.is_some()
         && event.availability.blocks_time()
@@ -2143,6 +2165,8 @@ struct NewLocalEventDraft {
     location_name: String,
     location_address: String,
     location_virtual_url: String,
+    reminder_enabled: bool,
+    reminder_minutes: String,
     uncertain_start: bool,
     earliest_possible_start: String,
     latest_possible_start: String,
@@ -2168,6 +2192,8 @@ impl NewLocalEventDraft {
             location_name: String::new(),
             location_address: String::new(),
             location_virtual_url: String::new(),
+            reminder_enabled: false,
+            reminder_minutes: "15".to_string(),
             uncertain_start: false,
             earliest_possible_start: String::new(),
             latest_possible_start: String::new(),
@@ -4169,8 +4195,9 @@ impl EphemerisApp {
             return;
         };
 
-        let result = (|| -> anyhow::Result<(Uuid, NaiveDate)> {
+        let result = (|| -> anyhow::Result<(Uuid, NaiveDate, bool)> {
             let (event, focus_date) = new_local_event_from_draft(&draft, self.timezone())?;
+            let reminder = new_local_reminder_from_draft(&draft, &event)?;
 
             let provisional = newly_created_uncertain_event_requires_confirmation(&event);
             let warning = if provisional {
@@ -4206,17 +4233,22 @@ impl EphemerisApp {
             }
 
             let event_id = event.id;
-            self.store.upsert_event(&event)?;
-            Ok((event_id, focus_date))
+            self.store
+                .create_local_event_with_reminder(&event, reminder.as_ref())?;
+            Ok((event_id, focus_date, reminder.is_some()))
         })();
 
         match result {
-            Ok((event_id, focus_date)) => {
+            Ok((event_id, focus_date, has_reminder)) => {
                 self.new_local_event = None;
                 self.state.set_focus_date(focus_date);
                 self.state.selected_event_id = Some(event_id);
                 self.state.show_inspector = true;
-                self.last_message = Some("Created local event.".to_string());
+                self.last_message = Some(if has_reminder {
+                    "Created local event with in-app reminder.".to_string()
+                } else {
+                    "Created local event.".to_string()
+                });
                 self.last_error = None;
                 self.mark_state_dirty();
                 self.reload_or_report();
@@ -6427,6 +6459,22 @@ impl EphemerisApp {
                         }
                         ui.small(
                             "Active Busy events with uncertain starts require a second Save acknowledging provisional availability.",
+                        );
+                    }
+                });
+                ui.collapsing("Reminder (optional)", |ui| {
+                    ui.checkbox(&mut draft.reminder_enabled, "In-app reminder before start");
+                    if draft.reminder_enabled {
+                        ui.horizontal(|ui| {
+                            ui.label("Minutes before");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.reminder_minutes)
+                                    .desired_width(75.0)
+                                    .hint_text("15"),
+                            );
+                        });
+                        ui.small(
+                            "Local reminder center only. No email, invitation, or system notification is sent.",
                         );
                     }
                 });
@@ -14946,6 +14994,42 @@ mod tests {
         assert!(!time_conflict_confirmation_is_current(
             &edit, &timed, timed.id
         ));
+    }
+
+    #[test]
+    fn quick_create_reminder_is_explicit_and_event_scoped() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut draft = NewLocalEventDraft::for_date(day);
+        draft.title = "Review".to_string();
+        let (event, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
+        assert!(new_local_reminder_from_draft(&draft, &event)
+            .expect("disabled")
+            .is_none());
+        draft.reminder_enabled = true;
+        draft.reminder_minutes = "45".to_string();
+        let reminder = new_local_reminder_from_draft(&draft, &event)
+            .expect("enabled")
+            .expect("reminder");
+        assert!(matches!(
+            reminder.target,
+            NotificationTarget::Event { event_id } if event_id == event.id
+        ));
+        assert_eq!(reminder.trigger.lead_minutes(), 45);
+    }
+
+    #[test]
+    fn quick_create_reminder_rejects_invalid_lead_times() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut draft = NewLocalEventDraft::for_date(day);
+        draft.title = "Review".to_string();
+        draft.reminder_enabled = true;
+        let (event, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
+        for invalid in ["", "-1", "abc", "10081"] {
+            draft.reminder_minutes = invalid.to_string();
+            assert!(new_local_reminder_from_draft(&draft, &event).is_err());
+        }
+        draft.reminder_minutes = "0".to_string();
+        assert!(new_local_reminder_from_draft(&draft, &event).is_ok());
     }
 
     #[test]
