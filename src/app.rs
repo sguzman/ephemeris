@@ -13065,8 +13065,10 @@ mod tests {
                 end_exclusive: None,
             },
         );
-        draft.conflict_confirmation =
-            Some(ConflictConfirmation::for_event(&original, "collision".to_string()));
+        draft.conflict_confirmation = Some(ConflictConfirmation::for_event(
+            &original,
+            "collision".to_string(),
+        ));
         let start = timezone
             .with_ymd_and_hms(2026, 10, 8, 11, 30, 0)
             .single()
@@ -13113,8 +13115,7 @@ mod tests {
                 source_timezone: Some("America/Mexico_City".to_string()),
             },
         );
-        let mut draft =
-            EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("edit draft");
+        let mut draft = EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("edit draft");
         let slot = FreeInterval {
             start_utc: start + ChronoDuration::hours(2),
             end_utc: start + ChronoDuration::hours(3),
@@ -13147,8 +13148,7 @@ mod tests {
                 source_timezone: Some(timezone.name().to_string()),
             },
         );
-        let mut draft =
-            EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("edit draft");
+        let mut draft = EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("edit draft");
         let before = draft.date.clone();
         let slot = FreeInterval {
             start_utc: start,
