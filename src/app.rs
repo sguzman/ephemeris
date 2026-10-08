@@ -2172,7 +2172,7 @@ impl EventTimeEditDraft {
                     .map_or_else(String::new, |end| (end - *start).num_minutes().to_string()),
                 end_date: String::new(),
                 conflict_confirmation: None,
-                    uncertain_origin: event
+                uncertain_origin: event
                     .time_uncertainty
                     .as_ref()
                     .map(|window| (event.time.clone(), window.clone())),
@@ -2189,7 +2189,7 @@ impl EventTimeEditDraft {
                 duration_minutes: String::new(),
                 end_date: end_exclusive.map_or_else(String::new, |value| value.to_string()),
                 conflict_confirmation: None,
-                    uncertain_origin: event
+                uncertain_origin: event
                     .time_uncertainty
                     .as_ref()
                     .map(|window| (event.time.clone(), window.clone())),
@@ -2206,7 +2206,7 @@ impl EventTimeEditDraft {
                 duration_minutes: String::new(),
                 end_date: end_exclusive.map_or_else(String::new, |value| value.to_string()),
                 conflict_confirmation: None,
-                    uncertain_origin: event
+                uncertain_origin: event
                     .time_uncertainty
                     .as_ref()
                     .map(|window| (event.time.clone(), window.clone())),
@@ -14137,8 +14137,8 @@ mod tests {
             latest_utc: anchor + ChronoDuration::hours(1),
         };
         event.time_uncertainty = Some(original_window.clone());
-        let mut draft = EventTimeEditDraft::from_event(&event, chrono_tz::UTC)
-            .expect("uncertain time draft");
+        let mut draft =
+            EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("uncertain time draft");
         assert_eq!(
             draft.uncertain_origin,
             Some((event.time.clone(), original_window))
@@ -14155,17 +14155,12 @@ mod tests {
         );
         assert_ne!(event.time, moved.time);
         assert!(draft.conflict_confirmation.is_none());
-        let confirmation = ConflictConfirmation::for_event(
-            &moved,
-            "Provisional uncertain placement".to_string(),
-        );
+        let confirmation =
+            ConflictConfirmation::for_event(&moved, "Provisional uncertain placement".to_string());
         assert!(confirmation.matches(&moved));
         draft.date = "2026-10-11".to_string();
-        let changed = move_uncertain_placement(
-            &event,
-            &draft.parsed_time().expect("new proposal"),
-        )
-        .expect("changed window");
+        let changed = move_uncertain_placement(&event, &draft.parsed_time().expect("new proposal"))
+            .expect("changed window");
         assert!(!confirmation.matches(&changed));
     }
 
