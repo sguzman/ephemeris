@@ -14107,6 +14107,64 @@ mod tests {
     }
 
     #[test]
+    fn focused_cancelled_occurrence_requires_confirmation_when_restored_into_busy_slot() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("start");
+        let original = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + ChronoDuration::hours(1)),
+            source_timezone: None,
+        };
+        let second = TimeSpec::Instant {
+            start_utc: start + ChronoDuration::days(1),
+            end_utc: Some(start + ChronoDuration::days(1) + ChronoDuration::hours(1)),
+            source_timezone: None,
+        };
+        let mut event = TemporalEvent::new("Series", original.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        rule.overrides.push(RecurrenceOverride {
+            original: original.clone(),
+            replacement: None,
+            cancelled: true,
+        });
+        event.recurrence = Some(rule.clone());
+        store.upsert_event(&event).expect("persist cancelled series");
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.focus_occurrence(&original).expect("focus");
+
+        let mut restored = rule.clone();
+        restored.overrides[0] = RecurrenceOverride {
+            original: original.clone(),
+            replacement: Some(second),
+            cancelled: false,
+        };
+        let warning = focused_recurrence_conflict_warning(
+            &store,
+            chrono_tz::UTC,
+            &event,
+            &draft,
+            &restored,
+        )
+        .expect("restoration conflict")
+        .expect("warning");
+        assert!(warning.contains("Series"));
+        assert!(warning.contains("Save again"));
+
+        restored.overrides.clear();
+        assert!(
+            focused_recurrence_conflict_warning(
+                &store, chrono_tz::UTC, &event, &draft, &restored
+            )
+            .expect("restoring original slot")
+            .is_none()
+        );
+    }
+
+    #[test]
     fn focused_recurrence_cancellation_does_not_create_a_new_busy_commitment() {
         let store = TemporalStore::open_in_memory().expect("store");
         let start = Utc
