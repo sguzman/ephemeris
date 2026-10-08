@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`3d3c6566593ebc0fd6d203a014aae0dc851b46a1`
+`f63ebe57bf7d0151c123711e52b57dc5e4a2cea3`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **657 library tests** pass
+- **658 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -140,7 +140,7 @@ Reminder workflows are end-to-end in-app: event- and saved-view-targeted before-
 
 Local authoring is also broader now. Quick-create captures description, event type, domain, lifecycle status, Busy/Free behavior, named participants, and optional venue/address/virtual meeting URL in addition to date/time. Participant names are canonical metadata, not invitations. Alternative-slot selection preserves the participant roster and location. Writable non-recurring exact, floating, all-day, and date-only events have a canonical time editor that preserves temporal kind and source clock context. Bounded-uncertainty events with representable editor precision can also be moved: the representative time and entire possible-start interval shift together, with duration, source clock, civil span, and original uncertainty protected. Recurring masters and unrepresentable precision remain blocked. Writable events can also add/edit/remove the full structured location object, including venue/address/locality/region/postal/country, paired coordinates, and virtual URL, with canonical validation.
 
-Conflict-aware authoring now checks concrete, non-recurring Busy commitments when they are created, moved, or newly activated through a details edit. Detected collisions require an explicit second save with unchanged scheduling fields; ordinary metadata edits and already-blocking status transitions do not require the extra confirmation. Recurring-master changes remain outside this definite-interval collision check. Bounded-uncertainty placement moves instead require an explicit second Save acknowledging provisional availability; they cannot be certified conflict-free from the representative start. Quick-create can now author a bounded possible-start interval directly (civil dates for all-day events, unambiguous source-local clock values for exact-time events). The canonical representative start must be inside the nonzero window. Newly created active Busy uncertain events require their own provisional second-Save confirmation, which becomes stale if the possible-start bounds change.
+Conflict-aware authoring now checks concrete, non-recurring Busy commitments when they are created, moved, or newly activated through a details edit. Detected collisions require an explicit second save with unchanged scheduling fields; ordinary metadata edits and already-blocking status transitions do not require the extra confirmation. Recurring-master changes remain outside this definite-interval collision check. Bounded-uncertainty placement moves instead require an explicit second Save acknowledging provisional availability; they cannot be certified conflict-free from the representative start. Quick-create can now author a bounded possible-start interval directly (civil dates for all-day events, unambiguous source-local clock values for exact-time events). The canonical representative start must be inside the nonzero window. Quick-create validates completed possible-start bounds inline before Save. Newly created active Busy uncertain events require their own provisional second-Save confirmation, which becomes stale if the possible-start bounds change.
 
 For definite timed creation and editing conflicts, the inspector offers up to four later candidate slots across the next 15 days, respecting saved work-hour/weekday/step preferences. Unlike the display-filtered Availability panel, proposals consult the full canonical event corpus. The alternatives are computed on a background worker with a separate SQLite connection rather than blocking the egui render loop; completed suggestions are discarded if the original scheduling draft has changed, closed, or been replaced by another editor instance with identical scheduling fields. The synchronous save-time conflict check remains authoritative. Applying a suggestion preserves title/metadata, event time kind, source clock context, and duration; it clears prior conflict confirmation so saving the new time checks again. Unrepresentable or DST-ambiguous clock translations are rejected, not silently shifted.
 
