@@ -4031,7 +4031,8 @@ impl EphemerisApp {
 
     fn begin_occurrence_override_edit(&mut self, occurrence_id: Uuid) {
         let Some(context) = self.occurrence_contexts.get(&occurrence_id).cloned() else {
-            self.last_error = Some("Selected event has no recurrence occurrence identity.".to_string());
+            self.last_error =
+                Some("Selected event has no recurrence occurrence identity.".to_string());
             return;
         };
         self.begin_recurrence_edit(context.event_id);
@@ -10401,7 +10402,8 @@ fn render_focused_occurrence_override(ui: &mut egui::Ui, draft: &mut RecurrenceE
                         action: RecurrenceOverrideEditAction::Move,
                         replacement_text: String::new(),
                     });
-                    draft.override_text = format_recurrence_override_edit_rows(&draft.override_rows);
+                    draft.override_text =
+                        format_recurrence_override_edit_rows(&draft.override_rows);
                 }
                 if ui.small_button("Cancel this occurrence").clicked() {
                     draft.override_rows.push(RecurrenceOverrideEditRow {
@@ -15284,7 +15286,9 @@ mod tests {
         event.recurrence = Some(rule.clone());
         let mut draft = RecurrenceEditDraft::from_event(&event);
         let original = TimeSpec::AllDay {
-            start: start.checked_add_days(chrono::Days::new(1)).expect("next day"),
+            start: start
+                .checked_add_days(chrono::Days::new(1))
+                .expect("next day"),
             end_exclusive: None,
         };
         draft.focus_occurrence(&original).expect("focus");
@@ -15297,11 +15301,15 @@ mod tests {
     fn focused_moved_occurrence_uses_original_slot_not_replacement() {
         let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
         let original = TimeSpec::DateOnly {
-            start: start.checked_add_days(chrono::Days::new(1)).expect("original day"),
+            start: start
+                .checked_add_days(chrono::Days::new(1))
+                .expect("original day"),
             end_exclusive: None,
         };
         let replacement = TimeSpec::DateOnly {
-            start: start.checked_add_days(chrono::Days::new(8)).expect("moved day"),
+            start: start
+                .checked_add_days(chrono::Days::new(8))
+                .expect("moved day"),
             end_exclusive: None,
         };
         let mut event = TemporalEvent::new(
@@ -15322,10 +15330,7 @@ mod tests {
 
         let mut draft = RecurrenceEditDraft::from_event(&event);
         draft.focus_occurrence(&original).expect("focus original");
-        assert_eq!(
-            draft.focused_occurrence_original,
-            Some(original.clone())
-        );
+        assert_eq!(draft.focused_occurrence_original, Some(original.clone()));
         assert_eq!(draft.override_rows.len(), 1);
         assert_eq!(
             draft.override_rows[0].original_text,
