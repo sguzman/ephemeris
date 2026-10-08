@@ -4533,6 +4533,7 @@ impl EphemerisApp {
         let visible_events = self.visible_events();
         let mut selected_free_interval = None;
         let mut selected_suggested_slot = None;
+        let mut selected_uncheckable_event = None;
         let mut availability_preferences_changed = false;
 
         ui.collapsing(
@@ -4566,6 +4567,13 @@ impl EphemerisApp {
                                 result.skipped.len()
                             ));
                         });
+
+                        if !result.skipped.is_empty() {
+                            ui.colored_label(
+                                Color32::YELLOW,
+                                "Availability is provisional: some events have no definite checkable interval. Inspect the skipped events below.",
+                            );
+                        }
 
                         ui.add_space(4.0);
                         ui.strong("Find a slot");
@@ -4730,7 +4738,12 @@ impl EphemerisApp {
                                             || skip.event_id.to_string(),
                                             |event| event.normalized_title.clone(),
                                         );
-                                    ui.small(format!("{title}: {}", skip.reason));
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui.small_button(&title).clicked() {
+                                            selected_uncheckable_event = Some(skip.event_id);
+                                        }
+                                        ui.small(&skip.reason);
+                                    });
                                 }
                                 if result.skipped.len() > 12 {
                                     ui.small(format!(
@@ -4752,6 +4765,11 @@ impl EphemerisApp {
         );
 
         if availability_preferences_changed {
+            self.mark_state_dirty();
+        }
+        if let Some(id) = selected_uncheckable_event {
+            self.state.selected_event_id = Some(self.canonical_event_id(id));
+            self.state.show_inspector = true;
             self.mark_state_dirty();
         }
 
