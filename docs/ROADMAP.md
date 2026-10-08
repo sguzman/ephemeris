@@ -460,7 +460,7 @@ Status: **active — durable reminders, Busy/Free scheduling, conflict-aware aut
 
 Implemented:
 
-- richer local event creation with description, event type, domain, lifecycle status, and Busy/Free behavior
+- richer local event creation with description, event type, domain, lifecycle status, Busy/Free behavior, and multi-day all-day exclusive-end authoring
 - canonical time editing for writable non-recurring instant/floating/all-day/date-only events, with recurrence/uncertainty guardrails
 - structured writable-event location editing
 - event- and saved-view-targeted before-start reminder rules with durable delivery, dismissal, snooze, early wake, and separate Due/Snoozed/Upcoming states
@@ -469,13 +469,14 @@ Implemented:
 - persisted personal availability profile: work hours, duration, step, and workdays
 - creation of local events directly from free intervals and suggested slots
 - collision-time suggestions for definite timed events against the full canonical corpus, respecting workday/hour/step preferences and preserving draft metadata, source time kind, and exact duration
+- collision-time suggestions for definite all-day events against the full canonical corpus, preserving civil-day duration across DST, respecting enabled start weekdays, and using background draft-safe evaluation
 - conservative free/busy handling of bounded start-placement uncertainty, including possible-start windows extending beyond a representative event date
 - actionable skipped-interval diagnostics with direct navigation to the affected event inspector
 
 Remaining goals:
 
 - attendee/invitation exchange where justified by real scheduling workflows
-- optional refinement of alternative search and availability diagnostics for all-day, recurring, and uncertainty-aware rescheduling once their exact semantics are specified
+- optional refinement of alternative search and availability diagnostics for recurring and uncertainty-aware rescheduling once their exact semantics are specified
 - optional system notification delivery only with a fully specified local-first lifecycle
 - careful extension of time editing to recurring masters only when exception identity can remain correct
 
