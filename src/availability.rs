@@ -403,10 +403,9 @@ fn potential_uncertain_busy_overlap(
             (first, last, true)
         }
         crate::domain::TimeUncertainty::DateWindow { earliest, latest } => {
-            let (Some(first), Some(last)) = (
-                earliest.and_hms_opt(0, 0, 0),
-                latest.and_hms_opt(0, 0, 0),
-            ) else {
+            let (Some(first), Some(last)) =
+                (earliest.and_hms_opt(0, 0, 0), latest.and_hms_opt(0, 0, 0))
+            else {
                 return true;
             };
             let (Some(first), Some(last)) = (
@@ -438,8 +437,7 @@ fn potential_uncertain_busy_overlap(
             start,
             end_exclusive,
         } => Duration::days(
-            end_exclusive
-                .map_or(1, |end| end.signed_duration_since(*start).num_days()),
+            end_exclusive.map_or(1, |end| end.signed_duration_since(*start).num_days()),
         ),
         _ => return true,
     };
@@ -450,7 +448,11 @@ fn potential_uncertain_busy_overlap(
     // Civil coordinates can straddle DST or historical offset changes.
     // Two days of slack avoids converting a wall-clock uncertainty into a
     // falsely definite absence around those transitions.
-    let slack = if civil { Duration::days(2) } else { Duration::zero() };
+    let slack = if civil {
+        Duration::days(2)
+    } else {
+        Duration::zero()
+    };
     let Some(possible_start) = earliest.checked_sub_signed(slack) else {
         return true;
     };
