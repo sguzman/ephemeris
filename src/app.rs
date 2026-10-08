@@ -10906,7 +10906,15 @@ fn render_focused_occurrence_override(
                         .changed();
                 }
             });
-            if ui.small_button("Remove occurrence override").clicked() {
+            let clear_label = if matches!(
+                row.action,
+                RecurrenceOverrideEditAction::Cancel | RecurrenceOverrideEditAction::CancelMove
+            ) {
+                "Restore original occurrence"
+            } else {
+                "Remove occurrence override"
+            };
+            if ui.small_button(clear_label).clicked() {
                 draft.override_rows.remove(index);
                 changed = true;
             }
