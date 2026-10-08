@@ -4612,13 +4612,17 @@ impl EphemerisApp {
     }
 
     fn render_notification_center(&mut self, ui: &mut egui::Ui) {
-        if self.notification_rules.is_empty() && self.notification_deliveries.is_empty() {
+        if self.notification_rules.is_empty()
+            && self.notification_deliveries.is_empty()
+            && self.notification_snoozed_deliveries.is_empty()
+        {
             return;
         }
 
         let now = Utc::now();
         let timezone = self.timezone();
         let deliveries = self.notification_deliveries.clone();
+        let snoozed_rows = self.notification_snoozed_deliveries.clone();
         let upcoming_rows = self
             .notification_occurrences
             .iter()
@@ -4628,15 +4632,17 @@ impl EphemerisApp {
         let skipped_count = self.notification_skipped.len();
         let mut dismiss = None;
         let mut snooze = None;
+        let mut wake = None;
 
         ui.collapsing(
             format!(
-                "Reminders · {} due · {} upcoming",
+                "Reminders · {} due · {} snoozed · {} upcoming",
                 deliveries.len(),
+                snoozed_rows.len(),
                 upcoming_rows.len()
             ),
             |ui| {
-                if deliveries.is_empty() && upcoming_rows.is_empty() {
+                if deliveries.is_empty() && snoozed_rows.is_empty() && upcoming_rows.is_empty() {
                     ui.small("No timed reminders fall within the next seven days.");
                 }
 
@@ -4706,6 +4712,36 @@ impl EphemerisApp {
                     ));
                 }
 
+                for delivery in snoozed_rows.iter().take(12) {
+                    let resume_at = delivery
+                        .snoozed_until
+                        .expect("snoozed delivery has wake deadline")
+                        .with_timezone(&timezone);
+                    ui.group(|ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("SNOOZED").strong());
+                            ui.strong(&delivery.event_title);
+                            if ui.small_button("Wake now").clicked() {
+                                wake = Some(delivery.id);
+                            }
+                            if ui.small_button("Dismiss").clicked() {
+                                dismiss = Some(delivery.id);
+                            }
+                        });
+                        ui.small(format!(
+                            "{} · due again {}",
+                            delivery.rule_name,
+                            resume_at.format("%Y-%m-%d %H:%M")
+                        ));
+                    });
+                }
+                if snoozed_rows.len() > 12 {
+                    ui.small(format!(
+                        "{} more snoozed reminders",
+                        snoozed_rows.len() - 12
+                    ));
+                }
+
                 for occurrence in upcoming_rows.iter().take(12) {
                     let trigger = occurrence.trigger_at_utc.with_timezone(&timezone);
                     let start = occurrence.starts_at_utc.with_timezone(&timezone);
@@ -4739,6 +4775,8 @@ impl EphemerisApp {
 
         if let Some((delivery_id, minutes)) = snooze {
             self.snooze_notification_delivery(delivery_id, minutes);
+        } else if let Some(delivery_id) = wake {
+            self.wake_notification_delivery(delivery_id);
         } else if let Some(delivery_id) = dismiss {
             self.dismiss_notification_delivery(delivery_id);
         }
