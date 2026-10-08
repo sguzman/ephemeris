@@ -174,6 +174,17 @@ fn parse_quick_create_uncertain_instant(
         })
 }
 
+fn validate_quick_create_possible_start(
+    draft: &NewLocalEventDraft,
+    timezone: Tz,
+) -> anyhow::Result<()> {
+    let (time, _) = parse_new_local_event_time(draft, timezone)?;
+    let mut event = TemporalEvent::new("Possible-start preview", time);
+    event.time_uncertainty = parse_quick_create_uncertainty(draft, &event.time, timezone)?;
+    event.validate_time_uncertainty()?;
+    Ok(())
+}
+
 fn newly_created_uncertain_event_requires_confirmation(event: &TemporalEvent) -> bool {
     event.time_uncertainty.is_some()
         && event.availability.blocks_time()
@@ -6396,6 +6407,24 @@ impl EphemerisApp {
                                     .desired_width(165.0),
                             );
                         });
+                        if !draft.earliest_possible_start.trim().is_empty()
+                            || !draft.latest_possible_start.trim().is_empty()
+                        {
+                            match validate_quick_create_possible_start(draft, timezone) {
+                                Ok(()) => {
+                                    ui.colored_label(
+                                        Color32::LIGHT_GREEN,
+                                        "Possible-start window is valid.",
+                                    );
+                                }
+                                Err(error) => {
+                                    ui.colored_label(
+                                        Color32::LIGHT_RED,
+                                        format!("Possible-start window: {error:#}"),
+                                    );
+                                }
+                            }
+                        }
                         ui.small(
                             "Active Busy events with uncertain starts require a second Save acknowledging provisional availability.",
                         );
@@ -14937,6 +14966,22 @@ mod tests {
             })
         );
         assert!(newly_created_uncertain_event_requires_confirmation(&event));
+    }
+
+    #[test]
+    fn quick_create_window_preview_validates_without_needing_a_title() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut draft = NewLocalEventDraft::for_date(day);
+        draft.all_day = true;
+        draft.uncertain_start = true;
+        draft.earliest_possible_start = "2026-10-06".to_string();
+        draft.latest_possible_start = "2026-10-08".to_string();
+        assert!(validate_quick_create_possible_start(&draft, chrono_tz::UTC).is_ok());
+        draft.latest_possible_start = "2026-10-06".to_string();
+        assert!(validate_quick_create_possible_start(&draft, chrono_tz::UTC).is_err());
+        draft.latest_possible_start = "2026-10-08".to_string();
+        draft.earliest_possible_start = "invalid".to_string();
+        assert!(validate_quick_create_possible_start(&draft, chrono_tz::UTC).is_err());
     }
 
     #[test]
