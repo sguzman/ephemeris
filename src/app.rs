@@ -1989,6 +1989,7 @@ fn parse_ordinal_byday_values(raw: &str) -> Result<Vec<RecurrenceOrdinalWeekday>
 #[derive(Debug, Clone, PartialEq)]
 struct ConflictConfirmation {
     time: TimeSpec,
+    time_uncertainty: Option<TimeUncertainty>,
     availability: AvailabilityBehavior,
     status: EventStatus,
     warning: String,
@@ -2000,6 +2001,7 @@ impl ConflictConfirmation {
     fn for_event(event: &TemporalEvent, warning: String) -> Self {
         Self {
             time: event.time.clone(),
+            time_uncertainty: event.time_uncertainty.clone(),
             availability: event.availability,
             status: event.status,
             warning,
@@ -2010,6 +2012,7 @@ impl ConflictConfirmation {
 
     fn matches(&self, event: &TemporalEvent) -> bool {
         self.time == event.time
+            && self.time_uncertainty == event.time_uncertainty
             && self.availability == event.availability
             && self.status == event.status
     }
@@ -15410,6 +15413,32 @@ mod tests {
         assert!(!details_change_requires_conflict_check(
             &original, &date_only
         ));
+    }
+
+    #[test]
+    fn conflict_confirmation_invalidates_when_uncertainty_bounds_change() {
+        let date = NaiveDate::from_ymd_opt(2026, 10, 8).expect("date");
+        let mut event = TemporalEvent::new(
+            "Uncertain event",
+            TimeSpec::DateOnly {
+                start: date,
+                end_exclusive: None,
+            },
+        );
+        event.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: date - chrono::Days::new(1),
+            latest: date + chrono::Days::new(1),
+        });
+        let confirmation = ConflictConfirmation::for_event(
+            &event,
+            "provisional window acknowledgement".to_string(),
+        );
+        assert!(confirmation.matches(&event));
+        event.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: date - chrono::Days::new(2),
+            latest: date + chrono::Days::new(1),
+        });
+        assert!(!confirmation.matches(&event));
     }
 
     #[test]
