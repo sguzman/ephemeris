@@ -13442,6 +13442,131 @@ mod tests {
     }
 
     #[test]
+    fn all_day_quick_create_alternative_preserves_kind_and_metadata() {
+        let timezone = chrono_tz::America::New_York;
+        let original_date = NaiveDate::from_ymd_opt(2026, 10, 30).expect("date");
+        let target_date = NaiveDate::from_ymd_opt(2026, 11, 2).expect("target date");
+        let mut draft = NewLocalEventDraft::for_date(original_date);
+        draft.all_day = true;
+        draft.title = "Day of rest".to_string();
+        draft.description = "Preserve notes".to_string();
+        let candidate = TemporalEvent::new(
+            draft.title.clone(),
+            TimeSpec::AllDay {
+                start: original_date,
+                end_exclusive: None,
+            },
+        );
+        draft.conflict_confirmation = Some(ConflictConfirmation::for_event(
+            &candidate,
+            "collision".to_string(),
+        ));
+
+        let start_utc = timezone
+            .from_local_datetime(&target_date.and_hms_opt(0, 0, 0).expect("midnight"))
+            .single()
+            .expect("local start")
+            .with_timezone(&Utc);
+        let end_utc = timezone
+            .from_local_datetime(
+                &target_date
+                    .succ_opt()
+                    .expect("next day")
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight"),
+            )
+            .single()
+            .expect("local end")
+            .with_timezone(&Utc);
+        let slot = FreeInterval { start_utc, end_utc };
+
+        apply_alternative_to_new_draft(&mut draft, &slot, timezone)
+            .expect("apply civil alternative");
+        assert!(draft.all_day);
+        assert_eq!(draft.title, "Day of rest");
+        assert_eq!(draft.description, "Preserve notes");
+        assert_eq!(draft.date, "2026-11-02");
+        assert!(draft.conflict_confirmation.is_none());
+        assert_eq!(
+            parse_new_local_event_time(&draft, timezone)
+                .expect("parse")
+                .0,
+            TimeSpec::AllDay {
+                start: target_date,
+                end_exclusive: None,
+            }
+        );
+    }
+
+    #[test]
+    fn all_day_time_edit_alternative_preserves_explicit_civil_day_span() {
+        let timezone = chrono_tz::America::New_York;
+        let original_start = NaiveDate::from_ymd_opt(2026, 10, 30).expect("start");
+        let target_start = NaiveDate::from_ymd_opt(2026, 11, 5).expect("target");
+        let target_end = target_start
+            .checked_add_days(chrono::Days::new(3))
+            .expect("end");
+        let event = TemporalEvent::new(
+            "Three-day workshop",
+            TimeSpec::AllDay {
+                start: original_start,
+                end_exclusive: original_start.checked_add_days(chrono::Days::new(3)),
+            },
+        );
+        let mut draft = EventTimeEditDraft::from_event(&event, timezone).expect("draft");
+        draft.conflict_confirmation = Some(ConflictConfirmation::for_event(
+            &event,
+            "collision".to_string(),
+        ));
+
+        let boundary = |date: NaiveDate| {
+            timezone
+                .from_local_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight"))
+                .single()
+                .expect("unique midnight")
+                .with_timezone(&Utc)
+        };
+        let slot = FreeInterval {
+            start_utc: boundary(target_start),
+            end_utc: boundary(target_end),
+        };
+        apply_alternative_to_time_draft(&mut draft, &slot, timezone)
+            .expect("apply alternative");
+        assert_eq!(draft.date, target_start.to_string());
+        assert_eq!(draft.end_date, target_end.to_string());
+        assert!(draft.conflict_confirmation.is_none());
+        assert_eq!(
+            draft.parsed_time().expect("parsed edit"),
+            TimeSpec::AllDay {
+                start: target_start,
+                end_exclusive: Some(target_end),
+            }
+        );
+    }
+
+    #[test]
+    fn all_day_alternative_rejects_non_midnight_without_mutating_draft() {
+        let timezone = chrono_tz::UTC;
+        let date = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut draft = NewLocalEventDraft::for_date(date);
+        draft.all_day = true;
+        let before = draft.date.clone();
+        let slot = FreeInterval {
+            start_utc: Utc
+                .with_ymd_and_hms(2026, 10, 8, 1, 0, 0)
+                .single()
+                .expect("start"),
+            end_utc: Utc
+                .with_ymd_and_hms(2026, 10, 9, 1, 0, 0)
+                .single()
+                .expect("end"),
+        };
+        assert!(apply_alternative_to_new_draft(&mut draft, &slot, timezone).is_err());
+        assert_eq!(draft.date, before);
+        assert!(draft.all_day);
+    }
+
+    #[test]
     fn conflict_alternative_preserves_source_clock_for_time_edits() {
         let start = Utc
             .with_ymd_and_hms(2026, 10, 8, 15, 0, 0)
