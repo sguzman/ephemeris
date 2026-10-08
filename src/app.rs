@@ -2610,8 +2610,8 @@ pub struct EphemerisApp {
 }
 
 fn focused_recurrence_conflict_warning(
-store: &TemporalStore,
-timezone: Tz,
+    store: &TemporalStore,
+    timezone: Tz,
     event: &TemporalEvent,
     draft: &RecurrenceEditDraft,
     proposed_rule: &RecurrenceRule,
@@ -2624,9 +2624,7 @@ timezone: Tz,
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("focused event is no longer recurring"))?;
     if draft.rule != *stored_rule || draft.base_time != event.time {
-        anyhow::bail!(
-            "recurrence series changed since the occurrence editor opened; reopen it"
-        );
+        anyhow::bail!("recurrence series changed since the occurrence editor opened; reopen it");
     }
     let mut stored_rest = stored_rule.clone();
     stored_rest
@@ -2654,9 +2652,7 @@ timezone: Tz,
         .overrides
         .iter()
         .find(|value| value.original == *original);
-    if next.is_some_and(|value| value.cancelled)
-        || !event.availability.blocks_time()
-    {
+    if next.is_some_and(|value| value.cancelled) || !event.availability.blocks_time() {
         return Ok(None);
     }
     let proposed_time = next
@@ -2666,9 +2662,7 @@ timezone: Tz,
         return Ok(None);
     }
     if !previous_active {
-        anyhow::bail!(
-            "restoring cancelled recurrence slots requires separate conflict handling"
-        );
+        anyhow::bail!("restoring cancelled recurrence slots requires separate conflict handling");
     }
 
     let corpus = store.list_events()?;
@@ -4515,14 +4509,13 @@ impl EphemerisApp {
             };
             if let Some(rule) = proposed_rule.as_ref()
                 && draft.focused_occurrence_original.is_some()
-                && let Some(warning) =
-                    focused_recurrence_conflict_warning(
-                        &self.store,
-                        self.timezone(),
-                        &event,
-                        &draft,
-                        rule,
-                    )?
+                && let Some(warning) = focused_recurrence_conflict_warning(
+                    &self.store,
+                    self.timezone(),
+                    &event,
+                    &draft,
+                    rule,
+                )?
                 && draft.focused_conflict_confirmed_rule.as_ref() != Some(rule)
             {
                 if let Some(current) = self.recurrence_editor.as_mut() {
@@ -14014,18 +14007,20 @@ mod tests {
             replacement: Some(next_day),
             cancelled: false,
         });
-        let warning = focused_recurrence_conflict_warning(
-            &store,
-            chrono_tz::UTC,
-            &event,
-            &draft,
-            &proposed,
-        )
-        .expect("detect sibling conflict")
-        .expect("warning");
+        let warning =
+            focused_recurrence_conflict_warning(&store, chrono_tz::UTC, &event, &draft, &proposed)
+                .expect("detect sibling conflict")
+                .expect("warning");
         assert!(warning.contains("Daily series"));
         assert!(warning.contains("Save again"));
-        assert_eq!(store.event_by_id(event.id).expect("stored event").expect("event").recurrence, Some(rule.clone()));
+        assert_eq!(
+            store
+                .event_by_id(event.id)
+                .expect("stored event")
+                .expect("event")
+                .recurrence,
+            Some(rule.clone())
+        );
 
         let third_day = TimeSpec::Instant {
             start_utc: start + ChronoDuration::days(2),
@@ -14034,26 +14029,14 @@ mod tests {
         };
         proposed.overrides[0].replacement = Some(third_day);
         assert!(
-            focused_recurrence_conflict_warning(
-                &store,
-                chrono_tz::UTC,
-                &event,
-                &draft,
-                &proposed,
-            )
-            .expect("free replacement")
+            focused_recurrence_conflict_warning(&store, chrono_tz::UTC, &event, &draft, &proposed,)
+                .expect("free replacement")
             .is_none()
         );
         proposed.count = Some(5);
         assert!(
-            focused_recurrence_conflict_warning(
-                &store,
-                chrono_tz::UTC,
-                &event,
-                &draft,
-                &proposed,
-            )
-            .expect_err("focused edit must not mutate unrelated cadence")
+            focused_recurrence_conflict_warning(&store, chrono_tz::UTC, &event, &draft, &proposed,)
+                .expect_err("focused edit must not mutate unrelated cadence")
             .to_string()
             .contains("cannot change other recurrence")
         );
@@ -14084,10 +14067,8 @@ mod tests {
             cancelled: true,
         });
         assert!(
-            focused_recurrence_conflict_warning(
-                &store, chrono_tz::UTC, &event, &draft, &cancelled
-            )
-            .expect("cancellation")
+            focused_recurrence_conflict_warning(&store, chrono_tz::UTC, &event, &draft, &cancelled)
+                .expect("cancellation")
             .is_none()
         );
     }
