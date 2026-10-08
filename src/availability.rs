@@ -6,7 +6,7 @@ use chrono::{
 use chrono_tz::Tz;
 use uuid::Uuid;
 
-use crate::domain::{EventOccurrence, EventStatus, TemporalEvent, TimeSpec};
+use crate::domain::{EventOccurrence, EventStatus, RecurrenceOverride, TemporalEvent, TimeSpec};
 
 type UtcInterval = (DateTime<Utc>, DateTime<Utc>);
 
@@ -232,6 +232,91 @@ pub fn alternative_slots_for_candidate(
 /// date only; configured work hours and minute steps do not apply to an
 /// all-day commitment. Suggestions inspect the full supplied canonical
 /// corpus, not a filtered visible calendar.
+/// Suggest a new placement for one recurrence instance without hiding
+/// any *other* occurrence of its parent series.
+///
+/// The selected occurrence is identified by its original recurrence slot,
+/// never the moved target time. A temporary cancelled override removes just
+/// that slot from availability evaluation; the stored series is not modified.
+/// Source-owned and editor permissions are enforced by the caller.
+pub fn alternative_slots_for_recurring_occurrence(
+    events: &[TemporalEvent],
+    series_event_id: Uuid,
+    original_slot: &TimeSpec,
+    current_time: &TimeSpec,
+    display_timezone: Tz,
+    search: SlotSearch,
+    max_suggestions: usize,
+) -> anyhow::Result<AlternativeSlots> {
+    if max_suggestions == 0 {
+        return Ok(AlternativeSlots::default());
+    }
+    let source = events
+        .iter()
+        .find(|event| event.id == series_event_id)
+        .ok_or_else(|| anyhow::anyhow!("recurrence series {series_event_id} does not exist"))?;
+    if source.time_uncertainty.is_some() {
+        anyhow::bail!("recurring occurrence alternatives require definite placement");
+    }
+
+    let mut suppressed = source.clone();
+    let recurrence = suppressed
+        .recurrence
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("selected event is not a recurrence series"))?;
+    let cancel = RecurrenceOverride {
+        original: original_slot.clone(),
+        replacement: None,
+        cancelled: true,
+    };
+    if let Some(existing) = recurrence
+        .overrides
+        .iter_mut()
+        .find(|value| value.original == *original_slot)
+    {
+        *existing = cancel;
+    } else {
+        recurrence.overrides.push(cancel);
+    }
+    suppressed
+        .validate_recurrence()
+        .context("selected original occurrence slot is not valid for this series")?;
+
+    let mut corpus = events
+        .iter()
+        .filter(|event| event.id != series_event_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    corpus.push(suppressed);
+
+    let mut candidate = source.clone();
+    candidate.time = current_time.clone();
+    candidate.recurrence = None;
+    match &candidate.time {
+        TimeSpec::Instant { .. } | TimeSpec::Floating { .. } => {
+            alternative_slots_for_candidate(
+                &corpus,
+                &candidate,
+                display_timezone,
+                None,
+                search,
+                max_suggestions,
+            )
+        }
+        TimeSpec::AllDay { .. } => alternative_days_for_candidate(
+            &corpus,
+            &candidate,
+            display_timezone,
+            None,
+            search.workdays,
+            max_suggestions,
+        ),
+        _ => anyhow::bail!(
+            "recurring occurrence alternatives require a definite timed or all-day instance"
+        ),
+    }
+}
+
 pub fn alternative_days_for_candidate(
     events: &[TemporalEvent],
     candidate: &TemporalEvent,
@@ -1048,6 +1133,106 @@ mod tests {
         .expect("materialized availability");
         assert!(materialized.busy.is_empty());
         assert_eq!(materialized.skipped.len(), 1);
+    }
+
+    #[test]
+    fn recurring_alternatives_exclude_only_original_slot_and_keep_other_instances_busy() {
+        let timezone = chrono_tz::UTC;
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 7, 9, 0, 0)
+            .single()
+            .expect("start");
+        let master_time = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + Duration::hours(1)),
+            source_timezone: None,
+        };
+        let moved_time = TimeSpec::Instant {
+            start_utc: start - Duration::hours(1),
+            end_utc: Some(start),
+            source_timezone: None,
+        };
+        let mut series = TemporalEvent::new("Daily series", master_time.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        rule.overrides = vec![RecurrenceOverride {
+            original: master_time.clone(),
+            replacement: Some(moved_time.clone()),
+            cancelled: false,
+        }];
+        series.recurrence = Some(rule);
+        series.validate_recurrence().expect("recurrence");
+
+        let preferences = SlotSearch {
+            duration_minutes: 60,
+            step_minutes: 30,
+            day_start: NaiveTime::from_hms_opt(8, 0, 0).expect("start hour"),
+            day_end: NaiveTime::from_hms_opt(11, 0, 0).expect("end hour"),
+            workdays: [true; 7],
+        };
+        let suggestions = alternative_slots_for_recurring_occurrence(
+            &[series.clone()],
+            series.id,
+            &master_time,
+            &moved_time,
+            timezone,
+            preferences,
+            4,
+        )
+        .expect("alternatives");
+        assert_eq!(suggestions.slots[0].start_utc, start);
+        assert_eq!(
+            suggestions.slots[0].end_utc,
+            start + Duration::hours(1)
+        );
+        // The master series, including the moved occurrence, remains untouched.
+        assert_eq!(series.recurrence.as_ref().expect("rule").overrides[0].replacement, Some(moved_time));
+
+        let second_day = start + Duration::days(1);
+        assert!(!suggestions.slots.iter().any(|slot| {
+            slot.start_utc <= second_day && slot.end_utc > second_day
+        }));
+    }
+
+    #[test]
+    fn recurring_alternatives_reject_phantom_slots() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 7, 9, 0, 0)
+            .single()
+            .expect("start");
+        let mut series = TemporalEvent::new(
+            "Only two days",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        series.recurrence = Some(rule);
+        let unknown = TimeSpec::Instant {
+            start_utc: start + Duration::days(10),
+            end_utc: Some(start + Duration::days(10) + Duration::hours(1)),
+            source_timezone: None,
+        };
+        let preferences = SlotSearch {
+            duration_minutes: 60,
+            step_minutes: 30,
+            day_start: NaiveTime::from_hms_opt(8, 0, 0).expect("hours"),
+            day_end: NaiveTime::from_hms_opt(17, 0, 0).expect("hours"),
+            workdays: [true; 7],
+        };
+        assert!(alternative_slots_for_recurring_occurrence(
+            &[series.clone()],
+            series.id,
+            &unknown,
+            &unknown,
+            chrono_tz::UTC,
+            preferences,
+            4
+        )
+        .is_err());
     }
 
     #[test]
