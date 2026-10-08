@@ -2230,6 +2230,12 @@ enum ConflictAlternativeTarget {
     TimeEdit(Uuid),
 }
 
+type ConflictAlternativeWorker = (
+    ConflictAlternativeTarget,
+    TemporalEvent,
+    Receiver<Result<AlternativeSlots, String>>,
+);
+
 pub struct EphemerisApp {
     store: TemporalStore,
     state: PersistedUiState,
@@ -2245,11 +2251,7 @@ pub struct EphemerisApp {
     csv_export_path: String,
     remote_ics_url: String,
     remote_ics_import_receiver: Option<Receiver<Result<IcsImportReport, String>>>,
-    conflict_alternative_receiver: Option<(
-        ConflictAlternativeTarget,
-        TemporalEvent,
-        Receiver<Result<AlternativeSlots, String>>,
-    )>,
+    conflict_alternative_receiver: Option<ConflictAlternativeWorker>,
     taria_current_source_ids: BTreeSet<Uuid>,
     event_memberships: HashMap<Uuid, EventMembership>,
     canonical_entities: Vec<CanonicalEntity>,
