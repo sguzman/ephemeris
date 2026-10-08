@@ -456,23 +456,24 @@ Goals:
 
 ## Phase 10 - Personal scheduling completeness
 
-Status: **active — core reminders, Busy/Free availability, free-busy/slot search, persisted workday preferences, richer quick-create, canonical non-recurring time editing, and structured location editing are implemented**
+Status: **active — durable reminder snooze/wake, conflict-aware local authoring, Busy/Free availability, free-busy/slot search, persisted workday preferences, richer quick-create, canonical non-recurring time editing, and structured location editing are implemented**
 
 Implemented:
 
 - richer local event creation with description, event type, domain, lifecycle status, and Busy/Free behavior
 - canonical time editing for writable non-recurring instant/floating/all-day/date-only events, with recurrence/uncertainty guardrails
 - structured writable-event location editing
-- event- and saved-view-targeted before-start reminder rules with durable delivery/dismissal state
+- event- and saved-view-targeted before-start reminder rules with durable delivery, dismissal, snooze, early wake, and separate Due/Snoozed/Upcoming states
+- conflict-aware local event creation and time editing, plus new-blocking status/availability transitions with explicit second-save confirmation
 - canonical Busy/Free event availability, query predicates, iCalendar TRANSP interop, recurrence-aware free/busy calculation, and constrained slot search
 - persisted personal availability profile: work hours, duration, step, and workdays
 - creation of local events directly from free intervals and suggested slots
 
 Remaining goals:
 
-- durable reminder follow-up behavior such as snooze
-- attendees/invitations where justified by real scheduling workflows
-- richer scheduling assistance and conflict-aware authoring
+- attendee/invitation exchange where justified by real scheduling workflows
+- richer collision-to-alternative-slot navigation and explicit skipped-interval diagnostics
+- optional system notification delivery only with a fully specified local-first lifecycle
 - careful extension of time editing to recurring masters only when exception identity can remain correct
 
 ## Always-on constraints
