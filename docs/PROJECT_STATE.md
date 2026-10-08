@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`8a0b0f1d51e49e7acf50d0ba848090e38d02487a`
+`8fa527b9fcb984d5ce496e00f9da7c5582909487`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **625 library tests** pass
+- **635 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -148,9 +148,11 @@ Free/busy now treats bounded uncertain start placement as **uncheckable**, not d
 
 Definite all-day conflicts now offer later civil-date alternatives from the full canonical corpus in a background worker. Eligible start dates respect configured weekdays, preserve the original civil-day span across DST, and retain save-time confirmation and draft-identity safeguards. Quick-create also supports an explicit exclusive end date for multi-day all-day events. Date-only facts remain distinct from all-day Busy commitments.
 
-A focused recurrence-exception editor is now available for writable materialized occurrences. **Edit this occurrence** uses the selected occurrence's original slot, including moved instances, and exposes explicit Move/Cancel/Keep actions through the existing recurrence validator. Merely opening the editor does not create an override. Recurring master-time changes and automatic conflict-avoidance suggestions for recurring occurrences remain deliberately unsupported.
+The focused recurrence-exception editor supports writable materialized occurrences. **Edit this occurrence** preserves the original slot even for already-moved instances, with explicit Move/Cancel/Keep actions. **Find later openings** now searches the full canonical Busy corpus off the egui thread and suppresses only the selected occurrence while leaving sister instances active. Returned suggestions are guarded by draft identity, current stored recurrence, original-slot identity, time kind, exact duration, and source timezone/DST behavior. Applying one drafts a single occurrence override; neither opening nor searching commits a change.
 
-The next Phase 10 frontier is specifying conflict-aware suggestions for individual recurring overrides without altering the original recurrence identity, followed by careful uncertainty-aware rescheduling. Attendee/invitation exchange and system notifications remain deliberately unimplemented rather than promised; in-app reminders are functional. See [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) for the user workflow.
+Saving a focused move now checks its proposed interval against the full canonical calendar. Conflicts require a deliberate second Save of an unchanged override; a cancellation creates no Busy commitment. Other recurrence selectors/occurrences cannot be edited accidentally through the focused path, and reactivation of previously canceled slots remains deliberately blocked pending a distinct conflict policy. Unsupported or uncertain placements do not become invented free time.
+
+The next Phase 10 frontier is carefully specified uncertainty-aware rescheduling and remaining occurrence/series scheduling policies. Recurring master-time changes, attendee/invitation exchange, and system notifications remain deliberately unimplemented rather than promised; in-app reminders are functional. See [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) for the user workflow.
 
 ## Documentation roles
 
