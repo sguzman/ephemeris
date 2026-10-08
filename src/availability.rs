@@ -1,3 +1,4 @@
+use anyhow::Context;
 use chrono::{
     DateTime, Datelike, Days, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone,
     Utc,
@@ -146,7 +147,7 @@ pub fn alternative_slots_for_candidate(
         anyhow::bail!("alternative slots require a definite non-recurring event");
     }
     if !matches!(
-        candidate.time,
+        &candidate.time,
         TimeSpec::Instant { .. } | TimeSpec::Floating { .. }
     ) {
         anyhow::bail!("timed alternatives require an exact or floating DATE-TIME");
