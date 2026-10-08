@@ -906,14 +906,17 @@ impl TemporalStore {
     }
 
     pub fn clear_notification_snooze(&self, id: Uuid) -> anyhow::Result<bool> {
-        let changed = self.conn.execute(
-            r#"
+        let changed = self
+            .conn
+            .execute(
+                r#"
             UPDATE notification_deliveries
             SET snoozed_until = NULL
             WHERE id = ?1 AND dismissed_at IS NULL AND snoozed_until IS NOT NULL
             "#,
-            params![id.to_string()],
-        ).context("failed to wake snoozed notification delivery")?;
+                params![id.to_string()],
+            )
+            .context("failed to wake snoozed notification delivery")?;
         Ok(changed != 0)
     }
 
@@ -7612,12 +7615,16 @@ mod tests {
                 .is_empty()
         );
 
-        assert!(store
-            .clear_notification_snooze(delivery.id)
-            .expect("wake reminder"));
-        assert!(!store
-            .clear_notification_snooze(delivery.id)
-            .expect("idempotent wake"));
+        assert!(
+            store
+                .clear_notification_snooze(delivery.id)
+                .expect("wake reminder")
+        );
+        assert!(
+            !store
+                .clear_notification_snooze(delivery.id)
+                .expect("idempotent wake")
+        );
         assert_eq!(
             store
                 .due_notification_deliveries(delivered_at)
@@ -7625,9 +7632,11 @@ mod tests {
                 .len(),
             1
         );
-        assert!(store
-            .snooze_notification_delivery(delivery.id, snoozed_until)
-            .expect("re-snooze"));
+        assert!(
+            store
+                .snooze_notification_delivery(delivery.id, snoozed_until)
+                .expect("re-snooze")
+        );
 
         let due = store
             .due_notification_deliveries(snoozed_until)
