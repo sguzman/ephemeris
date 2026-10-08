@@ -251,43 +251,12 @@ pub fn alternative_slots_for_recurring_occurrence(
     if max_suggestions == 0 {
         return Ok(AlternativeSlots::default());
     }
-    let source = events
-        .iter()
-        .find(|event| event.id == series_event_id)
-        .ok_or_else(|| anyhow::anyhow!("recurrence series {series_event_id} does not exist"))?;
-    if source.time_uncertainty.is_some() {
-        anyhow::bail!("recurring occurrence alternatives require definite placement");
-    }
-
-    let mut suppressed = source.clone();
-    let recurrence = suppressed
-        .recurrence
-        .as_mut()
-        .ok_or_else(|| anyhow::anyhow!("selected event is not a recurrence series"))?;
-    let cancel = RecurrenceOverride {
-        original: original_slot.clone(),
-        replacement: None,
-        cancelled: true,
-    };
-    if let Some(existing) = recurrence
-        .overrides
-        .iter_mut()
-        .find(|value| value.original == *original_slot)
-    {
-        *existing = cancel;
-    } else {
-        recurrence.overrides.push(cancel);
-    }
-    suppressed
-        .validate_recurrence()
-        .context("selected original occurrence slot is not valid for this series")?;
-
-    let mut corpus = events
-        .iter()
-        .filter(|event| event.id != series_event_id)
-        .cloned()
-        .collect::<Vec<_>>();
-    corpus.push(suppressed);
+    let (source, corpus) = corpus_without_recurring_occurrence(
+        events,
+        series_event_id,
+        original_slot,
+        current_time,
+    )?;
 
     let mut candidate = source.clone();
     candidate.time = current_time.clone();
@@ -313,6 +282,95 @@ pub fn alternative_slots_for_recurring_occurrence(
             "recurring occurrence alternatives require a definite timed or all-day instance"
         ),
     }
+}
+
+/// Check a proposed single-occurrence move against every other commitment,
+/// including all *other* instances of the same recurrence series.
+///
+/// Unlike a whole-event edit, removing the series UUID from the busy corpus
+/// would hide conflicting sister occurrences. The temporary cancellation here
+/// is only for the selected original recurrence slot.
+pub fn conflicts_for_recurring_occurrence(
+    events: &[TemporalEvent],
+    series_event_id: Uuid,
+    original_slot: &TimeSpec,
+    current_time: &TimeSpec,
+    proposed_time: &TimeSpec,
+    display_timezone: Tz,
+) -> anyhow::Result<ConflictCheck> {
+    let (source, corpus) = corpus_without_recurring_occurrence(
+        events,
+        series_event_id,
+        original_slot,
+        current_time,
+    )?;
+    let mut candidate = source;
+    candidate.time = proposed_time.clone();
+    candidate.recurrence = None;
+    conflicts_for_candidate_event(&corpus, &candidate, display_timezone, None)
+}
+
+fn corpus_without_recurring_occurrence(
+    events: &[TemporalEvent],
+    series_event_id: Uuid,
+    original_slot: &TimeSpec,
+    current_time: &TimeSpec,
+) -> anyhow::Result<(TemporalEvent, Vec<TemporalEvent>)> {
+    let source = events
+        .iter()
+        .find(|event| event.id == series_event_id)
+        .ok_or_else(|| anyhow::anyhow!("recurrence series {series_event_id} does not exist"))?;
+    if source.time_uncertainty.is_some() {
+        anyhow::bail!("recurring occurrence requires definite placement");
+    }
+    let rule = source
+        .recurrence
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("selected event is not a recurrence series"))?;
+    let existing = rule
+        .overrides
+        .iter()
+        .find(|value| value.original == *original_slot);
+    if existing.is_some_and(|value| value.cancelled) {
+        anyhow::bail!("cancelled recurrence occurrence has no active placement");
+    }
+    let actual_time = existing
+        .and_then(|value| value.replacement.as_ref())
+        .unwrap_or(original_slot);
+    if actual_time != current_time {
+        anyhow::bail!("selected recurrence occurrence has a stale or mismatched placement");
+    }
+
+    let mut suppressed = source.clone();
+    let recurrence = suppressed
+        .recurrence
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("selected event is not a recurrence series"))?;
+    let cancel = RecurrenceOverride {
+        original: original_slot.clone(),
+        replacement: None,
+        cancelled: true,
+    };
+    if let Some(previous) = recurrence
+        .overrides
+        .iter_mut()
+        .find(|value| value.original == *original_slot)
+    {
+        *previous = cancel;
+    } else {
+        recurrence.overrides.push(cancel);
+    }
+    suppressed
+        .validate_recurrence()
+        .context("selected original occurrence slot is not valid for this series")?;
+
+    let mut corpus = events
+        .iter()
+        .filter(|event| event.id != series_event_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    corpus.push(suppressed);
+    Ok((source.clone(), corpus))
 }
 
 pub fn alternative_days_for_candidate(
@@ -1196,6 +1254,117 @@ mod tests {
                 .any(|slot| { slot.start_utc <= second_day && slot.end_utc > second_day })
         );
         assert_eq!(suggestions.slots[1].start_utc, start + Duration::days(2));
+    }
+
+    #[test]
+    fn recurring_alternatives_reject_a_stale_moved_occurrence() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 7, 9, 0, 0)
+            .single()
+            .expect("start");
+        let original = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + Duration::hours(1)),
+            source_timezone: None,
+        };
+        let mut series = TemporalEvent::new("Daily", original.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        rule.overrides.push(RecurrenceOverride {
+            original: original.clone(),
+            replacement: Some(TimeSpec::Instant {
+                start_utc: start + Duration::hours(2),
+                end_utc: Some(start + Duration::hours(3)),
+                source_timezone: None,
+            }),
+            cancelled: false,
+        });
+        series.recurrence = Some(rule);
+        let search = SlotSearch {
+            duration_minutes: 60,
+            step_minutes: 30,
+            day_start: NaiveTime::from_hms_opt(8, 0, 0).expect("start"),
+            day_end: NaiveTime::from_hms_opt(17, 0, 0).expect("end"),
+            workdays: [true; 7],
+        };
+        assert!(
+            alternative_slots_for_recurring_occurrence(
+                &[series.clone()],
+                series.id,
+                &original,
+                &original,
+                chrono_tz::UTC,
+                search,
+                4,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn recurring_conflict_check_preserves_sister_occurrences_and_external_blockers() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 7, 9, 0, 0)
+            .single()
+            .expect("start");
+        let first = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + Duration::hours(1)),
+            source_timezone: None,
+        };
+        let second = TimeSpec::Instant {
+            start_utc: start + Duration::days(1),
+            end_utc: Some(start + Duration::days(1) + Duration::hours(1)),
+            source_timezone: None,
+        };
+        let mut series = TemporalEvent::new("Daily series", first.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        series.recurrence = Some(rule);
+        let blocker = TemporalEvent::new(
+            "Unrelated commitment",
+            TimeSpec::Instant {
+                start_utc: start + Duration::days(2),
+                end_utc: Some(start + Duration::days(2) + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        let events = [series.clone(), blocker.clone()];
+
+        let freed = conflicts_for_recurring_occurrence(
+            &events,
+            series.id,
+            &first,
+            &first,
+            &first,
+            chrono_tz::UTC,
+        )
+        .expect("original slot is released");
+        assert!(freed.conflicts.is_empty());
+
+        let sibling = conflicts_for_recurring_occurrence(
+            &events,
+            series.id,
+            &first,
+            &first,
+            &second,
+            chrono_tz::UTC,
+        )
+        .expect("sibling still blocks");
+        assert_eq!(sibling.conflicts.len(), 1);
+        assert_eq!(sibling.conflicts[0].event_id, series.id);
+
+        let unrelated = conflicts_for_recurring_occurrence(
+            &events,
+            series.id,
+            &first,
+            &first,
+            &blocker.time,
+            chrono_tz::UTC,
+        )
+        .expect("other event still blocks");
+        assert_eq!(unrelated.conflicts.len(), 1);
+        assert_eq!(unrelated.conflicts[0].event_id, blocker.id);
     }
 
     #[test]
