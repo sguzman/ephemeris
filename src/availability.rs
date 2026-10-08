@@ -1446,17 +1446,11 @@ mod tests {
         .expect("canceled-instance suggestions");
         assert_eq!(suggestions.slots.len(), 3);
         assert_eq!(suggestions.slots[0].start_utc, start);
-        assert_eq!(
-            suggestions.slots[1].start_utc,
-            start + Duration::days(2)
-        );
+        assert_eq!(suggestions.slots[1].start_utc, start + Duration::days(2));
         let sibling_start = start + Duration::days(1);
-        assert!(
-            suggestions.slots.iter().all(|slot| {
-                slot.end_utc <= sibling_start
-                    || slot.start_utc >= sibling_start + Duration::hours(1)
-            })
-        );
+        assert!(suggestions.slots.iter().all(|slot| {
+            slot.end_utc <= sibling_start || slot.start_utc >= sibling_start + Duration::hours(1)
+        }));
         assert!(
             alternative_slots_for_canceled_recurring_occurrence(
                 &[series.clone()],
