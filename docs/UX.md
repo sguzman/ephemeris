@@ -63,6 +63,8 @@ Quick-create exposes common event fields directly: title, description, classific
 
 Participant names are local structured event metadata, not an invitation or outbound message. Richer participant roles and entity resolution remain available in the inspector after creation. Choosing a suggested alternate slot must not erase participant or location fields.
 
+Quick-create can also attach one optional in-app before-start reminder. The control is disabled by default, accepts a nonnegative whole-minute lead time up to seven days, and is explicitly not an invitation, email, or operating-system notification. Creating the event and reminder is atomic: invalid reminder data must never leave an orphaned event or reminder.
+
 The advanced possible-start window is distinct from event duration and from the representative start. All-day windows accept civil dates; exact-time windows accept source-local date-times, rejecting DST-ambiguous or nonexistent bounds. The representative start must lie within a nonzero window. An active Busy event with bounded uncertainty cannot be certified conflict-free from the representative time and requires explicit second-Save acknowledgment; editing the bounds invalidates that acknowledgment. Free or nonblocking lifecycle states do not manufacture Busy commitments.
 
 ## Event inspector
