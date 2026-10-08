@@ -13847,6 +13847,126 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recurring_alternative_applies_only_a_replacement_for_the_original_slot() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("start");
+        let base_time = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + ChronoDuration::hours(1)),
+            source_timezone: Some("America/Mexico_City".to_string()),
+        };
+        let mut event = TemporalEvent::new("Daily", base_time.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(3);
+        event.recurrence = Some(rule.clone());
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.focus_occurrence(&base_time).expect("focus");
+        let slot = FreeInterval {
+            start_utc: start + ChronoDuration::hours(2),
+            end_utc: start + ChronoDuration::hours(3),
+        };
+        draft.alternative_rule = Some(rule.clone());
+        draft.alternative_slots = vec![slot.clone()];
+        apply_recurring_alternative_to_draft(&mut draft, &slot, chrono_tz::UTC)
+            .expect("apply");
+        let changed = draft.parsed_rule().expect("rule");
+        assert_eq!(changed.overrides.len(), 1);
+        assert_eq!(changed.overrides[0].original, base_time);
+        assert_eq!(
+            changed.overrides[0]
+                .replacement
+                .as_ref()
+                .expect("replacement"),
+            &TimeSpec::Instant {
+                start_utc: slot.start_utc,
+                end_utc: Some(slot.end_utc),
+                source_timezone: Some("America/Mexico_City".to_string()),
+            }
+        );
+        assert!(!changed.overrides[0].cancelled);
+        assert_eq!(draft.rule, rule);
+        assert!(draft.alternative_slots.is_empty());
+    }
+
+    #[test]
+    fn recurring_alternative_rejects_stale_drafts_and_different_durations() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("start");
+        let base_time = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + ChronoDuration::hours(1)),
+            source_timezone: None,
+        };
+        let mut event = TemporalEvent::new("Daily", base_time.clone());
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.focus_occurrence(&base_time).expect("focus");
+        let wrong_duration = FreeInterval {
+            start_utc: start + ChronoDuration::hours(2),
+            end_utc: start + ChronoDuration::hours(4),
+        };
+        draft.alternative_rule = Some(draft.parsed_rule().expect("rule"));
+        draft.alternative_slots = vec![wrong_duration.clone()];
+        assert!(
+            apply_recurring_alternative_to_draft(&mut draft, &wrong_duration, chrono_tz::UTC)
+                .is_err()
+        );
+        assert!(draft.override_rows.is_empty());
+
+        draft.rule.count = Some(5);
+        assert!(
+            apply_recurring_alternative_to_draft(&mut draft, &wrong_duration, chrono_tz::UTC)
+                .is_err()
+        );
+        assert!(draft.override_rows.is_empty());
+    }
+
+    #[test]
+    fn recurring_all_day_alternative_preserves_civil_span_across_dst() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 30).expect("date");
+        let base = TimeSpec::AllDay {
+            start,
+            end_exclusive: Some(start + chrono::Days::new(2)),
+        };
+        let mut event = TemporalEvent::new("Retreat", base.clone());
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Weekly));
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.focus_occurrence(&base).expect("focus");
+        let timezone = chrono_tz::America::New_York;
+        let suggested_date = NaiveDate::from_ymd_opt(2026, 11, 1).expect("dst date");
+        let suggested_end = suggested_date + chrono::Days::new(2);
+        let slot = FreeInterval {
+            start_utc: timezone
+                .from_local_datetime(&suggested_date.and_hms_opt(0, 0, 0).expect("midnight"))
+                .single()
+                .expect("unambiguous start")
+                .with_timezone(&Utc),
+            end_utc: timezone
+                .from_local_datetime(&suggested_end.and_hms_opt(0, 0, 0).expect("midnight"))
+                .single()
+                .expect("unambiguous end")
+                .with_timezone(&Utc),
+        };
+        draft.alternative_rule = Some(draft.parsed_rule().expect("rule"));
+        draft.alternative_slots = vec![slot.clone()];
+        apply_recurring_alternative_to_draft(&mut draft, &slot, timezone).expect("apply civil");
+        let rule = draft.parsed_rule().expect("rule");
+        assert_eq!(rule.overrides[0].original, base);
+        assert_eq!(
+            rule.overrides[0].replacement,
+            Some(TimeSpec::AllDay {
+                start: suggested_date,
+                end_exclusive: Some(suggested_end),
+            })
+        );
+        assert_eq!((slot.end_utc - slot.start_utc).num_hours(), 49);
+    }
+
+    #[test]
     fn newly_opened_drafts_have_distinct_async_result_identity() {
         let date = NaiveDate::from_ymd_opt(2026, 10, 8).expect("date");
         let first = NewLocalEventDraft::for_date(date);
