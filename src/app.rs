@@ -11,7 +11,8 @@ use eframe::egui::{self, Color32, RichText};
 use uuid::Uuid;
 
 use crate::availability::{
-    AlternativeSlots, BusyKind, FreeInterval, SlotSearch, alternative_slots_for_candidate,
+    AlternativeSlots, BusyKind, FreeInterval, SlotSearch, alternative_days_for_candidate,
+    alternative_slots_for_candidate,
     availability_for_materialized_date_window, conflicts_for_candidate_event, suggest_slots,
 };
 use crate::calendar::{
@@ -236,11 +237,20 @@ fn render_conflict_alternatives(
         return None;
     }
 
-    ui.small("Try a later open slot (full stored calendar, configured work hours):");
+    let all_day = matches!(confirmation.time, TimeSpec::AllDay { .. });
+    if all_day {
+        ui.small("Try a later all-day start (full stored calendar, enabled weekdays):");
+    } else {
+        ui.small("Try a later open slot (full stored calendar, configured work hours):");
+    }
     let mut selected = None;
     ui.horizontal_wrapped(|ui| {
         for slot in &confirmation.alternatives {
-            let label = format_availability_interval(slot.start_utc, slot.end_utc, timezone);
+            let label = if all_day {
+                format_civil_alternative(slot, timezone)
+            } else {
+                format_availability_interval(slot.start_utc, slot.end_utc, timezone)
+            };
             if ui.small_button(label).clicked() {
                 selected = Some(slot.clone());
             }
@@ -249,12 +259,61 @@ fn render_conflict_alternatives(
     selected
 }
 
+fn civil_alternative_dates(
+    slot: &FreeInterval,
+    timezone: Tz,
+) -> anyhow::Result<(NaiveDate, NaiveDate)> {
+    let local_start = slot.start_utc.with_timezone(&timezone);
+    let local_end = slot.end_utc.with_timezone(&timezone);
+    if local_start.time() != NaiveTime::MIN
+        || local_end.time() != NaiveTime::MIN
+        || local_end.date_naive() <= local_start.date_naive()
+        || timezone
+            .from_local_datetime(&local_start.naive_local())
+            .single()
+            .is_none_or(|value| value.with_timezone(&Utc) != slot.start_utc)
+        || timezone
+            .from_local_datetime(&local_end.naive_local())
+            .single()
+            .is_none_or(|value| value.with_timezone(&Utc) != slot.end_utc)
+    {
+        anyhow::bail!("all-day alternative has an ambiguous or non-midnight civil boundary");
+    }
+    Ok((local_start.date_naive(), local_end.date_naive()))
+}
+
+fn format_civil_alternative(slot: &FreeInterval, timezone: Tz) -> String {
+    let Ok((start, end_exclusive)) = civil_alternative_dates(slot, timezone) else {
+        return "Unrepresentable civil-day alternative".to_string();
+    };
+    let days = (end_exclusive - start).num_days();
+    if days == 1 {
+        format!("{} (all day)", start.format("%a %b %-d"))
+    } else {
+        format!("{} · {days} days", start.format("%a %b %-d"))
+    }
+}
+
 fn apply_alternative_to_new_draft(
     draft: &mut NewLocalEventDraft,
     slot: &FreeInterval,
     timezone: Tz,
 ) -> anyhow::Result<()> {
     let mut next = draft.clone();
+    if next.all_day {
+        let (start, end) = civil_alternative_dates(slot, timezone)?;
+        if (end - start).num_days() != 1 {
+            anyhow::bail!("quick-create all-day events must retain a one-day span");
+        }
+        next.date = start.to_string();
+        next.conflict_confirmation = None;
+        let (time, _) = parse_new_local_event_time(&next, timezone)?;
+        if !matches!(time, TimeSpec::AllDay { start: value, end_exclusive: None } if value == start) {
+            anyhow::bail!("suggested all-day date changed time kind or duration");
+        }
+        *draft = next;
+        return Ok(());
+    }
     let local = slot.start_utc.with_timezone(&timezone);
     next.date = local.date_naive().to_string();
     next.start_time = local.format("%H:%M").to_string();
@@ -282,6 +341,38 @@ fn apply_alternative_to_time_draft(
     slot: &FreeInterval,
     display_timezone: Tz,
 ) -> anyhow::Result<()> {
+    if matches!(draft.kind, EventTimeEditKind::AllDay) {
+        let (start, end_exclusive) = civil_alternative_dates(slot, display_timezone)?;
+        let original = draft.parsed_time()?;
+        let TimeSpec::AllDay {
+            start: previous_start,
+            end_exclusive: previous_end,
+        } = original else {
+            anyhow::bail!("all-day draft no longer represents an all-day event");
+        };
+        let previous_duration = previous_end.map_or(1, |end| (end - previous_start).num_days());
+        if previous_duration != (end_exclusive - start).num_days() {
+            anyhow::bail!("suggested all-day interval changes the original civil-day duration");
+        }
+        let mut next = draft.clone();
+        next.date = start.to_string();
+        next.end_date = if previous_end.is_some() {
+            end_exclusive.to_string()
+        } else {
+            String::new()
+        };
+        next.conflict_confirmation = None;
+        let expected = TimeSpec::AllDay {
+            start,
+            end_exclusive: previous_end.map(|_| end_exclusive),
+        };
+        if next.parsed_time()? != expected {
+            anyhow::bail!("suggested all-day interval cannot be represented by this editor");
+        }
+        *draft = next;
+        return Ok(());
+    }
+
     let timezone = match &draft.kind {
         EventTimeEditKind::Instant { edit_timezone, .. } => *edit_timezone,
         EventTimeEditKind::Floating {
@@ -3437,7 +3528,7 @@ impl EphemerisApp {
         let mut confirmation = ConflictConfirmation::for_event(event, warning);
         if !matches!(
             &event.time,
-            TimeSpec::Instant { .. } | TimeSpec::Floating { .. }
+            TimeSpec::Instant { .. } | TimeSpec::Floating { .. } | TimeSpec::AllDay { .. }
         ) {
             return confirmation;
         }
@@ -3450,34 +3541,54 @@ impl EphemerisApp {
                 .ok_or_else(|| {
                     anyhow::anyhow!("background suggestions require a file-backed database")
                 })?;
-            let preferences = parse_slot_search(
-                &self.state.availability_duration_minutes,
-                &self.state.availability_step_minutes,
-                &self.state.availability_day_start,
-                &self.state.availability_day_end,
-                self.state.availability_workdays,
-            )?;
+            let preferences = if matches!(&event.time, TimeSpec::AllDay { .. }) {
+                None
+            } else {
+                Some(parse_slot_search(
+                    &self.state.availability_duration_minutes,
+                    &self.state.availability_step_minutes,
+                    &self.state.availability_day_start,
+                    &self.state.availability_day_end,
+                    self.state.availability_workdays,
+                )?)
+            };
             Ok((database_path, preferences))
         })();
 
         match prerequisites {
             Ok((database_path, preferences)) => {
-                confirmation.alternative_note = Some("Finding later open slots…".to_string());
+                confirmation.alternative_note = Some("Finding later alternatives…".to_string());
                 let candidate = event.clone();
                 let display_timezone = self.timezone();
+                let workdays = self.state.availability_workdays;
                 let (sender, receiver) = mpsc::channel();
                 self.conflict_alternative_receiver = Some((target, candidate.clone(), receiver));
                 std::thread::spawn(move || {
                     let result = (|| -> anyhow::Result<AlternativeSlots> {
                         let store = TemporalStore::open(database_path)?;
-                        alternative_slots_for_candidate(
-                            &store.list_events()?,
-                            &candidate,
-                            display_timezone,
-                            exclude_event_id,
-                            preferences,
-                            4,
-                        )
+                        let events = store.list_events()?;
+                        if matches!(&candidate.time, TimeSpec::AllDay { .. }) {
+                            alternative_days_for_candidate(
+                                &events,
+                                &candidate,
+                                display_timezone,
+                                exclude_event_id,
+                                workdays,
+                                4,
+                            )
+                        } else {
+                            let preferences = preferences.ok_or_else(|| {
+                                anyhow::anyhow!("timed alternative search preferences are missing")
+                            })?;
+                            alternative_slots_for_candidate(
+                                &events,
+                                &candidate,
+                                display_timezone,
+                                exclude_event_id,
+                                preferences,
+                                4,
+                            )
+                        }
                     })()
                     .map_err(|error| format!("{error:#}"));
                     let _ = sender.send(result);
