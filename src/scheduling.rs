@@ -50,9 +50,9 @@ pub fn move_uncertain_placement(
             require_duration(*old_end - *old_start, *new_end - *new_start)?;
             let delta = *new_start - *old_start;
             TimeUncertainty::InstantWindow {
-                earliest_utc: earliest_utc
-                    .checked_add_signed(delta)
-                    .ok_or_else(|| anyhow!("shifted earliest instant is outside supported range"))?,
+                earliest_utc: earliest_utc.checked_add_signed(delta).ok_or_else(|| {
+                    anyhow!("shifted earliest instant is outside supported range")
+                })?,
                 latest_utc: latest_utc
                     .checked_add_signed(delta)
                     .ok_or_else(|| anyhow!("shifted latest instant is outside supported range"))?,
@@ -192,7 +192,10 @@ mod tests {
 
     #[test]
     fn instant_move_shifts_the_whole_window_not_only_representative() {
-        let anchor = Utc.with_ymd_and_hms(2026, 10, 8, 9, 0, 0).single().expect("anchor");
+        let anchor = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("anchor");
         let mut event = TemporalEvent::new(
             "Flexible appointment",
             TimeSpec::Instant {
@@ -318,7 +321,10 @@ mod tests {
 
     #[test]
     fn uncertain_moves_refuse_duration_precision_zone_and_recurrence_changes() {
-        let start = Utc.with_ymd_and_hms(2026, 10, 8, 9, 0, 0).single().expect("start");
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("start");
         let original = TimeSpec::Instant {
             start_utc: start,
             end_utc: Some(start + Duration::hours(1)),
