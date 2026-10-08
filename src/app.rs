@@ -2172,6 +2172,7 @@ pub struct EphemerisApp {
     recurrence_editor: Option<RecurrenceEditDraft>,
     notification_rules: Vec<NotificationRule>,
     notification_deliveries: Vec<NotificationDelivery>,
+    notification_snoozed_deliveries: Vec<NotificationDelivery>,
     notification_occurrences: Vec<NotificationOccurrence>,
     notification_skipped: Vec<NotificationSkip>,
     notification_eval_minute: Option<i64>,
@@ -2312,6 +2313,7 @@ impl EphemerisApp {
             recurrence_editor: None,
             notification_rules: Vec::new(),
             notification_deliveries: Vec::new(),
+            notification_snoozed_deliveries: Vec::new(),
             notification_occurrences: Vec::new(),
             notification_skipped: Vec::new(),
             notification_eval_minute: None,
@@ -3714,14 +3716,43 @@ impl EphemerisApp {
         }
     }
 
+    fn refresh_reminder_delivery_lists(&mut self, now: DateTime<Utc>) -> anyhow::Result<()> {
+        let due = self.store.due_notification_deliveries(now)?;
+        let snoozed = self.store.snoozed_notification_deliveries(now)?;
+        self.notification_deliveries = due;
+        self.notification_snoozed_deliveries = snoozed;
+        Ok(())
+    }
+
+    fn wake_notification_delivery(&mut self, delivery_id: Uuid) {
+        match self.store.clear_notification_snooze(delivery_id) {
+            Ok(true) => {
+                self.last_message = Some("Reminder is due again.".to_string());
+                self.last_error = None;
+                if let Err(error) = self.refresh_reminder_delivery_lists(Utc::now()) {
+                    self.last_error = Some(format!("Failed to refresh reminders: {error:#}"));
+                }
+            }
+            Ok(false) => {
+                self.last_message = None;
+                self.last_error = Some("Reminder is no longer snoozed.".to_string());
+            }
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Failed to wake reminder: {error:#}"));
+            }
+        }
+    }
+
     fn snooze_notification_delivery(&mut self, delivery_id: Uuid, minutes: i64) {
         let until = Utc::now() + ChronoDuration::minutes(minutes);
         match self.store.snooze_notification_delivery(delivery_id, until) {
             Ok(true) => {
-                self.notification_deliveries
-                    .retain(|delivery| delivery.id != delivery_id);
                 self.last_message = Some(format!("Snoozed reminder for {minutes} minutes."));
                 self.last_error = None;
+                if let Err(error) = self.refresh_reminder_delivery_lists(Utc::now()) {
+                    self.last_error = Some(format!("Failed to refresh reminders: {error:#}"));
+                }
             }
             Ok(false) => {
                 self.notification_deliveries
@@ -3740,10 +3771,11 @@ impl EphemerisApp {
             .dismiss_notification_delivery(delivery_id, Utc::now())
         {
             Ok(true) => {
-                self.notification_deliveries
-                    .retain(|delivery| delivery.id != delivery_id);
                 self.last_message = Some("Dismissed reminder.".to_string());
                 self.last_error = None;
+                if let Err(error) = self.refresh_reminder_delivery_lists(Utc::now()) {
+                    self.last_error = Some(format!("Failed to refresh reminders: {error:#}"));
+                }
             }
             Ok(false) => {
                 self.notification_deliveries
@@ -3796,7 +3828,7 @@ impl EphemerisApp {
             self.store.record_notification_delivery(&delivery)?;
         }
 
-        self.notification_deliveries = self.store.due_notification_deliveries(now)?;
+        self.refresh_reminder_delivery_lists(now)?;
         self.notification_occurrences = evaluation.occurrences;
         self.notification_skipped = evaluation.skipped;
         self.notification_eval_minute = Some(now.timestamp() / 60);
