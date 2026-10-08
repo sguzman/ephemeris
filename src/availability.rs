@@ -302,6 +302,68 @@ pub fn conflicts_for_recurring_occurrence(
     conflicts_for_candidate_event(&corpus, &candidate, display_timezone, None)
 }
 
+/// Offer later placements for a cancelled original recurrence slot.
+///
+/// The selected slot is already cancelled in the stored series. Keep the full
+/// recurrence in the busy corpus: all its active sister occurrences must still
+/// participate, and the proposed reactivation remains advisory until Save.
+pub fn alternative_slots_for_canceled_recurring_occurrence(
+    events: &[TemporalEvent],
+    series_event_id: Uuid,
+    original_slot: &TimeSpec,
+    display_timezone: Tz,
+    search: SlotSearch,
+    max_suggestions: usize,
+) -> anyhow::Result<AlternativeSlots> {
+    if max_suggestions == 0 {
+        return Ok(AlternativeSlots::default());
+    }
+    let source = events
+        .iter()
+        .find(|event| event.id == series_event_id)
+        .ok_or_else(|| anyhow::anyhow!("recurrence series {series_event_id} does not exist"))?;
+    if source.time_uncertainty.is_some() {
+        anyhow::bail!("cancelled recurrence alternatives require definite placement");
+    }
+    let rule = source
+        .recurrence
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("selected event is not a recurrence series"))?;
+    if !rule
+        .overrides
+        .iter()
+        .any(|value| value.original == *original_slot && value.cancelled)
+    {
+        anyhow::bail!("original recurrence slot is not currently cancelled");
+    }
+    source
+        .validate_recurrence()
+        .context("cancelled recurrence series is invalid")?;
+
+    let mut candidate = source.clone();
+    candidate.time = original_slot.clone();
+    candidate.recurrence = None;
+    if matches!(&candidate.time, TimeSpec::AllDay { .. }) {
+        alternative_days_for_candidate(
+            events,
+            &candidate,
+            display_timezone,
+            None,
+            search.workdays,
+            max_suggestions,
+        )
+    } else {
+        alternative_slots_for_candidate(
+            events,
+            &candidate,
+            display_timezone,
+            None,
+            search,
+            max_suggestions,
+        )
+    }
+}
+
 /// Re-activating a cancelled recurrence instance is not the same as moving
 /// an active instance: the source already contains the cancellation and must
 /// remain in the busy corpus so every other occurrence still blocks time.
@@ -1342,6 +1404,71 @@ mod tests {
                 4,
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn cancelled_recurrence_alternatives_preserve_other_busy_occurrences() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 7, 9, 0, 0)
+            .single()
+            .expect("start");
+        let first = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + Duration::hours(1)),
+            source_timezone: None,
+        };
+        let mut series = TemporalEvent::new("Daily", first.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        rule.overrides.push(RecurrenceOverride {
+            original: first.clone(),
+            replacement: None,
+            cancelled: true,
+        });
+        series.recurrence = Some(rule);
+        let search = SlotSearch {
+            duration_minutes: 60,
+            step_minutes: 30,
+            day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("day start"),
+            day_end: NaiveTime::from_hms_opt(10, 0, 0).expect("day end"),
+            workdays: [true; 7],
+        };
+
+        let suggestions = alternative_slots_for_canceled_recurring_occurrence(
+            &[series.clone()],
+            series.id,
+            &first,
+            chrono_tz::UTC,
+            search,
+            3,
+        )
+        .expect("canceled-instance suggestions");
+        assert_eq!(suggestions.slots.len(), 3);
+        assert_eq!(suggestions.slots[0].start_utc, start);
+        assert_eq!(
+            suggestions.slots[1].start_utc,
+            start + Duration::days(2)
+        );
+        let sibling_start = start + Duration::days(1);
+        assert!(
+            suggestions.slots.iter().all(|slot| {
+                slot.end_utc <= sibling_start
+                    || slot.start_utc >= sibling_start + Duration::hours(1)
+            })
+        );
+        assert!(
+            alternative_slots_for_canceled_recurring_occurrence(
+                &[series.clone()],
+                series.id,
+                &first,
+                chrono_tz::UTC,
+                search,
+                0,
+            )
+            .expect("bounded zero suggestions")
+            .slots
+            .is_empty()
         );
     }
 
