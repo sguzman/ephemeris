@@ -13984,6 +13984,115 @@ mod tests {
     use super::*;
 
     #[test]
+    fn focused_recurrence_conflict_confirmation_keeps_sister_slots_busy() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("start");
+        let first = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + ChronoDuration::hours(1)),
+            source_timezone: None,
+        };
+        let mut event = TemporalEvent::new("Daily series", first.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        event.recurrence = Some(rule.clone());
+        store.upsert_event(&event).expect("store series");
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.focus_occurrence(&first).expect("focus");
+
+        let next_day = TimeSpec::Instant {
+            start_utc: start + ChronoDuration::days(1),
+            end_utc: Some(start + ChronoDuration::days(1) + ChronoDuration::hours(1)),
+            source_timezone: None,
+        };
+        let mut proposed = rule.clone();
+        proposed.overrides.push(RecurrenceOverride {
+            original: first.clone(),
+            replacement: Some(next_day),
+            cancelled: false,
+        });
+        let warning = focused_recurrence_conflict_warning(
+            &store,
+            chrono_tz::UTC,
+            &event,
+            &draft,
+            &proposed,
+        )
+        .expect("detect sibling conflict")
+        .expect("warning");
+        assert!(warning.contains("Daily series"));
+        assert!(warning.contains("Save again"));
+        assert_eq!(store.event_by_id(event.id).expect("stored event").expect("event").recurrence, Some(rule.clone()));
+
+        let third_day = TimeSpec::Instant {
+            start_utc: start + ChronoDuration::days(2),
+            end_utc: Some(start + ChronoDuration::days(2) + ChronoDuration::hours(1)),
+            source_timezone: None,
+        };
+        proposed.overrides[0].replacement = Some(third_day);
+        assert!(
+            focused_recurrence_conflict_warning(
+                &store,
+                chrono_tz::UTC,
+                &event,
+                &draft,
+                &proposed,
+            )
+            .expect("free replacement")
+            .is_none()
+        );
+        proposed.count = Some(5);
+        assert!(
+            focused_recurrence_conflict_warning(
+                &store,
+                chrono_tz::UTC,
+                &event,
+                &draft,
+                &proposed,
+            )
+            .expect_err("focused edit must not mutate unrelated cadence")
+            .to_string()
+            .contains("cannot change other recurrence")
+        );
+    }
+
+    #[test]
+    fn focused_recurrence_cancellation_does_not_create_a_new_busy_commitment() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("start");
+        let original = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + ChronoDuration::hours(1)),
+            source_timezone: None,
+        };
+        let mut event = TemporalEvent::new("Series", original.clone());
+        let rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        event.recurrence = Some(rule.clone());
+        store.upsert_event(&event).expect("store series");
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.focus_occurrence(&original).expect("focus");
+        let mut cancelled = rule;
+        cancelled.overrides.push(RecurrenceOverride {
+            original: original.clone(),
+            replacement: None,
+            cancelled: true,
+        });
+        assert!(
+            focused_recurrence_conflict_warning(
+                &store, chrono_tz::UTC, &event, &draft, &cancelled
+            )
+            .expect("cancellation")
+            .is_none()
+        );
+    }
+
+    #[test]
     fn recurring_alternative_applies_only_a_replacement_for_the_original_slot() {
         let start = Utc
             .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
