@@ -275,6 +275,9 @@ pub fn availability_for_materialized_events(
     };
     let mut result = AvailabilityResult::default();
     for event in events {
+        if skip_uncertain_blocker(event, &mut result) {
+            continue;
+        }
         let occurrence = EventOccurrence {
             id: event.id,
             event_id: event.id,
@@ -332,6 +335,10 @@ pub fn availability_for_events(
                 anyhow::anyhow!("failed to expand availability event {}: {error}", event.id)
             })?;
 
+        if !occurrences.is_empty() && skip_uncertain_blocker(event, &mut result) {
+            continue;
+        }
+
         for occurrence in occurrences {
             append_occurrence(
                 &mut result,
@@ -345,6 +352,20 @@ pub fn availability_for_events(
     }
 
     finish_availability(result, window_start_utc, window_end_utc)
+}
+
+fn skip_uncertain_blocker(event: &TemporalEvent, result: &mut AvailabilityResult) -> bool {
+    if event.time_uncertainty.is_none()
+        || !event.availability.blocks_time()
+        || busy_kind(event.status).is_none()
+    {
+        return false;
+    }
+    result.skipped.push(AvailabilitySkip {
+        event_id: event.id,
+        reason: "event has bounded start-placement uncertainty; its representative time is not a definite busy interval".to_string(),
+    });
+    true
 }
 
 fn append_occurrence(
@@ -654,6 +675,47 @@ mod tests {
 
     use super::*;
     use crate::domain::{RecurrenceFrequency, RecurrenceOverride, RecurrenceRule};
+
+    #[test]
+    fn uncertain_event_is_skipped_instead_of_asserting_definite_busy_time() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("start");
+        let mut uncertain = TemporalEvent::new(
+            "Possible appointment",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        uncertain.time_uncertainty = Some(crate::domain::TimeUncertainty::InstantWindow {
+            earliest_utc: start - Duration::minutes(30),
+            latest_utc: start + Duration::minutes(30),
+        });
+
+        let full = availability_for_events(
+            &[uncertain.clone()],
+            chrono_tz::UTC,
+            start - Duration::hours(2),
+            start + Duration::hours(3),
+        )
+        .expect("full availability");
+        assert!(full.busy.is_empty());
+        assert_eq!(full.skipped.len(), 1);
+        assert!(full.skipped[0].reason.contains("uncertainty"));
+
+        let materialized = availability_for_materialized_events(
+            &[uncertain],
+            chrono_tz::UTC,
+            start - Duration::hours(2),
+            start + Duration::hours(3),
+        )
+        .expect("materialized availability");
+        assert!(materialized.busy.is_empty());
+        assert_eq!(materialized.skipped.len(), 1);
+    }
 
     #[test]
     fn alternative_slots_exclude_hidden_blockers_and_preserve_duration() {
