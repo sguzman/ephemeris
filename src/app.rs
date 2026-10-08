@@ -2003,6 +2003,7 @@ struct EventDetailsEditDraft {
     confidence: String,
     importance: String,
     personal_relevance: String,
+    conflict_confirmation: Option<ConflictConfirmation>,
 }
 
 impl EventDetailsEditDraft {
@@ -2026,6 +2027,7 @@ impl EventDetailsEditDraft {
             personal_relevance: event
                 .personal_relevance
                 .map_or_else(String::new, |value| value.to_string()),
+            conflict_confirmation: None,
         }
     }
 }
@@ -3207,6 +3209,21 @@ impl EphemerisApp {
         })
     }
 
+fn details_change_requires_conflict_check(
+    before: &TemporalEvent,
+    after: &TemporalEvent,
+) -> bool {
+    (before.status != after.status || before.availability != after.availability)
+        && after.availability.blocks_time()
+        && !matches!(
+            after.status,
+            EventStatus::Cancelled | EventStatus::Postponed | EventStatus::Superseded
+        )
+        && after.recurrence.is_none()
+        && after.time_uncertainty.is_none()
+        && matches!(after.time, TimeSpec::Instant { .. } | TimeSpec::Floating { .. } | TimeSpec::AllDay { .. })
+}
+
     fn scheduling_conflict_warning(
         &self,
         candidate: &TemporalEvent,
@@ -3490,6 +3507,7 @@ impl EphemerisApp {
             if !self.event_is_editable(&event) {
                 anyhow::bail!("event source is read-only");
             }
+            let original = event.clone();
 
             event.normalized_title = title.to_string();
             event.description = optional_trimmed(&draft.description);
@@ -3502,6 +3520,20 @@ impl EphemerisApp {
             event.confidence = confidence;
             event.importance = importance;
             event.personal_relevance = personal_relevance;
+
+            if details_change_requires_conflict_check(&original, &event)
+                && let Some(warning) = self.scheduling_conflict_warning(&event, Some(event.id))?
+                && draft
+                    .conflict_confirmation
+                    .as_ref()
+                    .is_none_or(|confirmation| !confirmation.matches(&event))
+            {
+                if let Some(current) = self.event_details_editor.as_mut() {
+                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event));
+                }
+                anyhow::bail!("{warning}");
+            }
+
             event.updated_at = Utc::now();
             self.store.upsert_event(&event)?;
             Ok(())
@@ -7345,6 +7377,12 @@ impl EphemerisApp {
                     ui.small(
                         "Blank optional fields clear the canonical value. Time, recurrence, participants, topology, and provenance are edited in their dedicated sections.",
                     );
+                    if draft.conflict_confirmation.is_some() {
+                        ui.colored_label(
+                            Color32::YELLOW,
+                            "Scheduling conflict warning active. Save details again to confirm unchanged status/availability.",
+                        );
+                    }
 
                     ui.horizontal(|ui| {
                         if ui
@@ -13066,6 +13104,34 @@ mod tests {
             default_csv_export_path(&source),
             format!("ephemeris-{}.csv", source.id)
         );
+    }
+
+    #[test]
+    fn details_conflict_checks_only_new_blocking_commitments() {
+        let time = TimeSpec::AllDay {
+            start: NaiveDate::from_ymd_opt(2026, 10, 8).expect("date"),
+            end_exclusive: None,
+        };
+        let mut original = TemporalEvent::new("Free event", time);
+        original.availability = AvailabilityBehavior::Free;
+        let mut changed = original.clone();
+        changed.availability = AvailabilityBehavior::Busy;
+        assert!(details_change_requires_conflict_check(&original, &changed));
+
+        let mut renamed = changed.clone();
+        renamed.normalized_title = "Renamed event".to_string();
+        assert!(!details_change_requires_conflict_check(&changed, &renamed));
+
+        let mut cancelled = changed.clone();
+        cancelled.status = EventStatus::Cancelled;
+        assert!(!details_change_requires_conflict_check(&changed, &cancelled));
+
+        let mut date_only = changed.clone();
+        date_only.time = TimeSpec::DateOnly {
+            start: NaiveDate::from_ymd_opt(2026, 10, 8).expect("date"),
+            end_exclusive: None,
+        };
+        assert!(!details_change_requires_conflict_check(&original, &date_only));
     }
 
     #[test]
