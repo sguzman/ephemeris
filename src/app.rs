@@ -10411,7 +10411,8 @@ fn render_focused_occurrence_override(ui: &mut egui::Ui, draft: &mut RecurrenceE
                         action: RecurrenceOverrideEditAction::Cancel,
                         replacement_text: String::new(),
                     });
-                    draft.override_text = format_recurrence_override_edit_rows(&draft.override_rows);
+                    draft.override_text =
+                        format_recurrence_override_edit_rows(&draft.override_rows);
                 }
             });
             ui.small("No override yet; opening this editor does not modify the series.");
