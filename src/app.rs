@@ -34,6 +34,7 @@ use crate::interchange::import_canonical_json_file;
 use crate::notifications::{
     NotificationDelivery, NotificationOccurrence, NotificationSkip, evaluate_notification_rules,
 };
+use crate::scheduling::move_uncertain_placement;
 use crate::query::{
     ColorBy, ColorRule, CompositionLayer, CompositionOperator, EventMembership, GroupBy,
     IntegerField, IntegerOperator, Overlay, PresenceField, QueryContext, QueryExpr, QueryPredicate,
@@ -2085,6 +2086,7 @@ struct EventTimeEditDraft {
     duration_minutes: String,
     end_date: String,
     conflict_confirmation: Option<ConflictConfirmation>,
+    uncertain_origin: Option<(TimeSpec, TimeUncertainty)>,
 }
 
 impl EventTimeEditDraft {
@@ -2093,9 +2095,31 @@ impl EventTimeEditDraft {
             anyhow::bail!("recurring event master time editing is not supported yet");
         }
         if event.time_uncertainty.is_some() {
-            anyhow::bail!(
-                "uncertain event placement must be edited with uncertainty-aware controls"
-            );
+            event.validate_time_uncertainty()?;
+            match &event.time {
+                TimeSpec::Instant {
+                    start_utc,
+                    end_utc: Some(end_utc),
+                    ..
+                } if start_utc.second() == 0
+                    && start_utc.timestamp_subsec_nanos() == 0
+                    && end_utc.second() == 0
+                    && end_utc.timestamp_subsec_nanos() == 0
+                    && *end_utc > *start_utc => {}
+                TimeSpec::Floating {
+                    start,
+                    end: Some(end),
+                    ..
+                } if start.second() == 0
+                    && start.nanosecond() == 0
+                    && end.second() == 0
+                    && end.nanosecond() == 0
+                    && *end > *start => {}
+                TimeSpec::AllDay { .. } | TimeSpec::DateOnly { .. } => {}
+                _ => anyhow::bail!(
+                    "bounded uncertainty editing requires a whole-minute timed duration or a civil-date interval"
+                ),
+            }
         }
 
         match &event.time {
@@ -2126,6 +2150,9 @@ impl EventTimeEditDraft {
                     duration_minutes,
                     end_date: String::new(),
                     conflict_confirmation: None,
+                    uncertain_origin: event.time_uncertainty.as_ref().map(|window| {
+                        (event.time.clone(), window.clone())
+                    }),
                 })
             }
             TimeSpec::Floating {
@@ -2144,6 +2171,9 @@ impl EventTimeEditDraft {
                     .map_or_else(String::new, |end| (end - *start).num_minutes().to_string()),
                 end_date: String::new(),
                 conflict_confirmation: None,
+                    uncertain_origin: event.time_uncertainty.as_ref().map(|window| {
+                        (event.time.clone(), window.clone())
+                    }),
             }),
             TimeSpec::AllDay {
                 start,
@@ -2157,6 +2187,9 @@ impl EventTimeEditDraft {
                 duration_minutes: String::new(),
                 end_date: end_exclusive.map_or_else(String::new, |value| value.to_string()),
                 conflict_confirmation: None,
+                    uncertain_origin: event.time_uncertainty.as_ref().map(|window| {
+                        (event.time.clone(), window.clone())
+                    }),
             }),
             TimeSpec::DateOnly {
                 start,
@@ -2170,6 +2203,9 @@ impl EventTimeEditDraft {
                 duration_minutes: String::new(),
                 end_date: end_exclusive.map_or_else(String::new, |value| value.to_string()),
                 conflict_confirmation: None,
+                    uncertain_origin: event.time_uncertainty.as_ref().map(|window| {
+                        (event.time.clone(), window.clone())
+                    }),
             }),
             TimeSpec::Month { .. } | TimeSpec::Year { .. } | TimeSpec::Unknown { .. } => {
                 anyhow::bail!(
