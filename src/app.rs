@@ -1605,14 +1605,16 @@ struct ConflictConfirmation {
     time: TimeSpec,
     availability: AvailabilityBehavior,
     status: EventStatus,
+    warning: String,
 }
 
 impl ConflictConfirmation {
-    fn for_event(event: &TemporalEvent) -> Self {
+    fn for_event(event: &TemporalEvent, warning: String) -> Self {
         Self {
             time: event.time.clone(),
             availability: event.availability,
             status: event.status,
+            warning,
         }
     }
 
@@ -3300,7 +3302,7 @@ impl EphemerisApp {
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
                 if let Some(current) = self.new_local_event.as_mut() {
-                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event));
+                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event, warning.clone()));
                 }
                 anyhow::bail!("{warning}");
             }
@@ -3384,7 +3386,7 @@ impl EphemerisApp {
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
                 if let Some(current) = self.event_time_editor.as_mut() {
-                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event));
+                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event, warning.clone()));
                 }
                 anyhow::bail!("{warning}");
             }
@@ -3534,7 +3536,7 @@ impl EphemerisApp {
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
                 if let Some(current) = self.event_details_editor.as_mut() {
-                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event));
+                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event, warning.clone()));
                 }
                 anyhow::bail!("{warning}");
             }
@@ -5117,11 +5119,8 @@ impl EphemerisApp {
                         ui.small("min");
                     }
                 });
-                if draft.conflict_confirmation.is_some() {
-                    ui.colored_label(
-                        Color32::YELLOW,
-                        "Conflict warning active for the current scheduling fields. Create again to confirm.",
-                    );
+                if let Some(confirmation) = &draft.conflict_confirmation {
+                    ui.colored_label(Color32::YELLOW, &confirmation.warning);
                 }
                 ui.horizontal(|ui| {
                     if ui
@@ -7450,11 +7449,8 @@ impl EphemerisApp {
                     ui.small(
                         "Blank optional fields clear the canonical value. Time, recurrence, participants, topology, and provenance are edited in their dedicated sections.",
                     );
-                    if draft.conflict_confirmation.is_some() {
-                        ui.colored_label(
-                            Color32::YELLOW,
-                            "Scheduling conflict warning active. Save details again to confirm unchanged status/availability.",
-                        );
+                    if let Some(confirmation) = &draft.conflict_confirmation {
+                        ui.colored_label(Color32::YELLOW, &confirmation.warning);
                     }
 
                     ui.horizontal(|ui| {
@@ -7537,11 +7533,8 @@ impl EphemerisApp {
                         }
                     });
 
-                    if draft.conflict_confirmation.is_some() {
-                        ui.colored_label(
-                            Color32::YELLOW,
-                            "Conflict warning active for the current scheduling fields. Save again to confirm.",
-                        );
+                    if let Some(confirmation) = &draft.conflict_confirmation {
+                        ui.colored_label(Color32::YELLOW, &confirmation.warning);
                     }
 
                     let mut action = None;
