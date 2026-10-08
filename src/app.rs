@@ -14843,6 +14843,9 @@ mod tests {
         let mut draft = NewLocalEventDraft::for_date(day);
         draft.title = "Keep my title".to_string();
         draft.description = "Keep my notes".to_string();
+        draft.participant_names = "Alex\nBea".to_string();
+        draft.location_name = "Meeting room".to_string();
+        draft.location_virtual_url = "https://example.com/meet".to_string();
         let original = TemporalEvent::new(
             "Original",
             TimeSpec::AllDay {
@@ -14867,6 +14870,15 @@ mod tests {
         apply_alternative_to_new_draft(&mut draft, &slot, timezone).expect("apply alternative");
         assert_eq!(draft.title, "Keep my title");
         assert_eq!(draft.description, "Keep my notes");
+        assert_eq!(draft.participant_names, "Alex\nBea");
+        assert_eq!(draft.location_name, "Meeting room");
+        assert_eq!(draft.location_virtual_url, "https://example.com/meet");
+        let (candidate, _) = new_local_event_from_draft(&draft, timezone).expect("candidate");
+        assert_eq!(candidate.participants.len(), 2);
+        assert_eq!(
+            candidate.location.as_ref().and_then(|location| location.name.as_deref()),
+            Some("Meeting room")
+        );
         assert_eq!(draft.start_time, "11:30");
         assert_eq!(draft.duration_minutes, "45");
         assert!(draft.conflict_confirmation.is_none());
