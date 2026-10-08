@@ -15270,6 +15270,97 @@ mod tests {
     }
 
     #[test]
+    fn focused_occurrence_editor_does_not_invent_override_on_open() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Recurring meeting",
+            TimeSpec::AllDay {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(4);
+        event.recurrence = Some(rule.clone());
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        let original = TimeSpec::AllDay {
+            start: start.checked_add_days(chrono::Days::new(1)).expect("next day"),
+            end_exclusive: None,
+        };
+        draft.focus_occurrence(&original).expect("focus");
+        assert_eq!(draft.focused_occurrence_original, Some(original));
+        assert!(draft.override_rows.is_empty());
+        assert_eq!(draft.parsed_rule().expect("unchanged draft"), rule);
+    }
+
+    #[test]
+    fn focused_moved_occurrence_uses_original_slot_not_replacement() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let original = TimeSpec::DateOnly {
+            start: start.checked_add_days(chrono::Days::new(1)).expect("original day"),
+            end_exclusive: None,
+        };
+        let replacement = TimeSpec::DateOnly {
+            start: start.checked_add_days(chrono::Days::new(8)).expect("moved day"),
+            end_exclusive: None,
+        };
+        let mut event = TemporalEvent::new(
+            "Recurring observation",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(4);
+        rule.overrides = vec![RecurrenceOverride {
+            original: original.clone(),
+            replacement: Some(replacement.clone()),
+            cancelled: false,
+        }];
+        event.recurrence = Some(rule.clone());
+
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.focus_occurrence(&original).expect("focus original");
+        assert_eq!(
+            draft.focused_occurrence_original,
+            Some(original.clone())
+        );
+        assert_eq!(draft.override_rows.len(), 1);
+        assert_eq!(
+            draft.override_rows[0].original_text,
+            format_exception_start_value(&original)
+        );
+        assert_eq!(
+            draft.override_rows[0].replacement_text,
+            format_exception_start_value(&replacement)
+        );
+        assert_eq!(draft.parsed_rule().expect("untouched override"), rule);
+    }
+
+    #[test]
+    fn focused_occurrence_rejects_unrelated_time_kind() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
+        let mut event = TemporalEvent::new(
+            "Civil series",
+            TimeSpec::AllDay {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        assert!(draft.focus_occurrence(&event.time).is_err());
+        event.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        let foreign = TimeSpec::DateOnly {
+            start,
+            end_exclusive: None,
+        };
+        assert!(draft.focus_occurrence(&foreign).is_err());
+        assert!(draft.focused_occurrence_original.is_none());
+    }
+
+    #[test]
     fn recurrence_edit_draft_applies_structured_override_rows() {
         let start = NaiveDate::from_ymd_opt(2026, 10, 5).expect("start");
         let mut event = TemporalEvent::new(
