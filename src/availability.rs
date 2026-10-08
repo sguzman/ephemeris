@@ -788,6 +788,78 @@ mod tests {
     use crate::domain::{RecurrenceFrequency, RecurrenceOverride, RecurrenceRule};
 
     #[test]
+    fn uncertain_civil_date_can_affect_window_before_representative_day() {
+        let tz = chrono_tz::America::Mexico_City;
+        let anchor = NaiveDate::from_ymd_opt(2026, 10, 8).expect("anchor");
+        let mut event = TemporalEvent::new(
+            "Uncertain all-day",
+            TimeSpec::AllDay {
+                start: anchor,
+                end_exclusive: None,
+            },
+        );
+        event.time_uncertainty = Some(crate::domain::TimeUncertainty::DateWindow {
+            earliest: NaiveDate::from_ymd_opt(2026, 10, 6).expect("earliest"),
+            latest: NaiveDate::from_ymd_opt(2026, 10, 9).expect("latest"),
+        });
+
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 6, 14, 0, 0)
+            .single()
+            .expect("start");
+        let relevant = availability_for_events(
+            &[event.clone()],
+            tz,
+            start,
+            start + Duration::hours(2),
+        )
+        .expect("possible civil placement");
+        assert_eq!(relevant.skipped.len(), 1);
+        assert!(relevant.busy.is_empty());
+
+        let distant = availability_for_events(
+            &[event],
+            tz,
+            start + Duration::days(25),
+            start + Duration::days(26),
+        )
+        .expect("distant dates");
+        assert!(distant.skipped.is_empty());
+    }
+
+    #[test]
+    fn uncertain_floating_clock_uses_source_timezone_for_overlap() {
+        let tz = chrono_tz::America::Mexico_City;
+        let day = NaiveDate::from_ymd_opt(2026, 10, 8).expect("day");
+        let mut event = TemporalEvent::new(
+            "Floating uncertain",
+            TimeSpec::Floating {
+                start: day.and_hms_opt(9, 0, 0).expect("representative"),
+                end: Some(day.and_hms_opt(10, 0, 0).expect("end")),
+                source_timezone: Some(tz.name().to_string()),
+            },
+        );
+        event.time_uncertainty = Some(crate::domain::TimeUncertainty::FloatingWindow {
+            earliest: day.and_hms_opt(8, 0, 0).expect("earliest"),
+            latest: day.and_hms_opt(11, 0, 0).expect("latest"),
+        });
+
+        let before_anchor = Utc
+            .with_ymd_and_hms(2026, 10, 8, 14, 30, 0)
+            .single()
+            .expect("start");
+        let relevant = availability_for_events(
+            &[event],
+            chrono_tz::UTC,
+            before_anchor,
+            before_anchor + Duration::minutes(20),
+        )
+        .expect("possible floating placement");
+        assert_eq!(relevant.skipped.len(), 1);
+        assert!(relevant.busy.is_empty());
+    }
+
+    #[test]
     fn uncertainty_window_reports_possible_overlap_beyond_representative_start() {
         let anchor = Utc
             .with_ymd_and_hms(2026, 10, 8, 10, 0, 0)
