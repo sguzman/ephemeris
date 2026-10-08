@@ -2184,6 +2184,24 @@ pub struct EphemerisApp {
     saved_views: Vec<SavedView>,
 }
 
+fn details_change_requires_conflict_check(
+    before: &TemporalEvent,
+    after: &TemporalEvent,
+) -> bool {
+    (before.status != after.status || before.availability != after.availability)
+        && after.availability.blocks_time()
+        && !matches!(
+            after.status,
+            EventStatus::Cancelled | EventStatus::Postponed | EventStatus::Superseded
+        )
+        && after.recurrence.is_none()
+        && after.time_uncertainty.is_none()
+        && matches!(
+            after.time,
+            TimeSpec::Instant { .. } | TimeSpec::Floating { .. } | TimeSpec::AllDay { .. }
+        )
+}
+
 impl EphemerisApp {
     pub fn open() -> anyhow::Result<Self> {
         let store = TemporalStore::open_default()?;
@@ -3208,21 +3226,6 @@ impl EphemerisApp {
                 .is_none_or(|source| !source.read_only)
         })
     }
-
-fn details_change_requires_conflict_check(
-    before: &TemporalEvent,
-    after: &TemporalEvent,
-) -> bool {
-    (before.status != after.status || before.availability != after.availability)
-        && after.availability.blocks_time()
-        && !matches!(
-            after.status,
-            EventStatus::Cancelled | EventStatus::Postponed | EventStatus::Superseded
-        )
-        && after.recurrence.is_none()
-        && after.time_uncertainty.is_none()
-        && matches!(after.time, TimeSpec::Instant { .. } | TimeSpec::Floating { .. } | TimeSpec::AllDay { .. })
-}
 
     fn scheduling_conflict_warning(
         &self,
