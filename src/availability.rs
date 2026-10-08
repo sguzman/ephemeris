@@ -807,13 +807,9 @@ mod tests {
             .with_ymd_and_hms(2026, 10, 6, 14, 0, 0)
             .single()
             .expect("start");
-        let relevant = availability_for_events(
-            &[event.clone()],
-            tz,
-            start,
-            start + Duration::hours(2),
-        )
-        .expect("possible civil placement");
+        let relevant =
+            availability_for_events(&[event.clone()], tz, start, start + Duration::hours(2))
+                .expect("possible civil placement");
         assert_eq!(relevant.skipped.len(), 1);
         assert!(relevant.busy.is_empty());
 
