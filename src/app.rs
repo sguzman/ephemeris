@@ -151,9 +151,7 @@ fn parse_quick_create_uncertainty(
                 timezone,
             )?,
         },
-        _ => anyhow::bail!(
-            "quick-create uncertainty requires an all-day or exact timed event"
-        ),
+        _ => anyhow::bail!("quick-create uncertainty requires an all-day or exact timed event"),
     };
     Ok(Some(uncertainty))
 }
@@ -311,13 +309,12 @@ fn new_conflict_confirmation_is_current(
         .conflict_confirmation
         .as_ref()
         .is_some_and(|confirmation| confirmation.matches(candidate))
-        && new_local_event_from_draft(draft, timezone)
-            .is_ok_and(|(event, _)| {
-                event.time == candidate.time
-                    && event.time_uncertainty == candidate.time_uncertainty
-                    && event.status == candidate.status
-                    && event.availability == candidate.availability
-            })
+        && new_local_event_from_draft(draft, timezone).is_ok_and(|(event, _)| {
+            event.time == candidate.time
+                && event.time_uncertainty == candidate.time_uncertainty
+                && event.status == candidate.status
+                && event.availability == candidate.availability
+        })
 }
 
 fn time_conflict_confirmation_is_current(
@@ -6378,7 +6375,7 @@ impl EphemerisApp {
                             "YYYY-MM-DD HH:MM"
                         };
                         ui.small(
-                            "These are possible STARTS, not the event's duration or end date.                              The representative start above must be inside the window.",
+                            "These are possible starts, not the event's duration or end date. The representative start above must be inside the window.",
                         );
                         if !draft.all_day {
                             ui.small(format!("Use unambiguous local times in {timezone_name}."));
@@ -6400,7 +6397,7 @@ impl EphemerisApp {
                             );
                         });
                         ui.small(
-                            "Active Busy events with uncertain starts require a second Save                              acknowledging provisional availability.",
+                            "Active Busy events with uncertain starts require a second Save acknowledging provisional availability.",
                         );
                     }
                 });
@@ -14959,7 +14956,10 @@ mod tests {
         );
         draft.earliest_possible_start = "2026-11-02 08:00".to_string();
         let (event, _) = new_local_event_from_draft(&draft, timezone).expect("window");
-        assert!(matches!(event.time_uncertainty, Some(TimeUncertainty::InstantWindow { .. })));
+        assert!(matches!(
+            event.time_uncertainty,
+            Some(TimeUncertainty::InstantWindow { .. })
+        ));
         draft.earliest_possible_start = "2026-11-02 10:00".to_string();
         assert!(new_local_event_from_draft(&draft, timezone).is_err());
     }
@@ -14974,8 +14974,10 @@ mod tests {
         draft.earliest_possible_start = "2026-10-06".to_string();
         draft.latest_possible_start = "2026-10-08".to_string();
         let (event, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
-        draft.conflict_confirmation =
-            Some(ConflictConfirmation::for_event(&event, "provisional".to_string()));
+        draft.conflict_confirmation = Some(ConflictConfirmation::for_event(
+            &event,
+            "provisional".to_string(),
+        ));
         assert!(new_conflict_confirmation_is_current(
             &draft,
             &event,
@@ -15004,7 +15006,9 @@ mod tests {
         draft.availability = AvailabilityBehavior::Busy;
         draft.status = EventStatus::Cancelled;
         let (cancelled, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
-        assert!(!newly_created_uncertain_event_requires_confirmation(&cancelled));
+        assert!(!newly_created_uncertain_event_requires_confirmation(
+            &cancelled
+        ));
     }
 
     #[test]
