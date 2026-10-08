@@ -14047,6 +14047,64 @@ mod tests {
     }
 
     #[test]
+    fn focused_recurrence_confirmation_reports_uncheckable_uncertain_blockers() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("start");
+        let first = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + ChronoDuration::hours(1)),
+            source_timezone: None,
+        };
+        let mut series = TemporalEvent::new("Daily series", first.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        series.recurrence = Some(rule.clone());
+        store.upsert_event(&series).expect("series");
+
+        let proposed_start = start + ChronoDuration::days(2);
+        let mut uncertain = TemporalEvent::new(
+            "Uncertain appointment",
+            TimeSpec::Instant {
+                start_utc: proposed_start,
+                end_utc: Some(proposed_start + ChronoDuration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        uncertain.time_uncertainty = Some(TimeUncertainty::InstantWindow {
+            earliest_utc: proposed_start - ChronoDuration::hours(1),
+            latest_utc: proposed_start + ChronoDuration::hours(1),
+        });
+        store.upsert_event(&uncertain).expect("uncertain blocker");
+
+        let mut draft = RecurrenceEditDraft::from_event(&series);
+        draft.focus_occurrence(&first).expect("focus");
+        rule.overrides.push(RecurrenceOverride {
+            original: first,
+            replacement: Some(TimeSpec::Instant {
+                start_utc: proposed_start,
+                end_utc: Some(proposed_start + ChronoDuration::hours(1)),
+                source_timezone: None,
+            }),
+            cancelled: false,
+        });
+        let warning = focused_recurrence_conflict_warning(
+            &store,
+            chrono_tz::UTC,
+            &series,
+            &draft,
+            &rule,
+        )
+        .expect("advisory check")
+        .expect("provisional warning");
+        assert!(warning.contains("provisional"));
+        assert!(warning.contains("could not be checked"));
+        assert!(warning.contains("Save again"));
+    }
+
+    #[test]
     fn focused_recurrence_cancellation_does_not_create_a_new_busy_commitment() {
         let store = TemporalStore::open_in_memory().expect("store");
         let start = Utc
