@@ -140,6 +140,26 @@ pub fn alternative_slots_for_candidate(
     search: SlotSearch,
     max_suggestions: usize,
 ) -> anyhow::Result<AlternativeSlots> {
+    alternative_slots_for_candidate_with_start(
+        events,
+        candidate,
+        display_timezone,
+        exclude_event_id,
+        search,
+        max_suggestions,
+        false,
+    )
+}
+
+fn alternative_slots_for_candidate_with_start(
+    events: &[TemporalEvent],
+    candidate: &TemporalEvent,
+    display_timezone: Tz,
+    exclude_event_id: Option<Uuid>,
+    search: SlotSearch,
+    max_suggestions: usize,
+    include_original_start: bool,
+) -> anyhow::Result<AlternativeSlots> {
     if max_suggestions == 0 {
         return Ok(AlternativeSlots::default());
     }
@@ -215,7 +235,13 @@ pub fn alternative_slots_for_candidate(
         },
     )?
     .into_iter()
-    .filter(|slot| slot.start_utc > candidate_start)
+    .filter(|slot| {
+        if include_original_start {
+            slot.start_utc >= candidate_start
+        } else {
+            slot.start_utc > candidate_start
+        }
+    })
     .take(max_suggestions)
     .collect();
 
@@ -344,22 +370,24 @@ pub fn alternative_slots_for_canceled_recurring_occurrence(
     candidate.time = original_slot.clone();
     candidate.recurrence = None;
     if matches!(&candidate.time, TimeSpec::AllDay { .. }) {
-        alternative_days_for_candidate(
+        alternative_days_for_candidate_with_start(
             events,
             &candidate,
             display_timezone,
             None,
             search.workdays,
             max_suggestions,
+            true,
         )
     } else {
-        alternative_slots_for_candidate(
+        alternative_slots_for_candidate_with_start(
             events,
             &candidate,
             display_timezone,
             None,
             search,
             max_suggestions,
+            true,
         )
     }
 }
@@ -487,6 +515,26 @@ pub fn alternative_days_for_candidate(
     workdays: [bool; 7],
     max_suggestions: usize,
 ) -> anyhow::Result<AlternativeSlots> {
+    alternative_days_for_candidate_with_start(
+        events,
+        candidate,
+        display_timezone,
+        exclude_event_id,
+        workdays,
+        max_suggestions,
+        false,
+    )
+}
+
+fn alternative_days_for_candidate_with_start(
+    events: &[TemporalEvent],
+    candidate: &TemporalEvent,
+    display_timezone: Tz,
+    exclude_event_id: Option<Uuid>,
+    workdays: [bool; 7],
+    max_suggestions: usize,
+    include_original_start: bool,
+) -> anyhow::Result<AlternativeSlots> {
     if max_suggestions == 0 {
         return Ok(AlternativeSlots::default());
     }
@@ -516,9 +564,13 @@ pub fn alternative_days_for_candidate(
     let duration_days =
         u64::try_from(duration_days).context("all-day duration exceeds search limits")?;
 
-    let first_date = start
-        .checked_add_days(Days::new(1))
-        .ok_or_else(|| anyhow::anyhow!("all-day alternative start overflows"))?;
+    let first_date = if include_original_start {
+        start
+    } else {
+        start
+            .checked_add_days(Days::new(1))
+            .ok_or_else(|| anyhow::anyhow!("all-day alternative start overflows"))?
+    };
     let last_date = start
         .checked_add_days(Days::new(15))
         .ok_or_else(|| anyhow::anyhow!("all-day alternative horizon overflows"))?;
@@ -538,7 +590,7 @@ pub fn alternative_days_for_candidate(
         availability_for_events(&other_events, display_timezone, first_utc, last_utc)?;
 
     let mut slots = Vec::new();
-    for offset in 1..=15 {
+    for offset in (if include_original_start { 0 } else { 1 })..=15 {
         let date = start
             .checked_add_days(Days::new(offset))
             .ok_or_else(|| anyhow::anyhow!("all-day alternative date overflows"))?;
