@@ -35,7 +35,9 @@ The following workflows use conflict confirmation:
 
 If a collision is found, the first save presents the conflicting titles. **Save again without changing the scheduling fields** to accept that collision. Editing those fields invalidates the previous confirmation. A pure title/description edit, or Scheduled → Confirmed on an already-blocking event, does not introduce a new commitment and does not require this extra confirmation.
 
-This is a conflict advisory, not a universal guarantee: events with unsupported temporal shapes can be skipped. Recurring candidate-master edits and uncertainty-aware rescheduling are still outside this confirmation path. An event with no definite duration cannot be meaningfully checked as an interval.
+For a conflicting **timed** new event or time edit, Ephemeris also offers up to four later alternatives within the next 15 days, respecting the current work-hour/weekdays/step preferences. These proposals use the full stored canonical corpus, not the filtered calendar view. Selecting an alternative updates only the draft's date/time/duration, preserves title and metadata, and clears the previous conflict confirmation. Saving the revised time runs the conflict check again. Unrepresentable source-clock or DST-ambiguous choices are rejected. Date-only/all-day and uncertain/recurring candidate edits do not yet have automatic alternatives.
+
+This is a conflict advisory, not a universal guarantee: events with unsupported temporal shapes can be skipped. The Availability panel reports skipped events and reasons separately. Bounded start-placement uncertainty must never be mistaken for a definitely occupied interval merely because a representative start is recorded. Recurring candidate-master edits and uncertainty-aware rescheduling are still outside this confirmation path. An event with no definite duration cannot be meaningfully checked as an interval.
 
 ## Reminders
 
