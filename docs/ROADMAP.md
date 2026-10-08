@@ -456,7 +456,7 @@ Goals:
 
 ## Phase 10 - Personal scheduling completeness
 
-Status: **active — durable reminders, Busy/Free scheduling, conflict-aware authoring with bounded alternate slots, uncertainty-aware availability diagnostics, richer quick-create, time editing, and structured location editing are implemented**
+Status: **active — durable reminders, Busy/Free scheduling, conflict-aware authoring and occurrence-level alternative slots, uncertainty-aware availability diagnostics, richer quick-create, time editing, and structured location editing are implemented**
 
 Implemented:
 
@@ -472,12 +472,16 @@ Implemented:
 - collision-time suggestions for definite all-day events against the full canonical corpus, preserving civil-day duration across DST, respecting enabled start weekdays, and using background draft-safe evaluation
 - conservative free/busy handling of bounded start-placement uncertainty, including possible-start windows extending beyond a representative event date
 - actionable skipped-interval diagnostics with direct navigation to the affected event inspector
+- focused original-slot recurrence editing for writable occurrences, including moved occurrences, without shifting the series master
+- nonblocking alternative-slot suggestions for a definite recurring instance while preserving its other sister occurrences, source time kind, duration, and DST behavior
+- save-time individual-occurrence conflict detection against the full canonical corpus, with explicit second-save confirmation of conflicting moves and safe cancellation semantics
 
 Remaining goals:
 
 - attendee/invitation exchange where justified by real scheduling workflows
-- focused original-slot editing for a selected recurring occurrence — implemented for writable sources with explicit Move/Cancel/Keep and canonical recurrence validation
-- optional conflict-aware alternative search for recurring individual-occurrence moves and uncertainty-aware rescheduling once their exact semantics are specified
+- uncertainty-aware rescheduling only after its temporal and confirmation semantics are specified
+- recurring master-time editing only when occurrence identity and existing exceptions can be preserved
+- reactivation of canceled occurrence slots with explicit conflict confirmation
 - optional system notification delivery only with a fully specified local-first lifecycle
 - careful extension of time editing to recurring masters only when exception identity can remain correct
 
