@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`b53bf2d2d830dc52c7894d8b21fcb63d3c94d935`
+`dd39d37264b5d837fa298634082ce0d9a14e2e69`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **594 library tests** pass
+- **600 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
