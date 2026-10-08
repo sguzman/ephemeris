@@ -4410,7 +4410,11 @@ impl EphemerisApp {
                 if let Some(draft) = self.recurrence_editor.as_mut() {
                     draft.alternative_slots.clear();
                     draft.alternative_rule = None;
-                    draft.alternative_note = Some("Finding later openings…".to_string());
+                    draft.alternative_note = Some(if was_cancelled {
+                        "Finding restoration openings…".to_string()
+                    } else {
+                        "Finding later openings…".to_string()
+                    });
                 }
                 std::thread::spawn(move || {
                     let result = (|| -> anyhow::Result<AlternativeSlots> {
@@ -4466,10 +4470,19 @@ impl EphemerisApp {
         {
             return;
         }
+        let was_cancelled = worker
+            .rule
+            .overrides
+            .iter()
+            .any(|value| value.original == worker.original && value.cancelled);
         match result {
             Ok(alternatives) => {
                 draft.alternative_note = Some(if alternatives.slots.is_empty() {
-                    "No later openings found in the next 15 days.".to_string()
+                    if was_cancelled {
+                        "No restoration openings found in the next 15 days.".to_string()
+                    } else {
+                        "No later openings found in the next 15 days.".to_string()
+                    }
                 } else if alternatives.skipped.is_empty() {
                     "Suggested openings are advisory; Save validates the recurrence.".to_string()
                 } else {
@@ -10933,8 +10946,18 @@ fn render_focused_occurrence_override(
         return None;
     }
 
+    let cancelled = draft.parsed_rule().ok().is_some_and(|rule| {
+        rule.overrides
+            .iter()
+            .any(|value| value.original == *original && value.cancelled)
+    });
     let mut action = None;
-    if ui.small_button("Find later openings").clicked() {
+    let button_label = if cancelled {
+        "Find restoration openings"
+    } else {
+        "Find later openings"
+    };
+    if ui.small_button(button_label).clicked() {
         action = Some(RecurrenceEditorAction::FindAlternatives);
     }
     if let Some(note) = &draft.alternative_note {
