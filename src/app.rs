@@ -2188,12 +2188,15 @@ fn details_change_requires_conflict_check(
     before: &TemporalEvent,
     after: &TemporalEvent,
 ) -> bool {
-    (before.status != after.status || before.availability != after.availability)
-        && after.availability.blocks_time()
-        && !matches!(
-            after.status,
-            EventStatus::Cancelled | EventStatus::Postponed | EventStatus::Superseded
-        )
+    let blocks = |event: &TemporalEvent| {
+        event.availability.blocks_time()
+            && !matches!(
+                event.status,
+                EventStatus::Cancelled | EventStatus::Postponed | EventStatus::Superseded
+            )
+    };
+    !blocks(before)
+        && blocks(after)
         && after.recurrence.is_none()
         && after.time_uncertainty.is_none()
         && matches!(
@@ -13124,6 +13127,10 @@ mod tests {
         let mut renamed = changed.clone();
         renamed.normalized_title = "Renamed event".to_string();
         assert!(!details_change_requires_conflict_check(&changed, &renamed));
+
+        let mut confirmed = changed.clone();
+        confirmed.status = EventStatus::Confirmed;
+        assert!(!details_change_requires_conflict_check(&changed, &confirmed));
 
         let mut cancelled = changed.clone();
         cancelled.status = EventStatus::Cancelled;
