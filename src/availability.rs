@@ -1164,8 +1164,8 @@ mod tests {
         let preferences = SlotSearch {
             duration_minutes: 60,
             step_minutes: 30,
-            day_start: NaiveTime::from_hms_opt(8, 0, 0).expect("start hour"),
-            day_end: NaiveTime::from_hms_opt(11, 0, 0).expect("end hour"),
+            day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("start hour"),
+            day_end: NaiveTime::from_hms_opt(10, 0, 0).expect("end hour"),
             workdays: [true; 7],
         };
         let suggestions = alternative_slots_for_recurring_occurrence(
@@ -1186,12 +1186,18 @@ mod tests {
             Some(moved_time)
         );
 
+        // Narrow working hours yield one eligible slot per free civil day.
+        // The next day's unmodified recurrence remains blocking at 09:00.
         let second_day = start + Duration::days(1);
         assert!(
             !suggestions
                 .slots
                 .iter()
                 .any(|slot| { slot.start_utc <= second_day && slot.end_utc > second_day })
+        );
+        assert_eq!(
+            suggestions.slots[1].start_utc,
+            start + Duration::days(2)
         );
     }
 
