@@ -2623,6 +2623,53 @@ impl TemporalStore {
         Ok(changed != 0)
     }
 
+    /// Atomically create a local event and its optional event-scoped reminder.
+    /// This is a create-only path: source-owned events and existing UUIDs are
+    /// not silently overwritten through quick-create.
+    pub fn create_local_event_with_reminder(
+        &self,
+        event: &TemporalEvent,
+        reminder: Option<&NotificationRule>,
+    ) -> anyhow::Result<()> {
+        if event.source_id.is_some() {
+            anyhow::bail!("local quick-create cannot create a source-owned event");
+        }
+        if self.event_by_id(event.id)?.is_some() {
+            anyhow::bail!("local event {} already exists", event.id);
+        }
+        if let Some(reminder) = reminder {
+            if !matches!(
+                reminder.target,
+                NotificationTarget::Event { event_id } if event_id == event.id
+            ) {
+                anyhow::bail!("quick-create reminder must target the new event");
+            }
+        }
+
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .context("failed to begin local event creation transaction")?;
+        let result = (|| -> anyhow::Result<()> {
+            self.upsert_event(event)?;
+            if let Some(reminder) = reminder {
+                self.upsert_notification_rule(reminder)?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                tx.commit()
+                    .context("failed to commit local event and reminder")?;
+                Ok(())
+            }
+            Err(error) => {
+                let _ = tx.rollback();
+                Err(error)
+            }
+        }
+    }
+
     pub fn upsert_event(&self, event: &TemporalEvent) -> anyhow::Result<()> {
         let owns_transaction = self.conn.is_autocommit();
         if owns_transaction {
@@ -9573,6 +9620,75 @@ mod tests {
                 .expect("identity assessments")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn quick_create_event_and_reminder_commit_together() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let date = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let event = TemporalEvent::new(
+            "Meeting",
+            TimeSpec::AllDay {
+                start: date,
+                end_exclusive: None,
+            },
+        );
+        let reminder = NotificationRule::for_event(event.id, "Meeting reminder", 30);
+        store
+            .create_local_event_with_reminder(&event, Some(&reminder))
+            .expect("atomic creation");
+        assert_eq!(store.event_by_id(event.id).expect("event"), Some(event));
+        assert_eq!(
+            store.notification_rule_by_id(reminder.id).expect("rule"),
+            Some(reminder)
+        );
+    }
+
+    #[test]
+    fn failed_quick_create_reminder_rolls_back_event_and_revision() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let event = TemporalEvent::new(
+            "Meeting",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        let mut reminder = NotificationRule::for_event(event.id, "Initial", 15);
+        reminder.name.clear();
+        assert!(
+            store
+                .create_local_event_with_reminder(&event, Some(&reminder))
+                .is_err()
+        );
+        assert!(store.event_by_id(event.id).expect("event").is_none());
+        assert!(store
+            .notification_rule_by_id(reminder.id)
+            .expect("rule")
+            .is_none());
+    }
+
+    #[test]
+    fn quick_create_rejects_foreign_reminder_target_and_existing_event() {
+        let store = TemporalStore::open_in_memory().expect("store");
+        let event = TemporalEvent::new(
+            "Meeting",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 7).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        let wrong = NotificationRule::for_event(Uuid::new_v4(), "Other event", 15);
+        assert!(store
+            .create_local_event_with_reminder(&event, Some(&wrong))
+            .is_err());
+        assert!(store.event_by_id(event.id).expect("event").is_none());
+        store
+            .create_local_event_with_reminder(&event, None)
+            .expect("create event without reminder");
+        assert!(store
+            .create_local_event_with_reminder(&event, None)
+            .is_err());
     }
 
     #[test]
