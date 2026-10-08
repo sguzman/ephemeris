@@ -1763,6 +1763,7 @@ impl ConflictConfirmation {
 
 #[derive(Debug, Clone)]
 struct NewLocalEventDraft {
+    draft_token: Uuid,
     title: String,
     description: String,
     event_type: String,
@@ -1779,6 +1780,7 @@ struct NewLocalEventDraft {
 impl NewLocalEventDraft {
     fn for_date(date: NaiveDate) -> Self {
         Self {
+            draft_token: Uuid::new_v4(),
             title: String::new(),
             description: String::new(),
             event_type: String::new(),
@@ -1820,6 +1822,7 @@ impl EventTimeEditKind {
 
 #[derive(Debug, Clone)]
 struct EventTimeEditDraft {
+    draft_token: Uuid,
     event_id: Uuid,
     kind: EventTimeEditKind,
     date: String,
@@ -1857,6 +1860,7 @@ impl EventTimeEditDraft {
                     (end - *start_utc).num_minutes().to_string()
                 });
                 Ok(Self {
+                    draft_token: Uuid::new_v4(),
                     event_id: event.id,
                     kind: EventTimeEditKind::Instant {
                         edit_timezone,
@@ -1874,7 +1878,8 @@ impl EventTimeEditDraft {
                 end,
                 source_timezone,
             } => Ok(Self {
-                event_id: event.id,
+                draft_token: Uuid::new_v4(),
+                    event_id: event.id,
                 kind: EventTimeEditKind::Floating {
                     source_timezone: source_timezone.clone(),
                 },
@@ -1889,7 +1894,8 @@ impl EventTimeEditDraft {
                 start,
                 end_exclusive,
             } => Ok(Self {
-                event_id: event.id,
+                draft_token: Uuid::new_v4(),
+                    event_id: event.id,
                 kind: EventTimeEditKind::AllDay,
                 date: start.to_string(),
                 start_time: String::new(),
@@ -1901,7 +1907,8 @@ impl EventTimeEditDraft {
                 start,
                 end_exclusive,
             } => Ok(Self {
-                event_id: event.id,
+                draft_token: Uuid::new_v4(),
+                    event_id: event.id,
                 kind: EventTimeEditKind::DateOnly,
                 date: start.to_string(),
                 start_time: String::new(),
@@ -2226,8 +2233,8 @@ enum TopologyInspectorAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConflictAlternativeTarget {
-    NewEvent,
-    TimeEdit(Uuid),
+    NewEvent(Uuid),
+    TimeEdit(Uuid, Uuid),
 }
 
 type ConflictAlternativeWorker = (
@@ -3504,19 +3511,23 @@ impl EphemerisApp {
         let display_timezone = self.timezone();
 
         let confirmation = match target {
-            ConflictAlternativeTarget::NewEvent => {
+            ConflictAlternativeTarget::NewEvent(draft_token) => {
                 self.new_local_event.as_mut().and_then(|draft| {
-                    let is_current =
-                        new_conflict_confirmation_is_current(draft, &candidate, display_timezone);
+                    let is_current = draft.draft_token == draft_token
+                        && new_conflict_confirmation_is_current(
+                            draft,
+                            &candidate,
+                            display_timezone,
+                        );
                     is_current
                         .then_some(draft)
                         .and_then(|draft| draft.conflict_confirmation.as_mut())
                 })
             }
-            ConflictAlternativeTarget::TimeEdit(event_id) => {
+            ConflictAlternativeTarget::TimeEdit(event_id, draft_token) => {
                 self.event_time_editor.as_mut().and_then(|draft| {
-                    let is_current =
-                        time_conflict_confirmation_is_current(draft, &candidate, event_id);
+                    let is_current = draft.draft_token == draft_token
+                        && time_conflict_confirmation_is_current(draft, &candidate, event_id);
                     is_current
                         .then_some(draft)
                         .and_then(|draft| draft.conflict_confirmation.as_mut())
@@ -3582,7 +3593,7 @@ impl EphemerisApp {
                     &event,
                     warning.clone(),
                     None,
-                    ConflictAlternativeTarget::NewEvent,
+                    ConflictAlternativeTarget::NewEvent(draft.draft_token),
                 );
                 if let Some(current) = self.new_local_event.as_mut() {
                     current.conflict_confirmation = Some(confirmation);
@@ -3672,7 +3683,7 @@ impl EphemerisApp {
                     &event,
                     warning.clone(),
                     Some(event.id),
-                    ConflictAlternativeTarget::TimeEdit(event.id),
+                    ConflictAlternativeTarget::TimeEdit(event.id, draft.draft_token),
                 );
                 if let Some(current) = self.event_time_editor.as_mut() {
                     current.conflict_confirmation = Some(confirmation);
@@ -13195,6 +13206,34 @@ fn status_color(status: EventStatus) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn newly_opened_drafts_have_distinct_async_result_identity() {
+        let date = NaiveDate::from_ymd_opt(2026, 10, 8).expect("date");
+        let first = NewLocalEventDraft::for_date(date);
+        let second = NewLocalEventDraft::for_date(date);
+        assert_ne!(first.draft_token, second.draft_token);
+
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 15, 0, 0)
+            .single()
+            .expect("start");
+        let event = TemporalEvent::new(
+            "Existing",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + ChronoDuration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        let original = EventTimeEditDraft::from_event(&event, chrono_tz::UTC)
+            .expect("first editor");
+        let reopened = EventTimeEditDraft::from_event(&event, chrono_tz::UTC)
+            .expect("reopened editor");
+        assert_eq!(original.event_id, reopened.event_id);
+        assert_ne!(original.draft_token, reopened.draft_token);
+        assert_eq!(original.parsed_time().expect("time"), reopened.parsed_time().expect("time"));
+    }
 
     #[test]
     fn background_suggestions_ignore_stale_scheduling_drafts() {
