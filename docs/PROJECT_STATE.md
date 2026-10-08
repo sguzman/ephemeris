@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`4afa1efa5d7da9e91de010ca64e1ec4ca0123f76`
+`8a0b0f1d51e49e7acf50d0ba848090e38d02487a`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **622 library tests** pass
+- **625 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -148,7 +148,9 @@ Free/busy now treats bounded uncertain start placement as **uncheckable**, not d
 
 Definite all-day conflicts now offer later civil-date alternatives from the full canonical corpus in a background worker. Eligible start dates respect configured weekdays, preserve the original civil-day span across DST, and retain save-time confirmation and draft-identity safeguards. Quick-create also supports an explicit exclusive end date for multi-day all-day events. Date-only facts remain distinct from all-day Busy commitments.
 
-The next Phase 10 frontier is **safe recurring occurrence rescheduling** with explicit original-slot/exception identity semantics, rather than moving recurrence masters blindly. Attendee/invitation exchange and system notifications remain deliberately unimplemented rather than promised; in-app reminders are functional. See [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) for the user workflow.
+A focused recurrence-exception editor is now available for writable materialized occurrences. **Edit this occurrence** uses the selected occurrence's original slot, including moved instances, and exposes explicit Move/Cancel/Keep actions through the existing recurrence validator. Merely opening the editor does not create an override. Recurring master-time changes and automatic conflict-avoidance suggestions for recurring occurrences remain deliberately unsupported.
+
+The next Phase 10 frontier is specifying conflict-aware suggestions for individual recurring overrides without altering the original recurrence identity, followed by careful uncertainty-aware rescheduling. Attendee/invitation exchange and system notifications remain deliberately unimplemented rather than promised; in-app reminders are functional. See [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) for the user workflow.
 
 ## Documentation roles
 
