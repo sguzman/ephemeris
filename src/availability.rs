@@ -225,6 +225,121 @@ pub fn alternative_slots_for_candidate(
     })
 }
 
+/// Find later civil-day placements for a concrete non-recurring all-day event.
+///
+/// The original event's exclusive-end civil-day span is preserved, even
+/// across timezone-offset changes. Workday preferences constrain the start
+/// date only; configured work hours and minute steps do not apply to an
+/// all-day commitment. Suggestions inspect the full supplied canonical
+/// corpus, not a filtered visible calendar.
+pub fn alternative_days_for_candidate(
+    events: &[TemporalEvent],
+    candidate: &TemporalEvent,
+    display_timezone: Tz,
+    exclude_event_id: Option<Uuid>,
+    workdays: [bool; 7],
+    max_suggestions: usize,
+) -> anyhow::Result<AlternativeSlots> {
+    if max_suggestions == 0 {
+        return Ok(AlternativeSlots::default());
+    }
+    if candidate.recurrence.is_some() || candidate.time_uncertainty.is_some() {
+        anyhow::bail!("all-day alternatives require a definite non-recurring event");
+    }
+    if !workdays.iter().any(|enabled| *enabled) {
+        anyhow::bail!("all-day alternatives require at least one enabled start weekday");
+    }
+    let (start, end_exclusive) = match &candidate.time {
+        TimeSpec::AllDay {
+            start,
+            end_exclusive,
+        } => (*start, *end_exclusive),
+        _ => anyhow::bail!("civil-day alternatives require an explicit all-day event"),
+    };
+    let end_date = match end_exclusive {
+        Some(end) => end,
+        None => start
+            .checked_add_days(Days::new(1))
+            .ok_or_else(|| anyhow::anyhow!("all-day candidate end overflows"))?,
+    };
+    let duration_days = (end_date - start).num_days();
+    if duration_days <= 0 {
+        anyhow::bail!("all-day candidate has no positive civil-day duration");
+    }
+    let duration_days =
+        u64::try_from(duration_days).context("all-day duration exceeds search limits")?;
+
+    let first_date = start
+        .checked_add_days(Days::new(1))
+        .ok_or_else(|| anyhow::anyhow!("all-day alternative start overflows"))?;
+    let last_date = start
+        .checked_add_days(Days::new(15))
+        .ok_or_else(|| anyhow::anyhow!("all-day alternative horizon overflows"))?;
+    let last_end = last_date
+        .checked_add_days(Days::new(duration_days))
+        .ok_or_else(|| anyhow::anyhow!("all-day alternative end overflows"))?;
+
+    // Do not silently select one side of ambiguous midnight transitions.
+    let first_utc = strict_civil_midnight(display_timezone, first_date)?;
+    let last_utc = strict_civil_midnight(display_timezone, last_end)?;
+    let other_events = events
+        .iter()
+        .filter(|event| Some(event.id) != exclude_event_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    let availability =
+        availability_for_events(&other_events, display_timezone, first_utc, last_utc)?;
+
+    let mut slots = Vec::new();
+    for offset in 1..=15 {
+        let date = start
+            .checked_add_days(Days::new(offset))
+            .ok_or_else(|| anyhow::anyhow!("all-day alternative date overflows"))?;
+        if !workdays[date.weekday().num_days_from_monday() as usize] {
+            continue;
+        }
+        let end = date
+            .checked_add_days(Days::new(duration_days))
+            .ok_or_else(|| anyhow::anyhow!("all-day alternative end overflows"))?;
+        // A candidate crossing an ambiguous or nonexistent midnight is
+        // unrepresentable, not an invitation to guess a UTC boundary.
+        let (Ok(start_utc), Ok(end_utc)) = (
+            strict_civil_midnight(display_timezone, date),
+            strict_civil_midnight(display_timezone, end),
+        ) else {
+            continue;
+        };
+        if availability
+            .free
+            .iter()
+            .any(|gap| gap.start_utc <= start_utc && gap.end_utc >= end_utc)
+        {
+            slots.push(FreeInterval { start_utc, end_utc });
+            if slots.len() == max_suggestions {
+                break;
+            }
+        }
+    }
+
+    Ok(AlternativeSlots {
+        slots,
+        skipped: availability.skipped,
+    })
+}
+
+fn strict_civil_midnight(timezone: Tz, date: NaiveDate) -> anyhow::Result<DateTime<Utc>> {
+    let midnight = date
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow::anyhow!("invalid civil midnight"))?;
+    timezone
+        .from_local_datetime(&midnight)
+        .single()
+        .map(|value| value.with_timezone(&Utc))
+        .ok_or_else(|| {
+            anyhow::anyhow!("midnight on {date} is ambiguous or nonexistent in {timezone}")
+        })
+}
+
 pub fn availability_for_materialized_date_window(
     events: &[TemporalEvent],
     display_timezone: Tz,
@@ -933,6 +1048,118 @@ mod tests {
         .expect("materialized availability");
         assert!(materialized.busy.is_empty());
         assert_eq!(materialized.skipped.len(), 1);
+    }
+
+    #[test]
+    fn all_day_alternatives_preserve_civil_span_across_dst() {
+        let tz = chrono_tz::America::New_York;
+        let start = NaiveDate::from_ymd_opt(2026, 10, 30).expect("start");
+        let candidate = TemporalEvent::new(
+            "Two-day retreat",
+            TimeSpec::AllDay {
+                start,
+                end_exclusive: Some(start + Days::new(2)),
+            },
+        );
+        let first_block = TemporalEvent::new(
+            "Occupied weekend",
+            TimeSpec::AllDay {
+                start: start + Days::new(2),
+                end_exclusive: Some(start + Days::new(4)),
+            },
+        );
+        let results = alternative_days_for_candidate(
+            &[first_block],
+            &candidate,
+            tz,
+            None,
+            [true; 7],
+            2,
+        )
+        .expect("alternatives");
+
+        let first = &results.slots[0];
+        assert_eq!(
+            first.start_utc.with_timezone(&tz).date_naive(),
+            start + Days::new(4)
+        );
+        assert_eq!(
+            first.end_utc.with_timezone(&tz).date_naive(),
+            start + Days::new(6)
+        );
+        assert_eq!(results.slots.len(), 2);
+    }
+
+    #[test]
+    fn all_day_alternatives_filter_start_weekday_and_hidden_blockers() {
+        let tz = chrono_tz::UTC;
+        let start = NaiveDate::from_ymd_opt(2026, 10, 7).expect("start");
+        let mut candidate = TemporalEvent::new(
+            "Day off",
+            TimeSpec::AllDay {
+                start,
+                end_exclusive: None,
+            },
+        );
+        let initial_id = candidate.id;
+        let blocker = TemporalEvent::new(
+            "Already booked",
+            TimeSpec::AllDay {
+                start: start + Days::new(2),
+                end_exclusive: None,
+            },
+        );
+        candidate.normalized_title = "Changed draft".to_string();
+        let results = alternative_days_for_candidate(
+            &[candidate.clone(), blocker],
+            &candidate,
+            tz,
+            Some(initial_id),
+            [true, false, false, false, false, false, false],
+            2,
+        )
+        .expect("alternatives");
+        assert_eq!(
+            results.slots[0].start_utc.date_naive(),
+            NaiveDate::from_ymd_opt(2026, 10, 12).expect("monday")
+        );
+        assert_eq!(results.slots.len(), 2);
+    }
+
+    #[test]
+    fn all_day_alternatives_reject_imprecise_or_recurring_candidates() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut candidate = TemporalEvent::new(
+            "Date-only fact",
+            TimeSpec::DateOnly {
+                start,
+                end_exclusive: None,
+            },
+        );
+        assert!(alternative_days_for_candidate(
+            &[],
+            &candidate,
+            chrono_tz::UTC,
+            None,
+            [true; 7],
+            2
+        )
+        .is_err());
+
+        candidate.time = TimeSpec::AllDay {
+            start,
+            end_exclusive: None,
+        };
+        candidate.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
+        assert!(alternative_days_for_candidate(
+            &[],
+            &candidate,
+            chrono_tz::UTC,
+            None,
+            [true; 7],
+            2
+        )
+        .is_err());
     }
 
     #[test]
