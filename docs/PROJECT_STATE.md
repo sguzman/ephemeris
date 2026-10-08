@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`dd39d37264b5d837fa298634082ce0d9a14e2e69`
+`42db597ae00a47adb905e89e98e5ca952874baba`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **600 library tests** pass
+- **612 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -142,7 +142,11 @@ Local authoring is also broader now. Quick-create captures description, event ty
 
 Conflict-aware authoring now checks concrete, non-recurring Busy commitments when they are created, moved, or newly activated through a details edit. Detected collisions require an explicit second save with unchanged scheduling fields; ordinary metadata edits and already-blocking status transitions do not require the extra confirmation. Recurring-master and uncertainty-aware placement changes remain deliberately outside this guardrail until their semantics can be checked safely.
 
-The next Phase 10 frontier is **richer scheduling assistance**: clear alternative-slot navigation after a collision, stronger diagnostics for skipped/unsupported interval shapes, and attendee/invitation semantics only where the required ownership and interoperability rules are justified. Reminders currently appear in-app, not as an unimplemented background/system notification promise. See [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) for the user workflow.
+For definite timed creation and editing conflicts, the inspector offers up to four later candidate slots across the next 15 days, respecting saved work-hour/weekday/step preferences. Unlike the display-filtered Availability panel, proposals consult the full canonical event corpus. Applying a suggestion preserves title/metadata, event time kind, source clock context, and duration; it clears prior conflict confirmation so saving the new time checks again. Unrepresentable or DST-ambiguous clock translations are rejected, not silently shifted.
+
+Free/busy now treats bounded uncertain start placement as **uncheckable**, not definitely occupied at the representative time. The evaluator checks possible-start windows in instant, floating and civil-date coordinates even when the representative event start is outside the requested window. Skipped/uncheckable events are reported in the Availability panel with an explicit provisional-results warning and inspector navigation. Proposals remain advisory when some stored events cannot be checked.
+
+The next Phase 10 frontier is **scaling the scheduling assistance**: keep alternative-slot searching responsive against large canonical corpora, then extend collision handling to more temporal shapes only when exact semantics are justified. Attendee/invitation exchange and system notifications remain deliberately unimplemented rather than promised; in-app reminders are functional. See [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) for the user workflow.
 
 ## Documentation roles
 
