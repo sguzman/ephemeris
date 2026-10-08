@@ -1519,6 +1519,67 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_reactivation_skips_busy_original_and_reports_uncertain_blockers() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 7, 9, 0, 0)
+            .single()
+            .expect("start");
+        let original = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + Duration::hours(1)),
+            source_timezone: None,
+        };
+        let mut series = TemporalEvent::new("Daily series", original.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        rule.overrides.push(RecurrenceOverride {
+            original: original.clone(),
+            replacement: None,
+            cancelled: true,
+        });
+        series.recurrence = Some(rule);
+
+        let busy_original = TemporalEvent::new("Existing appointment", original.clone());
+        let uncertain_start = start + Duration::days(2);
+        let mut uncertain = TemporalEvent::new(
+            "Uncertain appointment",
+            TimeSpec::Instant {
+                start_utc: uncertain_start,
+                end_utc: Some(uncertain_start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        uncertain.time_uncertainty = Some(crate::domain::TimeUncertainty::InstantWindow {
+            earliest_utc: uncertain_start - Duration::hours(1),
+            latest_utc: uncertain_start + Duration::hours(1),
+        });
+
+        let search = SlotSearch {
+            duration_minutes: 60,
+            step_minutes: 30,
+            day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("start hour"),
+            day_end: NaiveTime::from_hms_opt(10, 0, 0).expect("end hour"),
+            workdays: [true; 7],
+        };
+        let suggestions = alternative_slots_for_canceled_recurring_occurrence(
+            &[series.clone(), busy_original, uncertain.clone()],
+            series.id,
+            &original,
+            chrono_tz::UTC,
+            search,
+            2,
+        )
+        .expect("restoration alternatives");
+        assert_eq!(suggestions.slots.len(), 2);
+        assert_eq!(suggestions.slots[0].start_utc, uncertain_start);
+        assert!(!suggestions.slots.iter().any(|slot| slot.start_utc == start));
+        assert!(!suggestions.slots.iter().any(|slot| {
+            slot.start_utc == start + Duration::days(1)
+        }));
+        assert!(suggestions.skipped.iter().any(|skip| skip.event_id == uncertain.id));
+    }
+
+    #[test]
     fn cancelled_all_day_reactivation_offers_original_civil_date_across_dst() {
         let start = NaiveDate::from_ymd_opt(2026, 10, 31).expect("start date");
         let first = TimeSpec::AllDay {
