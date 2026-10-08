@@ -335,7 +335,10 @@ pub fn availability_for_events(
                 anyhow::anyhow!("failed to expand availability event {}: {error}", event.id)
             })?;
 
-        if !occurrences.is_empty() && skip_uncertain_blocker(event, &mut result) {
+        if event.time_uncertainty.is_some()
+            && potential_uncertain_busy_overlap(event, display_timezone, window_start_utc, window_end_utc)
+            && skip_uncertain_blocker(event, &mut result)
+        {
             continue;
         }
 
@@ -352,6 +355,107 @@ pub fn availability_for_events(
     }
 
     finish_availability(result, window_start_utc, window_end_utc)
+}
+
+/// A representative event start is only one possible placement when an
+/// uncertainty window is present. Check whether any plausible placement could
+/// intersect the requested availability window, even if the representative
+/// start falls outside the materialization range. Timezone conversion is
+/// conservative around civil-clock jumps, and unresolvable coordinates remain
+/// potentially relevant rather than becoming false "free" assertions.
+fn potential_uncertain_busy_overlap(
+    event: &TemporalEvent,
+    display_timezone: Tz,
+    window_start_utc: DateTime<Utc>,
+    window_end_utc: DateTime<Utc>,
+) -> bool {
+    let Some(uncertainty) = event.time_uncertainty.as_ref() else {
+        return false;
+    };
+
+    let (earliest, latest, civil) = match uncertainty {
+        crate::domain::TimeUncertainty::InstantWindow {
+            earliest_utc,
+            latest_utc,
+        } => (*earliest_utc, *latest_utc, false),
+        crate::domain::TimeUncertainty::FloatingWindow { earliest, latest } => {
+            let timezone = match &event.time {
+                TimeSpec::Floating {
+                    source_timezone: Some(raw),
+                    ..
+                } => match raw.parse::<Tz>() {
+                    Ok(timezone) => timezone,
+                    Err(_) => return true,
+                },
+                _ => display_timezone,
+            };
+            let (Some(first), Some(last)) = (
+                resolve_local(timezone, *earliest),
+                resolve_local(timezone, *latest),
+            ) else {
+                return true;
+            };
+            (first, last, true)
+        }
+        crate::domain::TimeUncertainty::DateWindow { earliest, latest } => {
+            let (Some(first), Some(last)) = (
+                earliest.and_hms_opt(0, 0, 0),
+                latest.and_hms_opt(0, 0, 0),
+            ) else {
+                return true;
+            };
+            let (Some(first), Some(last)) = (
+                resolve_local(display_timezone, first),
+                resolve_local(display_timezone, last),
+            ) else {
+                return true;
+            };
+            (first, last, true)
+        }
+    };
+
+    let duration = match &event.time {
+        TimeSpec::Instant {
+            start_utc,
+            end_utc: Some(end_utc),
+            ..
+        } => *end_utc - *start_utc,
+        TimeSpec::Floating {
+            start,
+            end: Some(end),
+            ..
+        } => *end - *start,
+        TimeSpec::AllDay {
+            start,
+            end_exclusive,
+        }
+        | TimeSpec::DateOnly {
+            start,
+            end_exclusive,
+        } => Duration::days(
+            end_exclusive
+                .map_or(1, |end| end.signed_duration_since(*start).num_days()),
+        ),
+        _ => return true,
+    };
+    if duration <= Duration::zero() {
+        return true;
+    }
+
+    // Civil coordinates can straddle DST or historical offset changes.
+    // Two days of slack avoids converting a wall-clock uncertainty into a
+    // falsely definite absence around those transitions.
+    let slack = if civil { Duration::days(2) } else { Duration::zero() };
+    let Some(possible_start) = earliest.checked_sub_signed(slack) else {
+        return true;
+    };
+    let Some(possible_end) = latest
+        .checked_add_signed(duration)
+        .and_then(|value| value.checked_add_signed(slack))
+    else {
+        return true;
+    };
+    possible_start < window_end_utc && possible_end > window_start_utc
 }
 
 fn skip_uncertain_blocker(event: &TemporalEvent, result: &mut AvailabilityResult) -> bool {
@@ -675,6 +779,45 @@ mod tests {
 
     use super::*;
     use crate::domain::{RecurrenceFrequency, RecurrenceOverride, RecurrenceRule};
+
+    #[test]
+    fn uncertainty_window_reports_possible_overlap_beyond_representative_start() {
+        let anchor = Utc
+            .with_ymd_and_hms(2026, 10, 8, 10, 0, 0)
+            .single()
+            .expect("anchor");
+        let mut event = TemporalEvent::new(
+            "Variable appointment",
+            TimeSpec::Instant {
+                start_utc: anchor,
+                end_utc: Some(anchor + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        event.time_uncertainty = Some(crate::domain::TimeUncertainty::InstantWindow {
+            earliest_utc: anchor - Duration::hours(2),
+            latest_utc: anchor + Duration::hours(2),
+        });
+
+        let early = availability_for_events(
+            &[event.clone()],
+            chrono_tz::UTC,
+            anchor - Duration::hours(2),
+            anchor - Duration::hours(1),
+        )
+        .expect("possible early placement");
+        assert!(early.busy.is_empty());
+        assert_eq!(early.skipped.len(), 1);
+
+        let distant = availability_for_events(
+            &[event],
+            chrono_tz::UTC,
+            anchor + Duration::days(20),
+            anchor + Duration::days(21),
+        )
+        .expect("distant window");
+        assert!(distant.skipped.is_empty());
+    }
 
     #[test]
     fn uncertain_event_is_skipped_instead_of_asserting_definite_busy_time() {
