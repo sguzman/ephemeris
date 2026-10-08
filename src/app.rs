@@ -14090,15 +14090,10 @@ mod tests {
             }),
             cancelled: false,
         });
-        let warning = focused_recurrence_conflict_warning(
-            &store,
-            chrono_tz::UTC,
-            &series,
-            &draft,
-            &rule,
-        )
-        .expect("advisory check")
-        .expect("provisional warning");
+        let warning =
+            focused_recurrence_conflict_warning(&store, chrono_tz::UTC, &series, &draft, &rule)
+                .expect("advisory check")
+                .expect("provisional warning");
         assert!(warning.contains("provisional"));
         assert!(warning.contains("could not be checked"));
         assert!(warning.contains("Save again"));
