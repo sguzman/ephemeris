@@ -15413,6 +15413,60 @@ mod tests {
     }
 
     #[test]
+    fn uncertain_newly_busy_details_require_provisional_confirmation_only_on_activation() {
+        let date = NaiveDate::from_ymd_opt(2026, 10, 8).expect("date");
+        let mut original = TemporalEvent::new(
+            "Uncertain event",
+            TimeSpec::DateOnly {
+                start: date,
+                end_exclusive: None,
+            },
+        );
+        original.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: date - chrono::Days::new(1),
+            latest: date + chrono::Days::new(1),
+        });
+        original.availability = AvailabilityBehavior::Free;
+        let mut activated = original.clone();
+        activated.availability = AvailabilityBehavior::Busy;
+
+        assert!(details_change_requires_provisional_uncertainty_confirmation(
+            &original, &activated
+        ));
+        assert!(!details_change_requires_conflict_check(
+            &original, &activated
+        ));
+
+        let mut renamed = activated.clone();
+        renamed.normalized_title = "Updated title".to_string();
+        assert!(!details_change_requires_provisional_uncertainty_confirmation(
+            &activated, &renamed
+        ));
+
+        let mut cancelled = activated.clone();
+        cancelled.status = EventStatus::Cancelled;
+        assert!(!details_change_requires_provisional_uncertainty_confirmation(
+            &activated, &cancelled
+        ));
+        let mut restored = cancelled.clone();
+        restored.status = EventStatus::Scheduled;
+        assert!(details_change_requires_provisional_uncertainty_confirmation(
+            &cancelled, &restored
+        ));
+
+        let mut definite = activated.clone();
+        definite.time_uncertainty = None;
+        assert!(!details_change_requires_provisional_uncertainty_confirmation(
+            &original, &definite
+        ));
+        let mut recurring = activated.clone();
+        recurring.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
+        assert!(!details_change_requires_provisional_uncertainty_confirmation(
+            &original, &recurring
+        ));
+    }
+
+    #[test]
     fn dropped_import_routing_recognizes_ics_case_insensitively() {
         assert!(is_ics_path(std::path::Path::new("/tmp/calendar.ics")));
         assert!(is_ics_path(std::path::Path::new("/tmp/CALENDAR.ICAL")));
