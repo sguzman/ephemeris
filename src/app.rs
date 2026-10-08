@@ -2775,6 +2775,23 @@ fn focused_recurrence_conflict_warning(
     Ok(Some(warning))
 }
 
+fn details_change_requires_provisional_uncertainty_confirmation(
+    before: &TemporalEvent,
+    after: &TemporalEvent,
+) -> bool {
+    let blocks = |event: &TemporalEvent| {
+        event.availability.blocks_time()
+            && !matches!(
+                event.status,
+                EventStatus::Cancelled | EventStatus::Postponed | EventStatus::Superseded
+            )
+    };
+    !blocks(before)
+        && blocks(after)
+        && after.recurrence.is_none()
+        && after.time_uncertainty.is_some()
+}
+
 fn details_change_requires_conflict_check(before: &TemporalEvent, after: &TemporalEvent) -> bool {
     let blocks = |event: &TemporalEvent| {
         event.availability.blocks_time()
@@ -4307,8 +4324,16 @@ impl EphemerisApp {
             event.importance = importance;
             event.personal_relevance = personal_relevance;
 
-            if details_change_requires_conflict_check(&original, &event)
-                && let Some(warning) = self.scheduling_conflict_warning(&event, Some(event.id))?
+            let warning =
+                if details_change_requires_provisional_uncertainty_confirmation(&original, &event)
+                {
+                    Some("Activating a Busy event with bounded start uncertainty does not establish a definite occupied interval. Its possible-start window remains provisional; Save again without changing status or availability to acknowledge this.".to_string())
+                } else if details_change_requires_conflict_check(&original, &event) {
+                    self.scheduling_conflict_warning(&event, Some(event.id))?
+                } else {
+                    None
+                };
+            if let Some(warning) = warning
                 && draft
                     .conflict_confirmation
                     .as_ref()
