@@ -119,6 +119,72 @@ fn parse_new_local_event_time(
     ))
 }
 
+fn parse_quick_create_uncertainty(
+    draft: &NewLocalEventDraft,
+    time: &TimeSpec,
+    timezone: Tz,
+) -> anyhow::Result<Option<TimeUncertainty>> {
+    if !draft.uncertain_start {
+        return Ok(None);
+    }
+
+    let uncertainty = match time {
+        TimeSpec::AllDay { .. } => {
+            let parse_date = |raw: &str, field: &str| {
+                NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d")
+                    .map_err(|_| anyhow::anyhow!("{field} must use YYYY-MM-DD"))
+            };
+            TimeUncertainty::DateWindow {
+                earliest: parse_date(&draft.earliest_possible_start, "earliest possible start")?,
+                latest: parse_date(&draft.latest_possible_start, "latest possible start")?,
+            }
+        }
+        TimeSpec::Instant { .. } => TimeUncertainty::InstantWindow {
+            earliest_utc: parse_quick_create_uncertain_instant(
+                &draft.earliest_possible_start,
+                "earliest possible start",
+                timezone,
+            )?,
+            latest_utc: parse_quick_create_uncertain_instant(
+                &draft.latest_possible_start,
+                "latest possible start",
+                timezone,
+            )?,
+        },
+        _ => anyhow::bail!(
+            "quick-create uncertainty requires an all-day or exact timed event"
+        ),
+    };
+    Ok(Some(uncertainty))
+}
+
+fn parse_quick_create_uncertain_instant(
+    raw: &str,
+    field: &str,
+    timezone: Tz,
+) -> anyhow::Result<DateTime<Utc>> {
+    let naive = NaiveDateTime::parse_from_str(raw.trim(), "%Y-%m-%d %H:%M")
+        .map_err(|_| anyhow::anyhow!("{field} must use YYYY-MM-DD HH:MM"))?;
+    timezone
+        .from_local_datetime(&naive)
+        .single()
+        .map(|instant| instant.with_timezone(&Utc))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{field} is ambiguous or nonexistent in {timezone}; use an unambiguous local time"
+            )
+        })
+}
+
+fn newly_created_uncertain_event_requires_confirmation(event: &TemporalEvent) -> bool {
+    event.time_uncertainty.is_some()
+        && event.availability.blocks_time()
+        && !matches!(
+            event.status,
+            EventStatus::Cancelled | EventStatus::Postponed | EventStatus::Superseded
+        )
+}
+
 fn new_local_event_from_draft(
     draft: &NewLocalEventDraft,
     timezone: Tz,
@@ -134,6 +200,8 @@ fn new_local_event_from_draft(
     event.domain = optional_trimmed(&draft.domain);
     event.status = draft.status;
     event.availability = draft.availability;
+    event.time_uncertainty = parse_quick_create_uncertainty(draft, &event.time, timezone)?;
+    event.validate_time_uncertainty()?;
     event.participants = multiline_values(&draft.participant_names)
         .into_iter()
         .map(EventParticipant::new)
@@ -243,9 +311,13 @@ fn new_conflict_confirmation_is_current(
         .conflict_confirmation
         .as_ref()
         .is_some_and(|confirmation| confirmation.matches(candidate))
-        && draft.status == candidate.status
-        && draft.availability == candidate.availability
-        && parse_new_local_event_time(draft, timezone).is_ok_and(|(time, _)| time == candidate.time)
+        && new_local_event_from_draft(draft, timezone)
+            .is_ok_and(|(event, _)| {
+                event.time == candidate.time
+                    && event.time_uncertainty == candidate.time_uncertainty
+                    && event.status == candidate.status
+                    && event.availability == candidate.availability
+            })
 }
 
 fn time_conflict_confirmation_is_current(
@@ -2063,6 +2135,9 @@ struct NewLocalEventDraft {
     location_name: String,
     location_address: String,
     location_virtual_url: String,
+    uncertain_start: bool,
+    earliest_possible_start: String,
+    latest_possible_start: String,
     status: EventStatus,
     availability: AvailabilityBehavior,
     date: String,
@@ -2085,6 +2160,9 @@ impl NewLocalEventDraft {
             location_name: String::new(),
             location_address: String::new(),
             location_virtual_url: String::new(),
+            uncertain_start: false,
+            earliest_possible_start: String::new(),
+            latest_possible_start: String::new(),
             status: EventStatus::Scheduled,
             availability: AvailabilityBehavior::Busy,
             date: date.to_string(),
@@ -4086,18 +4164,33 @@ impl EphemerisApp {
         let result = (|| -> anyhow::Result<(Uuid, NaiveDate)> {
             let (event, focus_date) = new_local_event_from_draft(&draft, self.timezone())?;
 
-            if let Some(warning) = self.scheduling_conflict_warning(&event, None)?
+            let provisional = newly_created_uncertain_event_requires_confirmation(&event);
+            let warning = if provisional {
+                Some(
+                    "A Busy event with a possible-start window has provisional availability. Its representative time cannot certify a conflict-free placement. Save again without changing its time, window, status, or availability to acknowledge this."
+                        .to_string(),
+                )
+            } else if event.time_uncertainty.is_some() {
+                None
+            } else {
+                self.scheduling_conflict_warning(&event, None)?
+            };
+            if let Some(warning) = warning
                 && draft
                     .conflict_confirmation
                     .as_ref()
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
-                let confirmation = self.confirmation_with_alternatives(
-                    &event,
-                    warning.clone(),
-                    None,
-                    ConflictAlternativeTarget::NewEvent(draft.draft_token),
-                );
+                let confirmation = if provisional {
+                    ConflictConfirmation::for_event(&event, warning.clone())
+                } else {
+                    self.confirmation_with_alternatives(
+                        &event,
+                        warning.clone(),
+                        None,
+                        ConflictAlternativeTarget::NewEvent(draft.draft_token),
+                    )
+                };
                 if let Some(current) = self.new_local_event.as_mut() {
                     current.conflict_confirmation = Some(confirmation);
                 }
@@ -6273,6 +6366,44 @@ impl EphemerisApp {
                         );
                     });
                 }
+                ui.collapsing("Possible start window (advanced)", |ui| {
+                    ui.checkbox(
+                        &mut draft.uncertain_start,
+                        "The actual start is uncertain",
+                    );
+                    if draft.uncertain_start {
+                        let format_hint = if draft.all_day {
+                            "YYYY-MM-DD"
+                        } else {
+                            "YYYY-MM-DD HH:MM"
+                        };
+                        ui.small(
+                            "These are possible STARTS, not the event's duration or end date.                              The representative start above must be inside the window.",
+                        );
+                        if !draft.all_day {
+                            ui.small(format!("Use unambiguous local times in {timezone_name}."));
+                        }
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("Earliest");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.earliest_possible_start)
+                                    .hint_text(format_hint)
+                                    .desired_width(165.0),
+                            );
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("Latest");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.latest_possible_start)
+                                    .hint_text(format_hint)
+                                    .desired_width(165.0),
+                            );
+                        });
+                        ui.small(
+                            "Active Busy events with uncertain starts require a second Save                              acknowledging provisional availability.",
+                        );
+                    }
+                });
                 if let Some(confirmation) = &draft.conflict_confirmation {
                     ui.colored_label(Color32::YELLOW, &confirmation.warning);
                     selected_alternative =
@@ -14789,6 +14920,91 @@ mod tests {
         assert!(!time_conflict_confirmation_is_current(
             &edit, &timed, timed.id
         ));
+    }
+
+    #[test]
+    fn quick_create_all_day_uncertainty_keeps_the_full_possible_start_window() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut draft = NewLocalEventDraft::for_date(day);
+        draft.title = "Estimated visit".to_string();
+        draft.all_day = true;
+        draft.uncertain_start = true;
+        draft.earliest_possible_start = "2026-10-05".to_string();
+        draft.latest_possible_start = "2026-10-09".to_string();
+        let (event, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
+        assert_eq!(
+            event.time_uncertainty,
+            Some(TimeUncertainty::DateWindow {
+                earliest: NaiveDate::from_ymd_opt(2026, 10, 5).expect("earliest"),
+                latest: NaiveDate::from_ymd_opt(2026, 10, 9).expect("latest"),
+            })
+        );
+        assert!(newly_created_uncertain_event_requires_confirmation(&event));
+    }
+
+    #[test]
+    fn quick_create_timed_uncertainty_rejects_dst_ambiguity_and_outside_anchor() {
+        let timezone = chrono_tz::America::New_York;
+        let day = NaiveDate::from_ymd_opt(2026, 11, 2).expect("date");
+        let mut draft = NewLocalEventDraft::for_date(day);
+        draft.title = "Possible appointment".to_string();
+        draft.uncertain_start = true;
+        draft.earliest_possible_start = "2026-11-01 01:30".to_string();
+        draft.latest_possible_start = "2026-11-02 11:00".to_string();
+        assert!(
+            new_local_event_from_draft(&draft, timezone)
+                .expect_err("ambiguous bound")
+                .to_string()
+                .contains("ambiguous or nonexistent")
+        );
+        draft.earliest_possible_start = "2026-11-02 08:00".to_string();
+        let (event, _) = new_local_event_from_draft(&draft, timezone).expect("window");
+        assert!(matches!(event.time_uncertainty, Some(TimeUncertainty::InstantWindow { .. })));
+        draft.earliest_possible_start = "2026-11-02 10:00".to_string();
+        assert!(new_local_event_from_draft(&draft, timezone).is_err());
+    }
+
+    #[test]
+    fn quick_create_uncertainty_confirmation_is_invalidated_by_window_edits() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut draft = NewLocalEventDraft::for_date(day);
+        draft.title = "Provisional".to_string();
+        draft.all_day = true;
+        draft.uncertain_start = true;
+        draft.earliest_possible_start = "2026-10-06".to_string();
+        draft.latest_possible_start = "2026-10-08".to_string();
+        let (event, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
+        draft.conflict_confirmation =
+            Some(ConflictConfirmation::for_event(&event, "provisional".to_string()));
+        assert!(new_conflict_confirmation_is_current(
+            &draft,
+            &event,
+            chrono_tz::UTC
+        ));
+        draft.latest_possible_start = "2026-10-09".to_string();
+        assert!(!new_conflict_confirmation_is_current(
+            &draft,
+            &event,
+            chrono_tz::UTC
+        ));
+    }
+
+    #[test]
+    fn quick_create_nonblocking_uncertainty_needs_no_busy_confirmation() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut draft = NewLocalEventDraft::for_date(day);
+        draft.title = "Approximate fact".to_string();
+        draft.all_day = true;
+        draft.uncertain_start = true;
+        draft.earliest_possible_start = "2026-10-06".to_string();
+        draft.latest_possible_start = "2026-10-08".to_string();
+        draft.availability = AvailabilityBehavior::Free;
+        let (event, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
+        assert!(!newly_created_uncertain_event_requires_confirmation(&event));
+        draft.availability = AvailabilityBehavior::Busy;
+        draft.status = EventStatus::Cancelled;
+        let (cancelled, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
+        assert!(!newly_created_uncertain_event_requires_confirmation(&cancelled));
     }
 
     #[test]
