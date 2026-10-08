@@ -119,6 +119,43 @@ fn parse_new_local_event_time(
     ))
 }
 
+fn new_local_event_from_draft(
+    draft: &NewLocalEventDraft,
+    timezone: Tz,
+) -> anyhow::Result<(TemporalEvent, NaiveDate)> {
+    let title = draft.title.trim();
+    if title.is_empty() {
+        anyhow::bail!("event title cannot be empty");
+    }
+    let (time, focus_date) = parse_new_local_event_time(draft, timezone)?;
+    let mut event = TemporalEvent::new(title, time);
+    event.description = optional_trimmed(&draft.description);
+    event.event_type = optional_trimmed(&draft.event_type);
+    event.domain = optional_trimmed(&draft.domain);
+    event.status = draft.status;
+    event.availability = draft.availability;
+    event.participants = multiline_values(&draft.participant_names)
+        .into_iter()
+        .map(EventParticipant::new)
+        .collect();
+
+    let location = EventLocation {
+        name: optional_trimmed(&draft.location_name),
+        address: optional_trimmed(&draft.location_address),
+        virtual_url: optional_trimmed(&draft.location_virtual_url),
+        ..EventLocation::default()
+    };
+    if location.name.is_some()
+        || location.address.is_some()
+        || location.virtual_url.is_some()
+    {
+        location.validate()?;
+        event.location = Some(location);
+    }
+    event.validate_participants()?;
+    Ok((event, focus_date))
+}
+
 fn parse_slot_search(
     duration_minutes: &str,
     step_minutes: &str,
@@ -2025,6 +2062,10 @@ struct NewLocalEventDraft {
     description: String,
     event_type: String,
     domain: String,
+    participant_names: String,
+    location_name: String,
+    location_address: String,
+    location_virtual_url: String,
     status: EventStatus,
     availability: AvailabilityBehavior,
     date: String,
@@ -2043,6 +2084,10 @@ impl NewLocalEventDraft {
             description: String::new(),
             event_type: String::new(),
             domain: String::new(),
+            participant_names: String::new(),
+            location_name: String::new(),
+            location_address: String::new(),
+            location_virtual_url: String::new(),
             status: EventStatus::Scheduled,
             availability: AvailabilityBehavior::Busy,
             date: date.to_string(),
@@ -4042,19 +4087,7 @@ impl EphemerisApp {
         };
 
         let result = (|| -> anyhow::Result<(Uuid, NaiveDate)> {
-            let title = draft.title.trim();
-            if title.is_empty() {
-                anyhow::bail!("event title cannot be empty");
-            }
-
-            let timezone = self.timezone();
-            let (time, focus_date) = parse_new_local_event_time(&draft, timezone)?;
-            let mut event = TemporalEvent::new(title, time);
-            event.description = optional_trimmed(&draft.description);
-            event.event_type = optional_trimmed(&draft.event_type);
-            event.domain = optional_trimmed(&draft.domain);
-            event.status = draft.status;
-            event.availability = draft.availability;
+            let (event, focus_date) = new_local_event_from_draft(&draft, self.timezone())?;
 
             if let Some(warning) = self.scheduling_conflict_warning(&event, None)?
                 && draft
@@ -6160,6 +6193,30 @@ impl EphemerisApp {
                         egui::TextEdit::singleline(&mut draft.domain)
                             .hint_text("Domain (optional)")
                             .desired_width(150.0),
+                    );
+                });
+                ui.collapsing("Participants and location (optional)", |ui| {
+                    ui.small("Participant names are local event metadata, not invitations. One name per line.");
+                    ui.add(
+                        egui::TextEdit::multiline(&mut draft.participant_names)
+                            .desired_rows(2)
+                            .hint_text("Participant names")
+                            .desired_width(320.0),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.location_name)
+                            .hint_text("Venue or location name")
+                            .desired_width(260.0),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.location_address)
+                            .hint_text("Address")
+                            .desired_width(320.0),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.location_virtual_url)
+                            .hint_text("Virtual meeting URL")
+                            .desired_width(320.0),
                     );
                 });
                 ui.horizontal_wrapped(|ui| {
@@ -14735,6 +14792,39 @@ mod tests {
         assert!(!time_conflict_confirmation_is_current(
             &edit, &timed, timed.id
         ));
+    }
+
+    #[test]
+    fn new_local_event_authoring_preserves_participants_and_location() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut draft = NewLocalEventDraft::for_date(day);
+        draft.title = "Project meeting".to_string();
+        draft.participant_names = "  Alex  \n\nBea\n  Cai  ".to_string();
+        draft.location_name = "Library".to_string();
+        draft.location_address = "Main Street".to_string();
+        draft.location_virtual_url = "https://example.com/meeting".to_string();
+        let (event, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
+        assert_eq!(
+            event.participants.iter().map(|participant| participant.name.as_str()).collect::<Vec<_>>(),
+            vec!["Alex", "Bea", "Cai"]
+        );
+        assert!(event.participants.iter().all(|participant| participant.role.is_none()));
+        let location = event.location.expect("location");
+        assert_eq!(location.name.as_deref(), Some("Library"));
+        assert_eq!(location.address.as_deref(), Some("Main Street"));
+        assert_eq!(location.virtual_url.as_deref(), Some("https://example.com/meeting"));
+    }
+
+    #[test]
+    fn new_local_event_authoring_omits_blank_optional_structures() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("date");
+        let mut draft = NewLocalEventDraft::for_date(day);
+        draft.title = "Simple".to_string();
+        draft.participant_names = " \n\n ".to_string();
+        draft.location_name = " ".to_string();
+        let (event, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
+        assert!(event.participants.is_empty());
+        assert!(event.location.is_none());
     }
 
     #[test]
