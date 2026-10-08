@@ -1140,15 +1140,10 @@ mod tests {
             end_exclusive: None,
         };
         candidate.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
-        assert!(alternative_days_for_candidate(
-            &[],
-            &candidate,
-            chrono_tz::UTC,
-            None,
-            [true; 7],
-            2
-        )
-        .is_err());
+        assert!(
+            alternative_days_for_candidate(&[], &candidate, chrono_tz::UTC, None, [true; 7], 2)
+                .is_err()
+        );
     }
 
     #[test]
