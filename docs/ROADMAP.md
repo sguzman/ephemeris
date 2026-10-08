@@ -465,6 +465,7 @@ Implemented:
 - canonical time editing for writable non-recurring instant/floating/all-day/date-only events, including conservative bounded-uncertainty moves with source-clock, duration, precision, stale-draft, and confirmation safeguards
 - structured writable-event location editing
 - event- and saved-view-targeted before-start reminder rules with durable delivery, dismissal, snooze, early wake, and separate Due/Snoozed/Upcoming states
+- optional in-app before-start reminder during quick-create, atomically persisted with the new event and guarded by lead-time validation and rollback tests
 - conflict-aware local event creation and time editing, plus new-blocking status/availability transitions with explicit second-save confirmation
 - canonical Busy/Free event availability, query predicates, iCalendar TRANSP interop, recurrence-aware free/busy calculation, and constrained slot search
 - persisted personal availability profile: work hours, duration, step, and workdays
