@@ -145,10 +145,7 @@ fn new_local_event_from_draft(
         virtual_url: optional_trimmed(&draft.location_virtual_url),
         ..EventLocation::default()
     };
-    if location.name.is_some()
-        || location.address.is_some()
-        || location.virtual_url.is_some()
-    {
+    if location.name.is_some() || location.address.is_some() || location.virtual_url.is_some() {
         location.validate()?;
         event.location = Some(location);
     }
@@ -14805,14 +14802,26 @@ mod tests {
         draft.location_virtual_url = "https://example.com/meeting".to_string();
         let (event, _) = new_local_event_from_draft(&draft, chrono_tz::UTC).expect("event");
         assert_eq!(
-            event.participants.iter().map(|participant| participant.name.as_str()).collect::<Vec<_>>(),
+            event
+                .participants
+                .iter()
+                .map(|participant| participant.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["Alex", "Bea", "Cai"]
         );
-        assert!(event.participants.iter().all(|participant| participant.role.is_none()));
+        assert!(
+            event
+                .participants
+                .iter()
+                .all(|participant| participant.role.is_none())
+        );
         let location = event.location.expect("location");
         assert_eq!(location.name.as_deref(), Some("Library"));
         assert_eq!(location.address.as_deref(), Some("Main Street"));
-        assert_eq!(location.virtual_url.as_deref(), Some("https://example.com/meeting"));
+        assert_eq!(
+            location.virtual_url.as_deref(),
+            Some("https://example.com/meeting")
+        );
     }
 
     #[test]
