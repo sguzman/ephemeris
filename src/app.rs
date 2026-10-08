@@ -3302,7 +3302,8 @@ impl EphemerisApp {
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
                 if let Some(current) = self.new_local_event.as_mut() {
-                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event, warning.clone()));
+                    current.conflict_confirmation =
+                        Some(ConflictConfirmation::for_event(&event, warning.clone()));
                 }
                 anyhow::bail!("{warning}");
             }
@@ -3386,7 +3387,8 @@ impl EphemerisApp {
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
                 if let Some(current) = self.event_time_editor.as_mut() {
-                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event, warning.clone()));
+                    current.conflict_confirmation =
+                        Some(ConflictConfirmation::for_event(&event, warning.clone()));
                 }
                 anyhow::bail!("{warning}");
             }
@@ -3536,7 +3538,8 @@ impl EphemerisApp {
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
                 if let Some(current) = self.event_details_editor.as_mut() {
-                    current.conflict_confirmation = Some(ConflictConfirmation::for_event(&event, warning.clone()));
+                    current.conflict_confirmation =
+                        Some(ConflictConfirmation::for_event(&event, warning.clone()));
                 }
                 anyhow::bail!("{warning}");
             }
