@@ -124,7 +124,7 @@ Refresh is identity-aware. Unchanged records stay unchanged, changed records upd
 
 ### Canonical JSON
 
-Ephemeris also has a versioned native interchange format for canonical data. Current v2 snapshots preserve sources, events, directed event relations, collections/sequences, ordered memberships, UUIDs, timestamps, recurrence, time semantics, and arbitrary properties. Version 1 sources/events-only snapshots remain readable. This is a canonical-data snapshot, not a full SQLite backup of saved views, refresh history, or Taria release tables.
+Ephemeris also has a versioned native interchange format for canonical data. Snapshots preserve canonical identities and supported linked temporal knowledge, with backward-compatible readers for earlier format versions. This is a canonical-data snapshot, not a full SQLite backup of saved views, refresh history, or Taria release tables. The current format version and scope are documented in [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md).
 
 Export the current canonical corpus:
 
