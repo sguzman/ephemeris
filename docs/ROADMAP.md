@@ -456,7 +456,7 @@ Goals:
 
 ## Phase 10 - Personal scheduling completeness
 
-Status: **active — durable reminder snooze/wake, conflict-aware local authoring, Busy/Free availability, free-busy/slot search, persisted workday preferences, richer quick-create, canonical non-recurring time editing, and structured location editing are implemented**
+Status: **active — durable reminders, Busy/Free scheduling, conflict-aware authoring with bounded alternate slots, uncertainty-aware availability diagnostics, richer quick-create, time editing, and structured location editing are implemented**
 
 Implemented:
 
@@ -468,11 +468,14 @@ Implemented:
 - canonical Busy/Free event availability, query predicates, iCalendar TRANSP interop, recurrence-aware free/busy calculation, and constrained slot search
 - persisted personal availability profile: work hours, duration, step, and workdays
 - creation of local events directly from free intervals and suggested slots
+- collision-time suggestions for definite timed events against the full canonical corpus, respecting workday/hour/step preferences and preserving draft metadata, source time kind, and exact duration
+- conservative free/busy handling of bounded start-placement uncertainty, including possible-start windows extending beyond a representative event date
+- actionable skipped-interval diagnostics with direct navigation to the affected event inspector
 
 Remaining goals:
 
 - attendee/invitation exchange where justified by real scheduling workflows
-- richer collision-to-alternative-slot navigation and explicit skipped-interval diagnostics
+- optional refinement of alternative search and availability diagnostics for all-day, recurring, and uncertainty-aware rescheduling once their exact semantics are specified
 - optional system notification delivery only with a fully specified local-first lifecycle
 - careful extension of time editing to recurring masters only when exception identity can remain correct
 
