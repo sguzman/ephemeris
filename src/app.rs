@@ -12,8 +12,8 @@ use uuid::Uuid;
 
 use crate::availability::{
     AlternativeSlots, BusyKind, FreeInterval, SlotSearch, alternative_days_for_candidate,
-    alternative_slots_for_candidate,
-    availability_for_materialized_date_window, conflicts_for_candidate_event, suggest_slots,
+    alternative_slots_for_candidate, availability_for_materialized_date_window,
+    conflicts_for_candidate_event, suggest_slots,
 };
 use crate::calendar::{
     CalendarLayout, CalendarView, calendar_title, month_days, month_grid_start, quarter_months,
@@ -308,7 +308,8 @@ fn apply_alternative_to_new_draft(
         next.date = start.to_string();
         next.conflict_confirmation = None;
         let (time, _) = parse_new_local_event_time(&next, timezone)?;
-        if !matches!(time, TimeSpec::AllDay { start: value, end_exclusive: None } if value == start) {
+        if !matches!(time, TimeSpec::AllDay { start: value, end_exclusive: None } if value == start)
+        {
             anyhow::bail!("suggested all-day date changed time kind or duration");
         }
         *draft = next;
@@ -347,7 +348,8 @@ fn apply_alternative_to_time_draft(
         let TimeSpec::AllDay {
             start: previous_start,
             end_exclusive: previous_end,
-        } = original else {
+        } = original
+        else {
             anyhow::bail!("all-day draft no longer represents an all-day event");
         };
         let previous_duration = previous_end.map_or(1, |end| (end - previous_start).num_days());
@@ -13530,8 +13532,7 @@ mod tests {
             start_utc: boundary(target_start),
             end_utc: boundary(target_end),
         };
-        apply_alternative_to_time_draft(&mut draft, &slot, timezone)
-            .expect("apply alternative");
+        apply_alternative_to_time_draft(&mut draft, &slot, timezone).expect("apply alternative");
         assert_eq!(draft.date, target_start.to_string());
         assert_eq!(draft.end_date, target_end.to_string());
         assert!(draft.conflict_confirmation.is_none());
