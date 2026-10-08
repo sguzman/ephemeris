@@ -318,10 +318,11 @@ fn apply_alternative_to_new_draft(
         next.end_date = previous_end.map_or_else(String::new, |_| end.to_string());
         next.conflict_confirmation = None;
         let (time, _) = parse_new_local_event_time(&next, timezone)?;
-        if time != (TimeSpec::AllDay {
+        let expected = TimeSpec::AllDay {
             start,
             end_exclusive: previous_end.map(|_| end),
-        }) {
+        };
+        if time != expected {
             anyhow::bail!("suggested all-day interval cannot be represented by quick-create");
         }
         *draft = next;
@@ -13561,8 +13562,7 @@ mod tests {
             start_utc: boundary(target_date),
             end_utc: boundary(target_end),
         };
-        apply_alternative_to_new_draft(&mut draft, &slot, timezone)
-            .expect("apply alternative");
+        apply_alternative_to_new_draft(&mut draft, &slot, timezone).expect("apply alternative");
         assert_eq!(draft.title, "Three-day workshop");
         assert_eq!(draft.description, "Carry original notes");
         assert!(draft.all_day);
