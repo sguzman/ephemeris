@@ -1171,6 +1171,11 @@ struct RecurrenceEditDraft {
     override_rows: Vec<RecurrenceOverrideEditRow>,
     base_time: TimeSpec,
     focused_occurrence_original: Option<TimeSpec>,
+    focused_occurrence_current: Option<TimeSpec>,
+    draft_token: Uuid,
+    alternative_slots: Vec<FreeInterval>,
+    alternative_note: Option<String>,
+    alternative_rule: Option<RecurrenceRule>,
 }
 
 impl RecurrenceEditDraft {
@@ -1236,6 +1241,11 @@ impl RecurrenceEditDraft {
             override_rows,
             base_time: event.time.clone(),
             focused_occurrence_original: None,
+            focused_occurrence_current: None,
+            draft_token: Uuid::new_v4(),
+            alternative_slots: Vec::new(),
+            alternative_note: None,
+            alternative_rule: None,
             rule,
         }
     }
@@ -1251,6 +1261,10 @@ impl RecurrenceEditDraft {
             return Err("occurrence time kind differs from the series".to_string());
         }
         self.focused_occurrence_original = Some(original.clone());
+        self.focused_occurrence_current = Some(original.clone());
+        self.alternative_slots.clear();
+        self.alternative_note = None;
+        self.alternative_rule = None;
         Ok(())
     }
 
@@ -2319,11 +2333,13 @@ enum EventLocationEditorAction {
     Cancel,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum RecurrenceEditorAction {
     Save,
     Cancel,
     Remove,
+    FindAlternatives,
+    UseAlternative(FreeInterval),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2367,6 +2383,15 @@ type ConflictAlternativeWorker = (
     Receiver<Result<AlternativeSlots, String>>,
 );
 
+struct RecurrenceAlternativeWorker {
+    draft_token: Uuid,
+    event_id: Uuid,
+    original: TimeSpec,
+    current: TimeSpec,
+    rule: RecurrenceRule,
+    receiver: Receiver<Result<AlternativeSlots, String>>,
+}
+
 pub struct EphemerisApp {
     store: TemporalStore,
     state: PersistedUiState,
@@ -2383,6 +2408,7 @@ pub struct EphemerisApp {
     remote_ics_url: String,
     remote_ics_import_receiver: Option<Receiver<Result<IcsImportReport, String>>>,
     conflict_alternative_receiver: Option<ConflictAlternativeWorker>,
+    recurrence_alternative_receiver: Option<RecurrenceAlternativeWorker>,
     taria_current_source_ids: BTreeSet<Uuid>,
     event_memberships: HashMap<Uuid, EventMembership>,
     canonical_entities: Vec<CanonicalEntity>,
@@ -2522,6 +2548,7 @@ impl EphemerisApp {
             remote_ics_url: String::new(),
             remote_ics_import_receiver: None,
             conflict_alternative_receiver: None,
+            recurrence_alternative_receiver: None,
             taria_current_source_ids: BTreeSet::new(),
             event_memberships: HashMap::new(),
             canonical_entities: Vec::new(),
@@ -4036,12 +4063,206 @@ impl EphemerisApp {
             return;
         };
         self.begin_recurrence_edit(context.event_id);
+        let current_time = self
+            .events
+            .iter()
+            .find(|event| event.id == occurrence_id)
+            .map(|event| event.time.clone());
         if let Some(draft) = self.recurrence_editor.as_mut()
             && draft.event_id == context.event_id
-            && let Err(error) = draft.focus_occurrence(&context.original_time)
         {
-            self.last_message = None;
-            self.last_error = Some(format!("Cannot focus recurring occurrence: {error}"));
+            match draft.focus_occurrence(&context.original_time) {
+                Ok(()) => draft.focused_occurrence_current = current_time,
+                Err(error) => {
+                    self.last_message = None;
+                    self.last_error = Some(format!("Cannot focus recurring occurrence: {error}"));
+                }
+            }
+        }
+    }
+
+    fn find_recurring_occurrence_alternatives(&mut self) {
+        let result = (|| -> anyhow::Result<_> {
+            let draft = self
+                .recurrence_editor
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("recurrence editor is closed"))?;
+            let original = draft
+                .focused_occurrence_original
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no recurring occurrence is focused"))?
+                .clone();
+            let current = draft
+                .focused_occurrence_current
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("selected occurrence is no longer materialized"))?
+                .clone();
+            if !matches!(
+                current,
+                TimeSpec::Instant { .. } | TimeSpec::Floating { .. } | TimeSpec::AllDay { .. }
+            ) {
+                anyhow::bail!("this occurrence has no definite schedulable interval");
+            }
+            let event = self
+                .store
+                .event_by_id(draft.event_id)?
+                .ok_or_else(|| anyhow::anyhow!("recurrence series no longer exists"))?;
+            if !self.event_is_editable(&event) {
+                anyhow::bail!("recurrence series is read-only");
+            }
+            let rule = event
+                .recurrence
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("event no longer recurs"))?
+                .clone();
+            if draft.parsed_rule().map_err(anyhow::Error::msg)? != rule {
+                anyhow::bail!("save or revert unsaved recurrence edits before finding alternatives");
+            }
+            let current_stored = rule
+                .overrides
+                .iter()
+                .find(|value| value.original == original)
+                .and_then(|value| value.replacement.as_ref())
+                .unwrap_or(&original);
+            if *current_stored != current {
+                anyhow::bail!("the selected occurrence has changed; reopen its editor");
+            }
+            let database_path = self
+                .store
+                .path()
+                .map(std::path::Path::to_path_buf)
+                .ok_or_else(|| anyhow::anyhow!("background suggestions require a file-backed database"))?;
+            let search = if matches!(current, TimeSpec::AllDay { .. }) {
+                SlotSearch {
+                    duration_minutes: 60,
+                    step_minutes: 30,
+                    day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("valid hour"),
+                    day_end: NaiveTime::from_hms_opt(17, 0, 0).expect("valid hour"),
+                    workdays: self.state.availability_workdays,
+                }
+            } else {
+                parse_slot_search(
+                    &self.state.availability_duration_minutes,
+                    &self.state.availability_step_minutes,
+                    &self.state.availability_day_start,
+                    &self.state.availability_day_end,
+                    self.state.availability_workdays,
+                )?
+            };
+            Ok((
+                draft.draft_token,
+                event.id,
+                original,
+                current,
+                rule,
+                database_path,
+                search,
+                self.timezone(),
+            ))
+        })();
+
+        match result {
+            Ok((draft_token, event_id, original, current, rule, database_path, search, timezone)) => {
+                let (sender, receiver) = mpsc::channel();
+                self.recurrence_alternative_receiver = Some(RecurrenceAlternativeWorker {
+                    draft_token,
+                    event_id,
+                    original: original.clone(),
+                    current: current.clone(),
+                    rule,
+                    receiver,
+                });
+                if let Some(draft) = self.recurrence_editor.as_mut() {
+                    draft.alternative_slots.clear();
+                    draft.alternative_rule = None;
+                    draft.alternative_note = Some("Finding later openings…".to_string());
+                }
+                std::thread::spawn(move || {
+                    let result = (|| -> anyhow::Result<AlternativeSlots> {
+                        let store = TemporalStore::open(database_path)?;
+                        let events = store.list_events()?;
+                        crate::availability::alternative_slots_for_recurring_occurrence(
+                            &events,
+                            event_id,
+                            &original,
+                            &current,
+                            timezone,
+                            search,
+                            4,
+                        )
+                    })()
+                    .map_err(|error| format!("{error:#}"));
+                    let _ = sender.send(result);
+                });
+            }
+            Err(error) => {
+                if let Some(draft) = self.recurrence_editor.as_mut() {
+                    draft.alternative_slots.clear();
+                    draft.alternative_rule = None;
+                    draft.alternative_note =
+                        Some(format!("Alternatives unavailable: {error:#}"));
+                }
+            }
+        }
+    }
+
+    fn poll_recurring_occurrence_alternatives(&mut self) {
+        let completed = match self.recurrence_alternative_receiver.as_ref() {
+            Some(worker) => match worker.receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => {
+                    Some(Err("Recurring alternatives worker exited unexpectedly".to_string()))
+                }
+            },
+            None => None,
+        };
+        let Some(result) = completed else { return };
+        let Some(worker) = self.recurrence_alternative_receiver.take() else { return };
+        let Some(draft) = self.recurrence_editor.as_mut() else { return };
+        if draft.draft_token != worker.draft_token
+            || draft.event_id != worker.event_id
+            || draft.focused_occurrence_original.as_ref() != Some(&worker.original)
+            || draft.focused_occurrence_current.as_ref() != Some(&worker.current)
+            || draft.parsed_rule().ok().as_ref() != Some(&worker.rule)
+        {
+            return;
+        }
+        match result {
+            Ok(alternatives) => {
+                draft.alternative_note = Some(if alternatives.slots.is_empty() {
+                    "No later openings found in the next 15 days.".to_string()
+                } else if alternatives.skipped.is_empty() {
+                    "Suggested openings are advisory; Save validates the recurrence.".to_string()
+                } else {
+                    format!(
+                        "Provisional openings: {} event(s) could not be checked. Save validates the recurrence.",
+                        alternatives.skipped.len()
+                    )
+                });
+                draft.alternative_slots = alternatives.slots;
+                draft.alternative_rule = Some(worker.rule);
+            }
+            Err(error) => {
+                draft.alternative_slots.clear();
+                draft.alternative_rule = None;
+                draft.alternative_note = Some(format!("Alternatives unavailable: {error}"));
+            }
+        }
+    }
+
+    fn use_recurring_occurrence_alternative(&mut self, slot: &FreeInterval) {
+        let result = self
+            .recurrence_editor
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("recurrence editor is closed"))
+            .and_then(|draft| apply_recurring_alternative_to_draft(draft, slot, self.timezone()));
+        match result {
+            Ok(()) => self.last_error = None,
+            Err(error) => {
+                self.last_message = None;
+                self.last_error = Some(format!("Cannot apply occurrence alternative: {error:#}"));
+            }
         }
     }
 
@@ -8291,8 +8512,15 @@ impl EphemerisApp {
                 match action {
                     Some(RecurrenceEditorAction::Save) => self.save_recurrence_edit(false),
                     Some(RecurrenceEditorAction::Remove) => self.save_recurrence_edit(true),
+                    Some(RecurrenceEditorAction::FindAlternatives) => {
+                        self.find_recurring_occurrence_alternatives();
+                    }
+                    Some(RecurrenceEditorAction::UseAlternative(slot)) => {
+                        self.use_recurring_occurrence_alternative(&slot);
+                    }
                     Some(RecurrenceEditorAction::Cancel) => {
                         self.recurrence_editor = None;
+                        self.recurrence_alternative_receiver = None;
                         self.last_error = None;
                     }
                     None => {}
@@ -9383,10 +9611,12 @@ impl eframe::App for EphemerisApp {
         self.poll_taria_workspace_update();
         self.poll_remote_ics_import();
         self.poll_conflict_alternatives();
+        self.poll_recurring_occurrence_alternatives();
         self.refresh_notification_evaluation_if_needed();
         if self.taria_update_receiver.is_some()
             || self.remote_ics_import_receiver.is_some()
             || self.conflict_alternative_receiver.is_some()
+            || self.recurrence_alternative_receiver.is_some()
         {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         } else if self.notification_rules.iter().any(|rule| rule.enabled) {
