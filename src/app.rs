@@ -208,8 +208,7 @@ fn new_conflict_confirmation_is_current(
         .is_some_and(|confirmation| confirmation.matches(candidate))
         && draft.status == candidate.status
         && draft.availability == candidate.availability
-        && parse_new_local_event_time(draft, timezone)
-            .is_ok_and(|(time, _)| time == candidate.time)
+        && parse_new_local_event_time(draft, timezone).is_ok_and(|(time, _)| time == candidate.time)
 }
 
 fn time_conflict_confirmation_is_current(
@@ -3503,13 +3502,15 @@ impl EphemerisApp {
         let display_timezone = self.timezone();
 
         let confirmation = match target {
-            ConflictAlternativeTarget::NewEvent => self.new_local_event.as_mut().and_then(|draft| {
-                let is_current =
-                    new_conflict_confirmation_is_current(draft, &candidate, display_timezone);
-                is_current
-                    .then_some(draft)
-                    .and_then(|draft| draft.conflict_confirmation.as_mut())
-            }),
+            ConflictAlternativeTarget::NewEvent => {
+                self.new_local_event.as_mut().and_then(|draft| {
+                    let is_current =
+                        new_conflict_confirmation_is_current(draft, &candidate, display_timezone);
+                    is_current
+                        .then_some(draft)
+                        .and_then(|draft| draft.conflict_confirmation.as_mut())
+                })
+            }
             ConflictAlternativeTarget::TimeEdit(event_id) => {
                 self.event_time_editor.as_mut().and_then(|draft| {
                     let is_current =
@@ -3575,13 +3576,12 @@ impl EphemerisApp {
                     .as_ref()
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
-                let confirmation =
-                    self.confirmation_with_alternatives(
-                        &event,
-                        warning.clone(),
-                        None,
-                        ConflictAlternativeTarget::NewEvent,
-                    );
+                let confirmation = self.confirmation_with_alternatives(
+                    &event,
+                    warning.clone(),
+                    None,
+                    ConflictAlternativeTarget::NewEvent,
+                );
                 if let Some(current) = self.new_local_event.as_mut() {
                     current.conflict_confirmation = Some(confirmation);
                 }
@@ -3666,13 +3666,12 @@ impl EphemerisApp {
                     .as_ref()
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
-                let confirmation =
-                    self.confirmation_with_alternatives(
-                        &event,
-                        warning.clone(),
-                        Some(event.id),
-                        ConflictAlternativeTarget::TimeEdit(event.id),
-                    );
+                let confirmation = self.confirmation_with_alternatives(
+                    &event,
+                    warning.clone(),
+                    Some(event.id),
+                    ConflictAlternativeTarget::TimeEdit(event.id),
+                );
                 if let Some(current) = self.event_time_editor.as_mut() {
                     current.conflict_confirmation = Some(confirmation);
                 }
@@ -13203,12 +13202,18 @@ mod tests {
         draft.title = "New".to_string();
         let (time, _) = parse_new_local_event_time(&draft, timezone).expect("time");
         let candidate = TemporalEvent::new("New", time);
-        draft.conflict_confirmation =
-            Some(ConflictConfirmation::for_event(&candidate, "collision".to_string()));
+        draft.conflict_confirmation = Some(ConflictConfirmation::for_event(
+            &candidate,
+            "collision".to_string(),
+        ));
 
-        assert!(new_conflict_confirmation_is_current(&draft, &candidate, timezone));
+        assert!(new_conflict_confirmation_is_current(
+            &draft, &candidate, timezone
+        ));
         draft.start_time = "10:00".to_string();
-        assert!(!new_conflict_confirmation_is_current(&draft, &candidate, timezone));
+        assert!(!new_conflict_confirmation_is_current(
+            &draft, &candidate, timezone
+        ));
 
         let timed = TemporalEvent::new(
             "Existing",
@@ -13226,11 +13231,17 @@ mod tests {
             },
         );
         let mut edit = EventTimeEditDraft::from_event(&timed, timezone).expect("edit");
-        edit.conflict_confirmation =
-            Some(ConflictConfirmation::for_event(&timed, "collision".to_string()));
-        assert!(time_conflict_confirmation_is_current(&edit, &timed, timed.id));
+        edit.conflict_confirmation = Some(ConflictConfirmation::for_event(
+            &timed,
+            "collision".to_string(),
+        ));
+        assert!(time_conflict_confirmation_is_current(
+            &edit, &timed, timed.id
+        ));
         edit.duration_minutes = "30".to_string();
-        assert!(!time_conflict_confirmation_is_current(&edit, &timed, timed.id));
+        assert!(!time_conflict_confirmation_is_current(
+            &edit, &timed, timed.id
+        ));
     }
 
     #[test]
