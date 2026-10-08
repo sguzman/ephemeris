@@ -8,6 +8,7 @@ pub mod ics;
 pub mod interchange;
 pub mod notifications;
 pub mod query;
+pub mod scheduling;
 pub mod state;
 pub mod store;
 pub mod taria;
