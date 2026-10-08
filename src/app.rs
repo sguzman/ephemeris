@@ -14195,6 +14195,43 @@ mod tests {
     }
 
     #[test]
+    fn uncertain_all_day_time_editor_derives_multiday_exclusive_end() {
+        let original_start = NaiveDate::from_ymd_opt(2026, 10, 30).expect("date");
+        let mut event = TemporalEvent::new(
+            "Possible retreat",
+            TimeSpec::AllDay {
+                start: original_start,
+                end_exclusive: Some(original_start + chrono::Days::new(2)),
+            },
+        );
+        event.time_uncertainty = Some(TimeUncertainty::DateWindow {
+            earliest: original_start - chrono::Days::new(1),
+            latest: original_start + chrono::Days::new(1),
+        });
+        let mut draft = EventTimeEditDraft::from_event(&event, chrono_tz::America::New_York)
+            .expect("bounded civil edit");
+        draft.date = "2026-11-01".to_string();
+        let proposed = draft.parsed_time().expect("derived civil span");
+        let expected_start = NaiveDate::from_ymd_opt(2026, 11, 1).expect("new date");
+        assert_eq!(
+            proposed,
+            TimeSpec::AllDay {
+                start: expected_start,
+                end_exclusive: Some(expected_start + chrono::Days::new(2)),
+            }
+        );
+        let moved = move_uncertain_placement(&event, &proposed).expect("window shift");
+        assert_eq!(
+            moved.time_uncertainty,
+            Some(TimeUncertainty::DateWindow {
+                earliest: expected_start - chrono::Days::new(1),
+                latest: expected_start + chrono::Days::new(1),
+            })
+        );
+        assert_eq!(event.time, draft.uncertain_origin.expect("original").0);
+    }
+
+    #[test]
     fn uncertain_time_editor_refuses_subminute_loss_and_recurring_master() {
         let anchor = Utc
             .with_ymd_and_hms(2026, 10, 8, 15, 0, 30)
