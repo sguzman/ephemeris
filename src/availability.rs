@@ -1555,28 +1555,25 @@ mod tests {
 
         assert_eq!(suggestions.slots.len(), 3);
         let original_start = strict_civil_midnight(timezone, start).expect("original midnight");
-        let original_end = strict_civil_midnight(
-            timezone,
-            start.succ_opt().expect("original end"),
-        )
-        .expect("original exclusive end");
+        let original_end = strict_civil_midnight(timezone, start.succ_opt().expect("original end"))
+            .expect("original exclusive end");
         assert_eq!(suggestions.slots[0].start_utc, original_start);
         assert_eq!(suggestions.slots[0].end_utc, original_end);
 
-        let sibling_start = strict_civil_midnight(
-            timezone,
-            start.succ_opt().expect("sibling day"),
-        )
-        .expect("sibling midnight");
+        let sibling_start = strict_civil_midnight(timezone, start.succ_opt().expect("sibling day"))
+            .expect("sibling midnight");
         let sibling_end = strict_civil_midnight(
             timezone,
             start.checked_add_days(Days::new(2)).expect("sibling end"),
         )
         .expect("sibling end midnight");
         assert_eq!((sibling_end - sibling_start).num_hours(), 25);
-        assert!(suggestions.slots.iter().all(|slot| {
-            slot.end_utc <= sibling_start || slot.start_utc >= sibling_end
-        }));
+        assert!(
+            suggestions
+                .slots
+                .iter()
+                .all(|slot| { slot.end_utc <= sibling_start || slot.start_utc >= sibling_end })
+        );
     }
 
     #[test]
