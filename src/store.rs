@@ -9662,10 +9662,12 @@ mod tests {
                 .is_err()
         );
         assert!(store.event_by_id(event.id).expect("event").is_none());
-        assert!(store
-            .notification_rule_by_id(reminder.id)
-            .expect("rule")
-            .is_none());
+        assert!(
+            store
+                .notification_rule_by_id(reminder.id)
+                .expect("rule")
+                .is_none()
+        );
     }
 
     #[test]
@@ -9679,16 +9681,20 @@ mod tests {
             },
         );
         let wrong = NotificationRule::for_event(Uuid::new_v4(), "Other event", 15);
-        assert!(store
-            .create_local_event_with_reminder(&event, Some(&wrong))
-            .is_err());
+        assert!(
+            store
+                .create_local_event_with_reminder(&event, Some(&wrong))
+                .is_err()
+        );
         assert!(store.event_by_id(event.id).expect("event").is_none());
         store
             .create_local_event_with_reminder(&event, None)
             .expect("create event without reminder");
-        assert!(store
-            .create_local_event_with_reminder(&event, None)
-            .is_err());
+        assert!(
+            store
+                .create_local_event_with_reminder(&event, None)
+                .is_err()
+        );
     }
 
     #[test]
