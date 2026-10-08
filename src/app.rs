@@ -14279,6 +14279,52 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_occurrence_suggestion_drafts_reactivation_without_changing_sisters() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("start");
+        let original = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + ChronoDuration::hours(1)),
+            source_timezone: None,
+        };
+        let mut event = TemporalEvent::new("Daily", original.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(3);
+        rule.overrides.push(RecurrenceOverride {
+            original: original.clone(),
+            replacement: None,
+            cancelled: true,
+        });
+        event.recurrence = Some(rule.clone());
+        let mut draft = RecurrenceEditDraft::from_event(&event);
+        draft.focus_occurrence(&original).expect("focus");
+        let slot = FreeInterval {
+            start_utc: start + ChronoDuration::days(3),
+            end_utc: start + ChronoDuration::days(3) + ChronoDuration::hours(1),
+        };
+        draft.alternative_rule = Some(rule.clone());
+        draft.alternative_slots = vec![slot.clone()];
+        apply_recurring_alternative_to_draft(&mut draft, &slot, chrono_tz::UTC)
+            .expect("draft reactivation");
+        let proposed = draft.parsed_rule().expect("rule");
+        assert_eq!(proposed.count, rule.count);
+        assert_eq!(proposed.overrides.len(), 1);
+        assert_eq!(proposed.overrides[0].original, original);
+        assert!(!proposed.overrides[0].cancelled);
+        assert_eq!(
+            proposed.overrides[0].replacement,
+            Some(TimeSpec::Instant {
+                start_utc: slot.start_utc,
+                end_utc: Some(slot.end_utc),
+                source_timezone: None,
+            })
+        );
+        assert_eq!(draft.rule, rule);
+    }
+
+    #[test]
     fn recurring_all_day_alternative_preserves_civil_span_across_dst() {
         let start = NaiveDate::from_ymd_opt(2026, 10, 30).expect("date");
         let base = TimeSpec::AllDay {
