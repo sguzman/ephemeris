@@ -10851,7 +10851,7 @@ fn render_focused_occurrence_override(
     draft: &mut RecurrenceEditDraft,
     timezone: Tz,
 ) -> Option<RecurrenceEditorAction> {
-    let original = draft.focused_occurrence_original.as_ref()?;
+    let original = draft.focused_occurrence_original.clone()?;
     if draft.alternative_rule.is_some()
         && draft.alternative_rule.as_ref() != draft.parsed_rule().ok().as_ref()
     {
@@ -10859,7 +10859,7 @@ fn render_focused_occurrence_override(
         draft.alternative_rule = None;
         draft.alternative_note = Some("Recurrence draft changed; search again.".to_string());
     }
-    let slot = format_exception_start_value(original);
+    let slot = format_exception_start_value(&original);
     ui.group(|ui| {
         ui.strong("Selected occurrence");
         ui.small(format!("Original recurrence slot: {slot}"));
