@@ -5207,6 +5207,7 @@ impl EphemerisApp {
         });
 
         if self.new_local_event.is_some() {
+            let timezone = self.timezone();
             let timezone_name = self.state.display_timezone.clone();
             let mut save = false;
             let mut cancel = false;
@@ -5290,7 +5291,7 @@ impl EphemerisApp {
                 if let Some(confirmation) = &draft.conflict_confirmation {
                     ui.colored_label(Color32::YELLOW, &confirmation.warning);
                     selected_alternative =
-                        render_conflict_alternatives(ui, confirmation, self.timezone());
+                        render_conflict_alternatives(ui, confirmation, timezone);
                 }
                 ui.horizontal(|ui| {
                     if ui
@@ -7678,6 +7679,7 @@ impl EphemerisApp {
                 .as_ref()
                 .is_some_and(|draft| draft.event_id == canonical_id)
             {
+                let display_timezone = self.timezone();
                 let mut selected_alternative = None;
                 ui.group(|ui| {
                     ui.strong("Edit canonical time");
@@ -7720,8 +7722,8 @@ impl EphemerisApp {
                             EventTimeEditKind::Instant { edit_timezone, .. } => *edit_timezone,
                             EventTimeEditKind::Floating {
                                 source_timezone: Some(raw),
-                            } => raw.parse::<Tz>().unwrap_or(self.timezone()),
-                            _ => self.timezone(),
+                            } => raw.parse::<Tz>().unwrap_or(display_timezone),
+                            _ => display_timezone,
                         };
                         selected_alternative =
                             render_conflict_alternatives(ui, confirmation, timezone);
