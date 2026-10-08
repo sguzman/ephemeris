@@ -1519,6 +1519,67 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_all_day_reactivation_offers_original_civil_date_across_dst() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 31).expect("start date");
+        let first = TimeSpec::AllDay {
+            start,
+            end_exclusive: None,
+        };
+        let mut series = TemporalEvent::new("Daily all-day", first.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        rule.overrides.push(RecurrenceOverride {
+            original: first.clone(),
+            replacement: None,
+            cancelled: true,
+        });
+        series.recurrence = Some(rule);
+
+        let search = SlotSearch {
+            duration_minutes: 60,
+            step_minutes: 30,
+            day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("start hour"),
+            day_end: NaiveTime::from_hms_opt(17, 0, 0).expect("end hour"),
+            workdays: [true; 7],
+        };
+        let timezone = chrono_tz::America::New_York;
+        let suggestions = alternative_slots_for_canceled_recurring_occurrence(
+            &[series.clone()],
+            series.id,
+            &first,
+            timezone,
+            search,
+            3,
+        )
+        .expect("all-day reactivation suggestions");
+
+        assert_eq!(suggestions.slots.len(), 3);
+        let original_start = strict_civil_midnight(timezone, start).expect("original midnight");
+        let original_end = strict_civil_midnight(
+            timezone,
+            start.succ_opt().expect("original end"),
+        )
+        .expect("original exclusive end");
+        assert_eq!(suggestions.slots[0].start_utc, original_start);
+        assert_eq!(suggestions.slots[0].end_utc, original_end);
+
+        let sibling_start = strict_civil_midnight(
+            timezone,
+            start.succ_opt().expect("sibling day"),
+        )
+        .expect("sibling midnight");
+        let sibling_end = strict_civil_midnight(
+            timezone,
+            start.checked_add_days(Days::new(2)).expect("sibling end"),
+        )
+        .expect("sibling end midnight");
+        assert_eq!((sibling_end - sibling_start).num_hours(), 25);
+        assert!(suggestions.slots.iter().all(|slot| {
+            slot.end_utc <= sibling_start || slot.start_utc >= sibling_end
+        }));
+    }
+
+    #[test]
     fn cancelled_recurrence_restoration_checks_sisters_and_rejects_non_cancelled_targets() {
         let start = Utc
             .with_ymd_and_hms(2026, 10, 7, 9, 0, 0)
