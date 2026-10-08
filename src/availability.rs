@@ -481,9 +481,9 @@ fn occurrence_interval_utc(
                 return Err("floating event has a non-positive duration".to_string());
             }
             let timezone = match source_timezone.as_deref() {
-                Some(raw) => raw.parse::<Tz>().map_err(|_| {
-                    format!("floating event has invalid source timezone {raw:?}")
-                })?,
+                Some(raw) => raw
+                    .parse::<Tz>()
+                    .map_err(|_| format!("floating event has invalid source timezone {raw:?}"))?,
                 None => display_timezone,
             };
             let start_utc = resolve_local(timezone, *start).ok_or_else(|| {
