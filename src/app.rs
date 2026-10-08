@@ -435,6 +435,119 @@ fn apply_alternative_to_time_draft(
     Ok(())
 }
 
+/// Apply only a candidate that was computed for the unchanged focused series.
+/// The original recurrence slot never moves: only the replacement start is
+/// edited, and the resulting canonical interval must match the offered slot.
+fn apply_recurring_alternative_to_draft(
+    draft: &mut RecurrenceEditDraft,
+    slot: &FreeInterval,
+    display_timezone: Tz,
+) -> anyhow::Result<()> {
+    if !draft.alternative_slots.contains(slot)
+        || draft.alternative_rule.as_ref() != draft.parsed_rule().ok().as_ref()
+    {
+        anyhow::bail!("the suggested opening is stale; search again");
+    }
+    let original = draft
+        .focused_occurrence_original
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("no original recurrence slot is selected"))?;
+    let token = match &draft.base_time {
+        TimeSpec::Instant { .. } => {
+            slot.start_utc.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+        }
+        TimeSpec::Floating { source_timezone, .. } => {
+            let timezone = if let Some(raw) = source_timezone {
+                raw.parse::<Tz>()
+                    .map_err(|_| anyhow::anyhow!("invalid floating source timezone {raw:?}"))?
+            } else {
+                display_timezone
+            };
+            slot.start_utc
+                .with_timezone(&timezone)
+                .naive_local()
+                .format("%Y-%m-%dT%H:%M:%S%.f")
+                .to_string()
+        }
+        TimeSpec::AllDay { .. } => {
+            let (date, _) = civil_alternative_dates(slot, display_timezone)?;
+            date.to_string()
+        }
+        _ => anyhow::bail!("only exact, floating, and all-day occurrences can be moved"),
+    };
+    let replacement = parse_exception_start_value(
+        &token,
+        &draft.base_time,
+        "Suggested occurrence",
+    )
+    .map_err(anyhow::Error::msg)?;
+
+    let matches_interval = match &replacement {
+        TimeSpec::Instant {
+            start_utc,
+            end_utc: Some(end_utc),
+            ..
+        } => *start_utc == slot.start_utc && *end_utc == slot.end_utc,
+        TimeSpec::Floating {
+            start,
+            end: Some(end),
+            source_timezone,
+        } => {
+            let timezone = match source_timezone {
+                Some(raw) => raw.parse::<Tz>()
+                    .map_err(|_| anyhow::anyhow!("invalid floating source timezone {raw:?}"))?,
+                None => display_timezone,
+            };
+            let utc_start = timezone.from_local_datetime(start).single();
+            let utc_end = timezone.from_local_datetime(end).single();
+            utc_start.is_some_and(|value| value.with_timezone(&Utc) == slot.start_utc)
+                && utc_end.is_some_and(|value| value.with_timezone(&Utc) == slot.end_utc)
+        }
+        TimeSpec::AllDay {
+            start,
+            end_exclusive,
+        } => {
+            let (date, end) = civil_alternative_dates(slot, display_timezone)?;
+            *start == date
+                && end_exclusive.map_or_else(
+                    || date.succ_opt() == Some(end),
+                    |actual| actual == end,
+                )
+        }
+        _ => false,
+    };
+    if !matches_interval {
+        anyhow::bail!(
+            "suggestion cannot preserve the original duration and clock semantics exactly"
+        );
+    }
+    let mut next = draft.clone();
+    let original_text = format_exception_start_value(original);
+    if let Some(row) = next
+        .override_rows
+        .iter_mut()
+        .find(|row| row.original_text == original_text)
+    {
+        row.action = RecurrenceOverrideEditAction::Move;
+        row.replacement_text = token;
+    } else {
+        next.override_rows.push(RecurrenceOverrideEditRow {
+            original_text,
+            action: RecurrenceOverrideEditAction::Move,
+            replacement_text: token,
+        });
+    }
+    next.override_text = format_recurrence_override_edit_rows(&next.override_rows);
+    next.parsed_rule().map_err(anyhow::Error::msg)?;
+    next.alternative_slots.clear();
+    next.alternative_rule = None;
+    next.alternative_note = Some(
+        "Replacement drafted for this occurrence only. Save to commit the override.".to_string(),
+    );
+    *draft = next;
+    Ok(())
+}
+
 fn parse_notification_lead_minutes(value: &str) -> anyhow::Result<u32> {
     let value = value.trim();
     if value.is_empty() {
@@ -4252,11 +4365,12 @@ impl EphemerisApp {
     }
 
     fn use_recurring_occurrence_alternative(&mut self, slot: &FreeInterval) {
+        let timezone = self.timezone();
         let result = self
             .recurrence_editor
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("recurrence editor is closed"))
-            .and_then(|draft| apply_recurring_alternative_to_draft(draft, slot, self.timezone()));
+            .and_then(|draft| apply_recurring_alternative_to_draft(draft, slot, timezone));
         match result {
             Ok(()) => self.last_error = None,
             Err(error) => {
@@ -8507,7 +8621,7 @@ impl EphemerisApp {
                 ui.separator();
                 let action = {
                     let draft = self.recurrence_editor.as_mut().expect("checked above");
-                    render_recurrence_editor(ui, draft)
+                    render_recurrence_editor(ui, draft, timezone)
                 };
                 match action {
                     Some(RecurrenceEditorAction::Save) => self.save_recurrence_edit(false),
@@ -10575,10 +10689,21 @@ fn render_structured_recurrence_overrides(ui: &mut egui::Ui, draft: &mut Recurre
         });
 }
 
-fn render_focused_occurrence_override(ui: &mut egui::Ui, draft: &mut RecurrenceEditDraft) {
+fn render_focused_occurrence_override(
+    ui: &mut egui::Ui,
+    draft: &mut RecurrenceEditDraft,
+    timezone: Tz,
+) -> Option<RecurrenceEditorAction> {
     let Some(original) = draft.focused_occurrence_original.as_ref() else {
-        return;
+        return None;
     };
+    if draft.alternative_rule.is_some()
+        && draft.alternative_rule.as_ref() != draft.parsed_rule().ok().as_ref()
+    {
+        draft.alternative_slots.clear();
+        draft.alternative_rule = None;
+        draft.alternative_note = Some("Recurrence draft changed; search again.".to_string());
+    }
     let slot = format_exception_start_value(original);
     ui.group(|ui| {
         ui.strong("Selected occurrence");
@@ -10648,11 +10773,41 @@ fn render_focused_occurrence_override(ui: &mut egui::Ui, draft: &mut RecurrenceE
             ui.small("No override yet; opening this editor does not modify the series.");
         }
     });
+
+    if !matches!(
+        draft.focused_occurrence_current,
+        Some(TimeSpec::Instant { .. } | TimeSpec::Floating { .. } | TimeSpec::AllDay { .. })
+    ) {
+        ui.small("Automatic openings require a definite timed or all-day occurrence.");
+        return None;
+    }
+
+    let mut action = None;
+    if ui.small_button("Find later openings").clicked() {
+        action = Some(RecurrenceEditorAction::FindAlternatives);
+    }
+    if let Some(note) = &draft.alternative_note {
+        ui.small(note);
+    }
+    ui.horizontal_wrapped(|ui| {
+        for proposed in &draft.alternative_slots {
+            let label = if matches!(&draft.base_time, TimeSpec::AllDay { .. }) {
+                format_civil_alternative(proposed, timezone)
+            } else {
+                format_availability_interval(proposed.start_utc, proposed.end_utc, timezone)
+            };
+            if ui.small_button(label).clicked() {
+                action = Some(RecurrenceEditorAction::UseAlternative(proposed.clone()));
+            }
+        }
+    });
+    action
 }
 
 fn render_recurrence_editor(
     ui: &mut egui::Ui,
     draft: &mut RecurrenceEditDraft,
+    timezone: Tz,
 ) -> Option<RecurrenceEditorAction> {
     ui.strong(if draft.had_recurrence {
         "Edit recurrence"
@@ -10661,7 +10816,7 @@ fn render_recurrence_editor(
     });
     ui.small("Edits the canonical series definition, not the selected materialized occurrence.");
 
-    render_focused_occurrence_override(ui, draft);
+    let focused_action = render_focused_occurrence_override(ui, draft, timezone);
 
     ui.label("Quick presets");
     ui.horizontal_wrapped(|ui| {
