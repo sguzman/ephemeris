@@ -3358,13 +3358,10 @@ impl EphemerisApp {
                     .as_ref()
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
+                let confirmation =
+                    self.confirmation_with_alternatives(&event, warning.clone(), None);
                 if let Some(current) = self.new_local_event.as_mut() {
-                    current.conflict_confirmation =
-                        Some(self.confirmation_with_alternatives(
-                            &event,
-                            warning.clone(),
-                            None,
-                        ));
+                    current.conflict_confirmation = Some(confirmation);
                 }
                 anyhow::bail!("{warning}");
             }
@@ -3447,13 +3444,10 @@ impl EphemerisApp {
                     .as_ref()
                     .is_none_or(|confirmation| !confirmation.matches(&event))
             {
+                let confirmation =
+                    self.confirmation_with_alternatives(&event, warning.clone(), Some(event.id));
                 if let Some(current) = self.event_time_editor.as_mut() {
-                    current.conflict_confirmation =
-                        Some(self.confirmation_with_alternatives(
-                            &event,
-                            warning.clone(),
-                            Some(event.id),
-                        ));
+                    current.conflict_confirmation = Some(confirmation);
                 }
                 anyhow::bail!("{warning}");
             }
