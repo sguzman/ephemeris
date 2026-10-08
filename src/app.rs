@@ -14876,7 +14876,10 @@ mod tests {
         let (candidate, _) = new_local_event_from_draft(&draft, timezone).expect("candidate");
         assert_eq!(candidate.participants.len(), 2);
         assert_eq!(
-            candidate.location.as_ref().and_then(|location| location.name.as_deref()),
+            candidate
+                .location
+                .as_ref()
+                .and_then(|location| location.name.as_deref()),
             Some("Meeting room")
         );
         assert_eq!(draft.start_time, "11:30");
