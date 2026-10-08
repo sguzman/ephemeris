@@ -176,7 +176,9 @@ pub fn alternative_slots_for_candidate(
     let duration_minutes =
         u32::try_from(duration_minutes).context("candidate duration exceeds slot search limits")?;
 
-    let first_date = candidate_start.with_timezone(&display_timezone).date_naive();
+    let first_date = candidate_start
+        .with_timezone(&display_timezone)
+        .date_naive();
     let last_date = first_date
         .checked_add_days(Days::new(15))
         .ok_or_else(|| anyhow::anyhow!("alternative search date overflow"))?;
@@ -708,7 +710,10 @@ mod tests {
             alternatives.slots[0].end_utc - alternatives.slots[0].start_utc,
             Duration::minutes(30)
         );
-        assert_eq!(alternatives.slots[1].start_utc, start + Duration::minutes(150));
+        assert_eq!(
+            alternatives.slots[1].start_utc,
+            start + Duration::minutes(150)
+        );
         assert!(alternatives.skipped.is_empty());
     }
 
@@ -775,15 +780,9 @@ mod tests {
             day_end: NaiveTime::from_hms_opt(17, 0, 0).expect("end"),
             workdays: [true; 7],
         };
-        assert!(alternative_slots_for_candidate(
-            &[],
-            &event,
-            chrono_tz::UTC,
-            None,
-            search,
-            3
-        )
-        .is_err());
+        assert!(
+            alternative_slots_for_candidate(&[], &event, chrono_tz::UTC, None, search, 3).is_err()
+        );
     }
 
     #[test]
