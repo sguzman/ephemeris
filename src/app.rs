@@ -11,8 +11,8 @@ use eframe::egui::{self, Color32, RichText};
 use uuid::Uuid;
 
 use crate::availability::{
-    BusyKind, FreeInterval, SlotSearch, availability_for_materialized_date_window,
-    conflicts_for_candidate_event, suggest_slots,
+    BusyKind, FreeInterval, SlotSearch, alternative_slots_for_candidate,
+    availability_for_materialized_date_window, conflicts_for_candidate_event, suggest_slots,
 };
 use crate::calendar::{
     CalendarLayout, CalendarView, calendar_title, month_days, month_grid_start, quarter_months,
@@ -1606,6 +1606,8 @@ struct ConflictConfirmation {
     availability: AvailabilityBehavior,
     status: EventStatus,
     warning: String,
+    alternatives: Vec<FreeInterval>,
+    alternative_note: Option<String>,
 }
 
 impl ConflictConfirmation {
@@ -1615,6 +1617,8 @@ impl ConflictConfirmation {
             availability: event.availability,
             status: event.status,
             warning,
+            alternatives: Vec::new(),
+            alternative_note: None,
         }
     }
 
@@ -3270,6 +3274,59 @@ impl EphemerisApp {
         Ok(Some(message))
     }
 
+    fn confirmation_with_alternatives(
+        &self,
+        event: &TemporalEvent,
+        warning: String,
+        exclude_event_id: Option<Uuid>,
+    ) -> ConflictConfirmation {
+        let mut confirmation = ConflictConfirmation::for_event(event, warning);
+        if !matches!(
+            &event.time,
+            TimeSpec::Instant { .. } | TimeSpec::Floating { .. }
+        ) {
+            return confirmation;
+        }
+
+        let result = (|| -> anyhow::Result<_> {
+            let preferences = parse_slot_search(
+                &self.state.availability_duration_minutes,
+                &self.state.availability_step_minutes,
+                &self.state.availability_day_start,
+                &self.state.availability_day_end,
+                self.state.availability_workdays,
+            )?;
+            alternative_slots_for_candidate(
+                &self.store.list_events()?,
+                event,
+                self.timezone(),
+                exclude_event_id,
+                preferences,
+                4,
+            )
+        })();
+
+        match result {
+            Ok(result) => {
+                confirmation.alternatives = result.slots;
+                if !result.skipped.is_empty() {
+                    confirmation.alternative_note = Some(format!(
+                        "Alternatives are advisory: {} stored event(s) could not be evaluated.",
+                        result.skipped.len()
+                    ));
+                } else if confirmation.alternatives.is_empty() {
+                    confirmation.alternative_note =
+                        Some("No later matching slot in the next 15 days.".to_string());
+                }
+            }
+            Err(error) => {
+                confirmation.alternative_note =
+                    Some(format!("Alternatives unavailable: {error:#}"));
+            }
+        }
+        confirmation
+    }
+
     fn begin_new_local_event(&mut self) {
         self.new_local_event = Some(NewLocalEventDraft::for_date(self.state.focus_date()));
         self.last_error = None;
@@ -3303,7 +3360,11 @@ impl EphemerisApp {
             {
                 if let Some(current) = self.new_local_event.as_mut() {
                     current.conflict_confirmation =
-                        Some(ConflictConfirmation::for_event(&event, warning.clone()));
+                        Some(self.confirmation_with_alternatives(
+                            &event,
+                            warning.clone(),
+                            None,
+                        ));
                 }
                 anyhow::bail!("{warning}");
             }
@@ -3388,7 +3449,11 @@ impl EphemerisApp {
             {
                 if let Some(current) = self.event_time_editor.as_mut() {
                     current.conflict_confirmation =
-                        Some(ConflictConfirmation::for_event(&event, warning.clone()));
+                        Some(self.confirmation_with_alternatives(
+                            &event,
+                            warning.clone(),
+                            Some(event.id),
+                        ));
                 }
                 anyhow::bail!("{warning}");
             }
