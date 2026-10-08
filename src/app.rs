@@ -14031,14 +14031,14 @@ mod tests {
         assert!(
             focused_recurrence_conflict_warning(&store, chrono_tz::UTC, &event, &draft, &proposed,)
                 .expect("free replacement")
-            .is_none()
+                .is_none()
         );
         proposed.count = Some(5);
         assert!(
             focused_recurrence_conflict_warning(&store, chrono_tz::UTC, &event, &draft, &proposed,)
                 .expect_err("focused edit must not mutate unrelated cadence")
-            .to_string()
-            .contains("cannot change other recurrence")
+                .to_string()
+                .contains("cannot change other recurrence")
         );
     }
 
@@ -14069,7 +14069,7 @@ mod tests {
         assert!(
             focused_recurrence_conflict_warning(&store, chrono_tz::UTC, &event, &draft, &cancelled)
                 .expect("cancellation")
-            .is_none()
+                .is_none()
         );
     }
 
