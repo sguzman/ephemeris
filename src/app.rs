@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::availability::{
     AlternativeSlots, BusyKind, FreeInterval, SlotSearch, alternative_days_for_candidate,
     alternative_slots_for_candidate, availability_for_materialized_date_window,
-    conflicts_for_candidate_event, suggest_slots,
+    conflicts_for_candidate_event, conflicts_for_recurring_occurrence, suggest_slots,
 };
 use crate::calendar::{
     CalendarLayout, CalendarView, calendar_title, month_days, month_grid_start, quarter_months,
@@ -1286,6 +1286,8 @@ struct RecurrenceEditDraft {
     alternative_slots: Vec<FreeInterval>,
     alternative_note: Option<String>,
     alternative_rule: Option<RecurrenceRule>,
+    focused_conflict_confirmed_rule: Option<RecurrenceRule>,
+    focused_conflict_warning: Option<String>,
 }
 
 impl RecurrenceEditDraft {
@@ -1356,6 +1358,8 @@ impl RecurrenceEditDraft {
             alternative_slots: Vec::new(),
             alternative_note: None,
             alternative_rule: None,
+            focused_conflict_confirmed_rule: None,
+            focused_conflict_warning: None,
             rule,
         }
     }
@@ -1375,6 +1379,8 @@ impl RecurrenceEditDraft {
         self.alternative_slots.clear();
         self.alternative_note = None;
         self.alternative_rule = None;
+        self.focused_conflict_confirmed_rule = None;
+        self.focused_conflict_warning = None;
         Ok(())
     }
 
@@ -4387,6 +4393,104 @@ impl EphemerisApp {
         }
     }
 
+    fn focused_recurrence_conflict_warning(
+        &self,
+        event: &TemporalEvent,
+        draft: &RecurrenceEditDraft,
+        proposed_rule: &RecurrenceRule,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(original) = draft.focused_occurrence_original.as_ref() else {
+            return Ok(None);
+        };
+        let stored_rule = event
+            .recurrence
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("focused event is no longer recurring"))?;
+        if draft.rule != *stored_rule || draft.base_time != event.time {
+            anyhow::bail!(
+                "recurrence series changed since the occurrence editor opened; reopen it"
+            );
+        }
+        let mut stored_rest = stored_rule.clone();
+        stored_rest
+            .overrides
+            .retain(|override_value| override_value.original != *original);
+        let mut proposed_rest = proposed_rule.clone();
+        proposed_rest
+            .overrides
+            .retain(|override_value| override_value.original != *original);
+        if stored_rest != proposed_rest {
+            anyhow::bail!(
+                "focused occurrence editing cannot change other recurrence slots or series selectors; use Edit series"
+            );
+        }
+
+        let existing = stored_rule
+            .overrides
+            .iter()
+            .find(|value| value.original == *original);
+        let previous_active = !existing.is_some_and(|value| value.cancelled);
+        let previous_time = existing
+            .and_then(|value| value.replacement.as_ref())
+            .unwrap_or(original);
+        let next = proposed_rule
+            .overrides
+            .iter()
+            .find(|value| value.original == *original);
+        if next.is_some_and(|value| value.cancelled)
+            || (!previous_active && next.is_none())
+            || !event.availability.blocks_time()
+        {
+            return Ok(None);
+        }
+        let proposed_time = next
+            .and_then(|value| value.replacement.as_ref())
+            .unwrap_or(original);
+        if previous_active && proposed_time == previous_time {
+            return Ok(None);
+        }
+        if !previous_active {
+            anyhow::bail!("restoring cancelled recurrence slots requires separate conflict handling");
+        }
+
+        let corpus = self.store.list_events()?;
+        let check = conflicts_for_recurring_occurrence(
+            &corpus,
+            event.id,
+            original,
+            previous_time,
+            proposed_time,
+            self.timezone(),
+        )?;
+        if check.conflicts.is_empty() {
+            return Ok(None);
+        }
+        let mut names = check
+            .conflicts
+            .iter()
+            .map(|value| value.event_title.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let extra = names.len().saturating_sub(4);
+        names.truncate(4);
+        let mut warning = format!(
+            "Recurring occurrence conflicts with {}.",
+            names.join(", ")
+        );
+        if extra != 0 {
+            warning.push_str(&format!(" +{extra} more."));
+        }
+        if !check.skipped.is_empty() {
+            warning.push_str(&format!(
+                " {} additional events could not be checked.",
+                check.skipped.len()
+            ));
+        }
+        warning.push_str(" Save again without changing the override to confirm.");
+        Ok(Some(warning))
+    }
+
     fn save_recurrence_edit(&mut self, remove: bool) {
         let Some(draft) = self.recurrence_editor.clone() else {
             return;
@@ -4401,7 +4505,7 @@ impl EphemerisApp {
                 anyhow::bail!("event source is read-only");
             }
 
-            event.recurrence = if remove {
+            let proposed_rule = if remove {
                 None
             } else {
                 Some(
@@ -4410,6 +4514,19 @@ impl EphemerisApp {
                         .map_err(|error| anyhow::anyhow!("{error}"))?,
                 )
             };
+            if let Some(rule) = proposed_rule.as_ref()
+                && draft.focused_occurrence_original.is_some()
+                && let Some(warning) =
+                    self.focused_recurrence_conflict_warning(&event, &draft, rule)?
+                && draft.focused_conflict_confirmed_rule.as_ref() != Some(rule)
+            {
+                if let Some(current) = self.recurrence_editor.as_mut() {
+                    current.focused_conflict_confirmed_rule = Some(rule.clone());
+                    current.focused_conflict_warning = Some(warning.clone());
+                }
+                anyhow::bail!("{warning}");
+            }
+            event.recurrence = proposed_rule;
             event.updated_at = Utc::now();
             self.store.upsert_event(&event)?;
             Ok(())
@@ -10715,6 +10832,15 @@ fn render_focused_occurrence_override(
         ui.strong("Selected occurrence");
         ui.small(format!("Original recurrence slot: {slot}"));
         ui.small("Only this original slot is affected. Changes are not stored until Save.");
+        if draft.focused_conflict_confirmed_rule.is_some()
+            && draft.focused_conflict_confirmed_rule.as_ref() != draft.parsed_rule().ok().as_ref()
+        {
+            draft.focused_conflict_confirmed_rule = None;
+            draft.focused_conflict_warning = None;
+        }
+        if let Some(warning) = draft.focused_conflict_warning.as_deref() {
+            ui.colored_label(Color32::from_rgb(220, 150, 70), warning);
+        }
 
         let existing = draft
             .override_rows
