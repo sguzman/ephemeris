@@ -453,10 +453,12 @@ fn apply_recurring_alternative_to_draft(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("no original recurrence slot is selected"))?;
     let token = match &draft.base_time {
-        TimeSpec::Instant { .. } => {
-            slot.start_utc.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
-        }
-        TimeSpec::Floating { source_timezone, .. } => {
+        TimeSpec::Instant { .. } => slot
+            .start_utc
+            .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+        TimeSpec::Floating {
+            source_timezone, ..
+        } => {
             let timezone = if let Some(raw) = source_timezone {
                 raw.parse::<Tz>()
                     .map_err(|_| anyhow::anyhow!("invalid floating source timezone {raw:?}"))?
@@ -475,12 +477,8 @@ fn apply_recurring_alternative_to_draft(
         }
         _ => anyhow::bail!("only exact, floating, and all-day occurrences can be moved"),
     };
-    let replacement = parse_exception_start_value(
-        &token,
-        &draft.base_time,
-        "Suggested occurrence",
-    )
-    .map_err(anyhow::Error::msg)?;
+    let replacement = parse_exception_start_value(&token, &draft.base_time, "Suggested occurrence")
+        .map_err(anyhow::Error::msg)?;
 
     let matches_interval = match &replacement {
         TimeSpec::Instant {
@@ -494,7 +492,8 @@ fn apply_recurring_alternative_to_draft(
             source_timezone,
         } => {
             let timezone = match source_timezone {
-                Some(raw) => raw.parse::<Tz>()
+                Some(raw) => raw
+                    .parse::<Tz>()
                     .map_err(|_| anyhow::anyhow!("invalid floating source timezone {raw:?}"))?,
                 None => display_timezone,
             };
@@ -509,10 +508,8 @@ fn apply_recurring_alternative_to_draft(
         } => {
             let (date, end) = civil_alternative_dates(slot, display_timezone)?;
             *start == date
-                && end_exclusive.map_or_else(
-                    || date.succ_opt() == Some(end),
-                    |actual| actual == end,
-                )
+                && end_exclusive
+                    .map_or_else(|| date.succ_opt() == Some(end), |actual| actual == end)
         }
         _ => false,
     };
@@ -4229,7 +4226,9 @@ impl EphemerisApp {
                 .ok_or_else(|| anyhow::anyhow!("event no longer recurs"))?
                 .clone();
             if draft.parsed_rule().map_err(anyhow::Error::msg)? != rule {
-                anyhow::bail!("save or revert unsaved recurrence edits before finding alternatives");
+                anyhow::bail!(
+                    "save or revert unsaved recurrence edits before finding alternatives"
+                );
             }
             let current_stored = rule
                 .overrides
@@ -4244,7 +4243,9 @@ impl EphemerisApp {
                 .store
                 .path()
                 .map(std::path::Path::to_path_buf)
-                .ok_or_else(|| anyhow::anyhow!("background suggestions require a file-backed database"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("background suggestions require a file-backed database")
+                })?;
             let search = if matches!(current, TimeSpec::AllDay { .. }) {
                 SlotSearch {
                     duration_minutes: 60,
@@ -4275,7 +4276,16 @@ impl EphemerisApp {
         })();
 
         match result {
-            Ok((draft_token, event_id, original, current, rule, database_path, search, timezone)) => {
+            Ok((
+                draft_token,
+                event_id,
+                original,
+                current,
+                rule,
+                database_path,
+                search,
+                timezone,
+            )) => {
                 let (sender, receiver) = mpsc::channel();
                 self.recurrence_alternative_receiver = Some(RecurrenceAlternativeWorker {
                     draft_token,
@@ -4295,13 +4305,7 @@ impl EphemerisApp {
                         let store = TemporalStore::open(database_path)?;
                         let events = store.list_events()?;
                         crate::availability::alternative_slots_for_recurring_occurrence(
-                            &events,
-                            event_id,
-                            &original,
-                            &current,
-                            timezone,
-                            search,
-                            4,
+                            &events, event_id, &original, &current, timezone, search, 4,
                         )
                     })()
                     .map_err(|error| format!("{error:#}"));
@@ -4312,8 +4316,7 @@ impl EphemerisApp {
                 if let Some(draft) = self.recurrence_editor.as_mut() {
                     draft.alternative_slots.clear();
                     draft.alternative_rule = None;
-                    draft.alternative_note =
-                        Some(format!("Alternatives unavailable: {error:#}"));
+                    draft.alternative_note = Some(format!("Alternatives unavailable: {error:#}"));
                 }
             }
         }
@@ -4324,15 +4327,19 @@ impl EphemerisApp {
             Some(worker) => match worker.receiver.try_recv() {
                 Ok(result) => Some(result),
                 Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => {
-                    Some(Err("Recurring alternatives worker exited unexpectedly".to_string()))
-                }
+                Err(TryRecvError::Disconnected) => Some(Err(
+                    "Recurring alternatives worker exited unexpectedly".to_string(),
+                )),
             },
             None => None,
         };
         let Some(result) = completed else { return };
-        let Some(worker) = self.recurrence_alternative_receiver.take() else { return };
-        let Some(draft) = self.recurrence_editor.as_mut() else { return };
+        let Some(worker) = self.recurrence_alternative_receiver.take() else {
+            return;
+        };
+        let Some(draft) = self.recurrence_editor.as_mut() else {
+            return;
+        };
         if draft.draft_token != worker.draft_token
             || draft.event_id != worker.event_id
             || draft.focused_occurrence_original.as_ref() != Some(&worker.original)
@@ -13869,8 +13876,7 @@ mod tests {
         };
         draft.alternative_rule = Some(rule.clone());
         draft.alternative_slots = vec![slot.clone()];
-        apply_recurring_alternative_to_draft(&mut draft, &slot, chrono_tz::UTC)
-            .expect("apply");
+        apply_recurring_alternative_to_draft(&mut draft, &slot, chrono_tz::UTC).expect("apply");
         let changed = draft.parsed_rule().expect("rule");
         assert_eq!(changed.overrides.len(), 1);
         assert_eq!(changed.overrides[0].original, base_time);
