@@ -4438,7 +4438,6 @@ impl EphemerisApp {
             .iter()
             .find(|value| value.original == *original);
         if next.is_some_and(|value| value.cancelled)
-            || (!previous_active && next.is_none())
             || !event.availability.blocks_time()
         {
             return Ok(None);
@@ -4450,7 +4449,9 @@ impl EphemerisApp {
             return Ok(None);
         }
         if !previous_active {
-            anyhow::bail!("restoring cancelled recurrence slots requires separate conflict handling");
+            anyhow::bail!(
+                "restoring cancelled recurrence slots requires separate conflict handling"
+            );
         }
 
         let corpus = self.store.list_events()?;
@@ -4474,10 +4475,7 @@ impl EphemerisApp {
             .collect::<Vec<_>>();
         let extra = names.len().saturating_sub(4);
         names.truncate(4);
-        let mut warning = format!(
-            "Recurring occurrence conflicts with {}.",
-            names.join(", ")
-        );
+        let mut warning = format!("Recurring occurrence conflicts with {}.", names.join(", "));
         if extra != 0 {
             warning.push_str(&format!(" +{extra} more."));
         }
