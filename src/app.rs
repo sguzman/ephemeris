@@ -13052,6 +13052,114 @@ mod tests {
     use super::*;
 
     #[test]
+    fn conflict_alternative_keeps_quick_create_metadata_and_requires_new_confirmation() {
+        let timezone = chrono_tz::UTC;
+        let day = NaiveDate::from_ymd_opt(2026, 10, 8).expect("date");
+        let mut draft = NewLocalEventDraft::for_date(day);
+        draft.title = "Keep my title".to_string();
+        draft.description = "Keep my notes".to_string();
+        let original = TemporalEvent::new(
+            "Original",
+            TimeSpec::AllDay {
+                start: day,
+                end_exclusive: None,
+            },
+        );
+        draft.conflict_confirmation =
+            Some(ConflictConfirmation::for_event(&original, "collision".to_string()));
+        let start = timezone
+            .with_ymd_and_hms(2026, 10, 8, 11, 30, 0)
+            .single()
+            .expect("start")
+            .with_timezone(&Utc);
+        let slot = FreeInterval {
+            start_utc: start,
+            end_utc: start + ChronoDuration::minutes(45),
+        };
+
+        apply_alternative_to_new_draft(&mut draft, &slot, timezone).expect("apply alternative");
+        assert_eq!(draft.title, "Keep my title");
+        assert_eq!(draft.description, "Keep my notes");
+        assert_eq!(draft.start_time, "11:30");
+        assert_eq!(draft.duration_minutes, "45");
+        assert!(draft.conflict_confirmation.is_none());
+        let (time, _) = parse_new_local_event_time(&draft, timezone).expect("parsed");
+        assert!(matches!(
+            time,
+            TimeSpec::Instant { start_utc, end_utc: Some(end_utc), .. }
+                if start_utc == slot.start_utc && end_utc == slot.end_utc
+        ));
+    }
+
+    #[test]
+    fn conflict_alternative_preserves_source_clock_for_time_edits() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 15, 0, 0)
+            .single()
+            .expect("start");
+        let event = TemporalEvent::new(
+            "Reschedule",
+            TimeSpec::Floating {
+                start: NaiveDate::from_ymd_opt(2026, 10, 8)
+                    .expect("day")
+                    .and_hms_opt(9, 0, 0)
+                    .expect("time"),
+                end: Some(
+                    NaiveDate::from_ymd_opt(2026, 10, 8)
+                        .expect("day")
+                        .and_hms_opt(10, 0, 0)
+                        .expect("time"),
+                ),
+                source_timezone: Some("America/Mexico_City".to_string()),
+            },
+        );
+        let mut draft =
+            EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("edit draft");
+        let slot = FreeInterval {
+            start_utc: start + ChronoDuration::hours(2),
+            end_utc: start + ChronoDuration::hours(3),
+        };
+        apply_alternative_to_time_draft(&mut draft, &slot, chrono_tz::UTC)
+            .expect("apply alternative");
+        assert_eq!(draft.start_time, "11:00");
+        assert_eq!(draft.duration_minutes, "60");
+        assert!(matches!(
+            draft.parsed_time().expect("parsed"),
+            TimeSpec::Floating {
+                source_timezone: Some(value),
+                ..
+            } if value == "America/Mexico_City"
+        ));
+    }
+
+    #[test]
+    fn alternate_time_edit_rejects_ambiguous_dst_clock_without_mutation() {
+        let timezone = chrono_tz::America::New_York;
+        let start = Utc
+            .with_ymd_and_hms(2026, 11, 1, 6, 30, 0)
+            .single()
+            .expect("second occurrence");
+        let event = TemporalEvent::new(
+            "DST ambiguity",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + ChronoDuration::minutes(30)),
+                source_timezone: Some(timezone.name().to_string()),
+            },
+        );
+        let mut draft =
+            EventTimeEditDraft::from_event(&event, chrono_tz::UTC).expect("edit draft");
+        let before = draft.date.clone();
+        let slot = FreeInterval {
+            start_utc: start,
+            end_utc: start + ChronoDuration::minutes(30),
+        };
+        assert!(apply_alternative_to_time_draft(&mut draft, &slot, chrono_tz::UTC).is_err());
+        assert_eq!(draft.date, before);
+        assert_eq!(draft.start_time, "01:30");
+    }
+
+    #[test]
     fn custom_snooze_minutes_are_bounded_and_whitespace_tolerant() {
         assert_eq!(parse_snooze_minutes(" 15 ").expect("15 minutes"), 15);
         assert_eq!(parse_snooze_minutes("10080").expect("seven days"), 10_080);
