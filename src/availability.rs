@@ -121,6 +121,107 @@ pub fn conflicts_for_candidate_event(
     })
 }
 
+/// Candidate alternatives are computed against all supplied canonical events,
+/// not the caller's currently filtered calendar view. The candidate is excluded
+/// by canonical UUID when editing, and the replacement must fit the original
+/// definite duration without moving into hidden blocking commitments.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AlternativeSlots {
+    pub slots: Vec<FreeInterval>,
+    pub skipped: Vec<AvailabilitySkip>,
+}
+
+pub fn alternative_slots_for_candidate(
+    events: &[TemporalEvent],
+    candidate: &TemporalEvent,
+    display_timezone: Tz,
+    exclude_event_id: Option<Uuid>,
+    search: SlotSearch,
+    max_suggestions: usize,
+) -> anyhow::Result<AlternativeSlots> {
+    if max_suggestions == 0 {
+        return Ok(AlternativeSlots::default());
+    }
+    if candidate.recurrence.is_some() || candidate.time_uncertainty.is_some() {
+        anyhow::bail!("alternative slots require a definite non-recurring event");
+    }
+    if !matches!(
+        candidate.time,
+        TimeSpec::Instant { .. } | TimeSpec::Floating { .. }
+    ) {
+        anyhow::bail!("timed alternatives require an exact or floating DATE-TIME");
+    }
+
+    let occurrence = EventOccurrence {
+        id: candidate.id,
+        event_id: candidate.id,
+        recurrence_index: None,
+        origin: crate::domain::RecurrenceOccurrenceOrigin::Rule,
+        original_time: candidate.time.clone(),
+        time: candidate.time.clone(),
+        status: candidate.status,
+        override_applied: false,
+        cancelled_by_override: false,
+    };
+    let (candidate_start, candidate_end) = occurrence_interval_utc(&occurrence, display_timezone)
+        .map_err(anyhow::Error::msg)?
+        .ok_or_else(|| anyhow::anyhow!("candidate has no definite duration"))?;
+    let duration_minutes = (candidate_end - candidate_start).num_minutes();
+    if duration_minutes <= 0
+        || candidate_start + Duration::minutes(duration_minutes) != candidate_end
+    {
+        anyhow::bail!("timed alternatives require whole-minute positive duration");
+    }
+    let duration_minutes =
+        u32::try_from(duration_minutes).context("candidate duration exceeds slot search limits")?;
+
+    let first_date = candidate_start.with_timezone(&display_timezone).date_naive();
+    let last_date = first_date
+        .checked_add_days(Days::new(15))
+        .ok_or_else(|| anyhow::anyhow!("alternative search date overflow"))?;
+    let start_utc = resolve_local(
+        display_timezone,
+        first_date
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| anyhow::anyhow!("invalid alternative search start"))?,
+    )
+    .ok_or_else(|| anyhow::anyhow!("alternative search start is not representable"))?;
+    let end_utc = resolve_local(
+        display_timezone,
+        last_date
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| anyhow::anyhow!("invalid alternative search end"))?,
+    )
+    .ok_or_else(|| anyhow::anyhow!("alternative search end is not representable"))?;
+
+    let other_events = events
+        .iter()
+        .filter(|event| Some(event.id) != exclude_event_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    let availability =
+        availability_for_events(&other_events, display_timezone, start_utc, end_utc)?;
+    let slots = suggest_slots(
+        &availability.free,
+        display_timezone,
+        first_date,
+        last_date,
+        SlotSearch {
+            duration_minutes,
+            ..search
+        },
+    )?
+    .into_iter()
+    .filter(|slot| slot.start_utc > candidate_start)
+    .take(max_suggestions)
+    .collect();
+
+    Ok(AlternativeSlots {
+        slots,
+        skipped: availability.skipped,
+    })
+}
+
 pub fn availability_for_materialized_date_window(
     events: &[TemporalEvent],
     display_timezone: Tz,
@@ -550,6 +651,139 @@ mod tests {
 
     use super::*;
     use crate::domain::{RecurrenceFrequency, RecurrenceOverride, RecurrenceRule};
+
+    #[test]
+    fn alternative_slots_exclude_hidden_blockers_and_preserve_duration() {
+        let timezone = chrono_tz::UTC;
+        let start = timezone
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("start")
+            .with_timezone(&Utc);
+        let candidate = TemporalEvent::new(
+            "Candidate",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::minutes(30)),
+                source_timezone: None,
+            },
+        );
+        let first_block = TemporalEvent::new(
+            "Already booked",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        let later_block = TemporalEvent::new(
+            "Hidden by saved view",
+            TimeSpec::Instant {
+                start_utc: start + Duration::hours(1),
+                end_utc: Some(start + Duration::hours(2)),
+                source_timezone: None,
+            },
+        );
+        let preferences = SlotSearch {
+            duration_minutes: 5, // candidate duration must take precedence
+            step_minutes: 30,
+            day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("start"),
+            day_end: NaiveTime::from_hms_opt(13, 0, 0).expect("end"),
+            workdays: [true; 7],
+        };
+        let alternatives = alternative_slots_for_candidate(
+            &[first_block, later_block],
+            &candidate,
+            timezone,
+            None,
+            preferences,
+            3,
+        )
+        .expect("alternatives");
+
+        assert_eq!(alternatives.slots.len(), 3);
+        assert_eq!(alternatives.slots[0].start_utc, start + Duration::hours(2));
+        assert_eq!(
+            alternatives.slots[0].end_utc - alternatives.slots[0].start_utc,
+            Duration::minutes(30)
+        );
+        assert_eq!(alternatives.slots[1].start_utc, start + Duration::minutes(150));
+        assert!(alternatives.skipped.is_empty());
+    }
+
+    #[test]
+    fn alternative_slots_exclude_event_being_rescheduled() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 9, 0, 0)
+            .single()
+            .expect("start");
+        let mut event = TemporalEvent::new(
+            "Rescheduled",
+            TimeSpec::Instant {
+                start_utc: start,
+                end_utc: Some(start + Duration::hours(1)),
+                source_timezone: None,
+            },
+        );
+        let candidate = event.clone();
+        event.time = TimeSpec::Instant {
+            start_utc: start + Duration::hours(1),
+            end_utc: Some(start + Duration::hours(2)),
+            source_timezone: None,
+        };
+        let blocker = TemporalEvent::new(
+            "Conflict",
+            TimeSpec::Instant {
+                start_utc: start + Duration::hours(1),
+                end_utc: Some(start + Duration::hours(2)),
+                source_timezone: None,
+            },
+        );
+        let preferences = SlotSearch {
+            duration_minutes: 60,
+            step_minutes: 30,
+            day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("start"),
+            day_end: NaiveTime::from_hms_opt(13, 0, 0).expect("end"),
+            workdays: [true; 7],
+        };
+        let results = alternative_slots_for_candidate(
+            &[event, blocker],
+            &candidate,
+            chrono_tz::UTC,
+            Some(candidate.id),
+            preferences,
+            2,
+        )
+        .expect("alternatives");
+        assert_eq!(results.slots[0].start_utc, start + Duration::hours(2));
+    }
+
+    #[test]
+    fn alternative_slots_refuse_imprecise_candidates() {
+        let event = TemporalEvent::new(
+            "Date-only",
+            TimeSpec::DateOnly {
+                start: NaiveDate::from_ymd_opt(2026, 10, 8).expect("date"),
+                end_exclusive: None,
+            },
+        );
+        let search = SlotSearch {
+            duration_minutes: 30,
+            step_minutes: 30,
+            day_start: NaiveTime::from_hms_opt(9, 0, 0).expect("start"),
+            day_end: NaiveTime::from_hms_opt(17, 0, 0).expect("end"),
+            workdays: [true; 7],
+        };
+        assert!(alternative_slots_for_candidate(
+            &[],
+            &event,
+            chrono_tz::UTC,
+            None,
+            search,
+            3
+        )
+        .is_err());
+    }
 
     #[test]
     fn conflict_check_finds_overlapping_busy_events_and_ignores_free_or_excluded() {
