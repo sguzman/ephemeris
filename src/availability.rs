@@ -1195,10 +1195,7 @@ mod tests {
                 .iter()
                 .any(|slot| { slot.start_utc <= second_day && slot.end_utc > second_day })
         );
-        assert_eq!(
-            suggestions.slots[1].start_utc,
-            start + Duration::days(2)
-        );
+        assert_eq!(suggestions.slots[1].start_utc, start + Duration::days(2));
     }
 
     #[test]
