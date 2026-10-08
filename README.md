@@ -26,7 +26,7 @@ The current application has a canonical temporal store, recurrence engine and ed
 
 Local `.ics` / `.ical` files can be imported through the CLI or by dropping them onto the running application. Imported calendars become first-class sources in the canonical store and refresh by stable source/UID identity. Their current canonical state can be exported back to `.ics` from the source inspector or the `ephemeris-export` CLI.
 
-The current verified implementation checkpoint is tracked in [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md). Detailed historical milestone notes live in [docs/IMPLEMENTATION_HISTORY.md](docs/IMPLEMENTATION_HISTORY.md), not in this README.
+The practical local scheduling workflow is documented in [docs/PERSONAL_SCHEDULING.md](docs/PERSONAL_SCHEDULING.md). The current verified checkpoint is tracked in [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md); detailed milestones live in [docs/IMPLEMENTATION_HISTORY.md](docs/IMPLEMENTATION_HISTORY.md), not in this README.
 
 ## Architecture
 
