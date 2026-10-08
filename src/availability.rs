@@ -480,10 +480,12 @@ fn occurrence_interval_utc(
             if end <= start {
                 return Err("floating event has a non-positive duration".to_string());
             }
-            let timezone = source_timezone
-                .as_deref()
-                .and_then(|raw| raw.parse::<Tz>().ok())
-                .unwrap_or(display_timezone);
+            let timezone = match source_timezone.as_deref() {
+                Some(raw) => raw.parse::<Tz>().map_err(|_| {
+                    format!("floating event has invalid source timezone {raw:?}")
+                })?,
+                None => display_timezone,
+            };
             let start_utc = resolve_local(timezone, *start).ok_or_else(|| {
                 "floating start falls in a nonexistent local interval".to_string()
             })?;
@@ -1044,6 +1046,37 @@ mod tests {
         assert_eq!(result.busy.len(), 1);
         assert_eq!(result.busy[0].kind, BusyKind::Tentative);
         assert_eq!(result.busy[0].start_utc, expected_start);
+    }
+
+    #[test]
+    fn invalid_floating_source_timezone_is_skipped_without_inventing_clock_context() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 8)
+            .expect("date")
+            .and_hms_opt(9, 0, 0)
+            .expect("time");
+        let event = TemporalEvent::new(
+            "Invalid timezone",
+            TimeSpec::Floating {
+                start,
+                end: Some(start + Duration::hours(1)),
+                source_timezone: Some("Not/A_Zone".to_string()),
+            },
+        );
+        let window_start = Utc
+            .with_ymd_and_hms(2026, 10, 8, 0, 0, 0)
+            .single()
+            .expect("window");
+        let result = availability_for_events(
+            &[event.clone()],
+            chrono_tz::UTC,
+            window_start,
+            window_start + Duration::days(1),
+        )
+        .expect("availability");
+        assert!(result.busy.is_empty());
+        assert_eq!(result.skipped.len(), 1);
+        assert_eq!(result.skipped[0].event_id, event.id);
+        assert!(result.skipped[0].reason.contains("invalid source timezone"));
     }
 
     #[test]
