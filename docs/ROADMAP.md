@@ -449,7 +449,7 @@ Goals:
 - ICS import/export projection — transport, local import, stored-source CLI/GUI export, explicit local refresh, and durable refresh diagnostics implemented
 - webcal/remote ICS ingestion — implemented for HTTP/HTTPS/webcal feeds with persisted ETag/Last-Modified conditional refresh and explicit HTTP 304 reporting
 - CalDAV where valuable
-- versioned native JSON import/export — v2 preserves canonical sources/events plus relations, collections/sequences, and memberships with v1 backward compatibility and transactional merge semantics
+- versioned native JSON import/export — v9 preserves canonical sources/events, topology, uncertainty, annotations, provenance, locations, participants, entities, and local participant/entity bindings; historical versions remain readable with explicit compatibility gates and transactional merge semantics
 - CSV import/export for representable tabular subsets — implemented as strict CSV v1 with durable refresh-attempt history
 - JSCalendar/jCal
 - optional mobile/cloud bridges
