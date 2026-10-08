@@ -293,16 +293,14 @@ pub fn alternative_slots_for_recurring_occurrence(
     candidate.time = current_time.clone();
     candidate.recurrence = None;
     match &candidate.time {
-        TimeSpec::Instant { .. } | TimeSpec::Floating { .. } => {
-            alternative_slots_for_candidate(
-                &corpus,
-                &candidate,
-                display_timezone,
-                None,
-                search,
-                max_suggestions,
-            )
-        }
+        TimeSpec::Instant { .. } | TimeSpec::Floating { .. } => alternative_slots_for_candidate(
+            &corpus,
+            &candidate,
+            display_timezone,
+            None,
+            search,
+            max_suggestions,
+        ),
         TimeSpec::AllDay { .. } => alternative_days_for_candidate(
             &corpus,
             &candidate,
@@ -1181,17 +1179,20 @@ mod tests {
         )
         .expect("alternatives");
         assert_eq!(suggestions.slots[0].start_utc, start);
-        assert_eq!(
-            suggestions.slots[0].end_utc,
-            start + Duration::hours(1)
-        );
+        assert_eq!(suggestions.slots[0].end_utc, start + Duration::hours(1));
         // The master series, including the moved occurrence, remains untouched.
-        assert_eq!(series.recurrence.as_ref().expect("rule").overrides[0].replacement, Some(moved_time));
+        assert_eq!(
+            series.recurrence.as_ref().expect("rule").overrides[0].replacement,
+            Some(moved_time)
+        );
 
         let second_day = start + Duration::days(1);
-        assert!(!suggestions.slots.iter().any(|slot| {
-            slot.start_utc <= second_day && slot.end_utc > second_day
-        }));
+        assert!(
+            !suggestions
+                .slots
+                .iter()
+                .any(|slot| { slot.start_utc <= second_day && slot.end_utc > second_day })
+        );
     }
 
     #[test]
@@ -1223,16 +1224,18 @@ mod tests {
             day_end: NaiveTime::from_hms_opt(17, 0, 0).expect("hours"),
             workdays: [true; 7],
         };
-        assert!(alternative_slots_for_recurring_occurrence(
-            &[series.clone()],
-            series.id,
-            &unknown,
-            &unknown,
-            chrono_tz::UTC,
-            preferences,
-            4
-        )
-        .is_err());
+        assert!(
+            alternative_slots_for_recurring_occurrence(
+                &[series.clone()],
+                series.id,
+                &unknown,
+                &unknown,
+                chrono_tz::UTC,
+                preferences,
+                4
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1291,15 +1294,9 @@ mod tests {
                     end_exclusive: None,
                 },
             );
-            let suggestions = alternative_days_for_candidate(
-                &[],
-                &candidate,
-                timezone,
-                None,
-                [true; 7],
-                1,
-            )
-            .expect("all-day alternatives");
+            let suggestions =
+                alternative_days_for_candidate(&[], &candidate, timezone, None, [true; 7], 1)
+                    .expect("all-day alternatives");
             let slot = suggestions.slots.first().expect("next day");
             assert_eq!(
                 slot.start_utc.with_timezone(&timezone).date_naive(),
@@ -1309,10 +1306,7 @@ mod tests {
                 slot.end_utc.with_timezone(&timezone).date_naive(),
                 target_date.succ_opt().expect("next civil day")
             );
-            assert_eq!(
-                (slot.end_utc - slot.start_utc).num_hours(),
-                expected_hours
-            );
+            assert_eq!((slot.end_utc - slot.start_utc).num_hours(), expected_hours);
         }
     }
 
