@@ -4327,15 +4327,15 @@ impl EphemerisApp {
             event.importance = importance;
             event.personal_relevance = personal_relevance;
 
-            let warning =
-                if details_change_requires_provisional_uncertainty_confirmation(&original, &event)
-                {
-                    Some("Activating a Busy event with bounded start uncertainty does not establish a definite occupied interval. Its possible-start window remains provisional; Save again without changing status or availability to acknowledge this.".to_string())
-                } else if details_change_requires_conflict_check(&original, &event) {
-                    self.scheduling_conflict_warning(&event, Some(event.id))?
-                } else {
-                    None
-                };
+            let warning = if details_change_requires_provisional_uncertainty_confirmation(
+                &original, &event,
+            ) {
+                Some("Activating a Busy event with bounded start uncertainty does not establish a definite occupied interval. Its possible-start window remains provisional; Save again without changing status or availability to acknowledge this.".to_string())
+            } else if details_change_requires_conflict_check(&original, &event) {
+                self.scheduling_conflict_warning(&event, Some(event.id))?
+            } else {
+                None
+            };
             if let Some(warning) = warning
                 && draft
                     .conflict_confirmation
@@ -15459,40 +15459,40 @@ mod tests {
         let mut activated = original.clone();
         activated.availability = AvailabilityBehavior::Busy;
 
-        assert!(details_change_requires_provisional_uncertainty_confirmation(
-            &original, &activated
-        ));
+        assert!(
+            details_change_requires_provisional_uncertainty_confirmation(&original, &activated)
+        );
         assert!(!details_change_requires_conflict_check(
             &original, &activated
         ));
 
         let mut renamed = activated.clone();
         renamed.normalized_title = "Updated title".to_string();
-        assert!(!details_change_requires_provisional_uncertainty_confirmation(
-            &activated, &renamed
-        ));
+        assert!(
+            !details_change_requires_provisional_uncertainty_confirmation(&activated, &renamed)
+        );
 
         let mut cancelled = activated.clone();
         cancelled.status = EventStatus::Cancelled;
-        assert!(!details_change_requires_provisional_uncertainty_confirmation(
-            &activated, &cancelled
-        ));
+        assert!(
+            !details_change_requires_provisional_uncertainty_confirmation(&activated, &cancelled)
+        );
         let mut restored = cancelled.clone();
         restored.status = EventStatus::Scheduled;
-        assert!(details_change_requires_provisional_uncertainty_confirmation(
-            &cancelled, &restored
-        ));
+        assert!(
+            details_change_requires_provisional_uncertainty_confirmation(&cancelled, &restored)
+        );
 
         let mut definite = activated.clone();
         definite.time_uncertainty = None;
-        assert!(!details_change_requires_provisional_uncertainty_confirmation(
-            &original, &definite
-        ));
+        assert!(
+            !details_change_requires_provisional_uncertainty_confirmation(&original, &definite)
+        );
         let mut recurring = activated.clone();
         recurring.recurrence = Some(RecurrenceRule::new(RecurrenceFrequency::Daily));
-        assert!(!details_change_requires_provisional_uncertainty_confirmation(
-            &original, &recurring
-        ));
+        assert!(
+            !details_change_requires_provisional_uncertainty_confirmation(&original, &recurring)
+        );
     }
 
     #[test]
