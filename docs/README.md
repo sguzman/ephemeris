@@ -25,6 +25,7 @@ This directory is the design and project-memory surface for Ephemeris.
 ## Product behavior
 
 - [UX.md](UX.md) - interaction and visualization contract
+- [PERSONAL_SCHEDULING.md](PERSONAL_SCHEDULING.md) - local event creation, free/busy, reminders, conflict confirmation, and limits
 - [PERFORMANCE.md](PERFORMANCE.md) - scale and latency expectations
 - [QUALITY.md](QUALITY.md) - correctness, tests, migrations, observability
 - [FUTURE_CAPABILITIES.md](FUTURE_CAPABILITIES.md) - full long-horizon feature envelope
