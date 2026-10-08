@@ -18,7 +18,7 @@ The application currently has three mature foundations:
 
 Verified implementation code checkpoint:
 
-`f63ebe57bf7d0151c123711e52b57dc5e4a2cea3`
+`f988c140df3ed319b96fd5056171b97bc4d7ca39`
 
 At that checkpoint:
 
@@ -26,7 +26,7 @@ At that checkpoint:
 - `cargo check` passes
 - `cargo clippy --all-targets -- -D warnings` passes
 - `cargo test` passes
-- **658 library tests** pass
+- **663 library tests** pass
 - **5 export-CLI tests** pass
 - **1 import-CLI test** passes
 
@@ -136,7 +136,7 @@ The UI now exposes participant resolution on read-only as well as editable event
 
 Phase 10 personal scheduling is now materially underway. Canonical events have explicit Busy/Free availability behavior persisted in schema v27 and mapped to iCalendar TRANSP; the free/busy engine respects that behavior across recurrence materialization, reports skipped unsupported temporal shapes, finds candidate slots inside persisted personal work-hour/workday preferences, and can prefill local event creation directly from a free interval or suggested slot.
 
-Reminder workflows are end-to-end in-app: event- and saved-view-targeted before-start rules persist in SQLite, recurrence-aware evaluation materializes due occurrences, deliveries deduplicate durably, and active reminders survive restart. The reminder center supports dismissal, 10m/30m/1h/custom snooze, a separate snoozed list with due-again deadlines, and early Wake now. The delivery identity is preserved across snooze/wake/dismiss; these actions never manufacture a second notification delivery.
+Reminder workflows are end-to-end in-app: event- and saved-view-targeted before-start rules persist in SQLite, recurrence-aware evaluation materializes due occurrences, deliveries deduplicate durably, and active reminders survive restart. The reminder center supports dismissal, 10m/30m/1h/custom snooze, a separate snoozed list with due-again deadlines, and early Wake now. The delivery identity is preserved across snooze/wake/dismiss; these actions never manufacture a second notification delivery. Local quick-create now offers an optional in-app before-start reminder (0 to 10,080 minutes). Event and reminder creation commit in one SQLite transaction, so a failed reminder rolls back the new event and its history revision. No outbound email/invitation or system notification is implied.
 
 Local authoring is also broader now. Quick-create captures description, event type, domain, lifecycle status, Busy/Free behavior, named participants, and optional venue/address/virtual meeting URL in addition to date/time. Participant names are canonical metadata, not invitations. Alternative-slot selection preserves the participant roster and location. Writable non-recurring exact, floating, all-day, and date-only events have a canonical time editor that preserves temporal kind and source clock context. Bounded-uncertainty events with representable editor precision can also be moved: the representative time and entire possible-start interval shift together, with duration, source clock, civil span, and original uncertainty protected. Recurring masters and unrepresentable precision remain blocked. Writable events can also add/edit/remove the full structured location object, including venue/address/locality/region/postal/country, paired coordinates, and virtual URL, with canonical validation.
 
