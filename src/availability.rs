@@ -302,6 +302,58 @@ pub fn conflicts_for_recurring_occurrence(
     conflicts_for_candidate_event(&corpus, &candidate, display_timezone, None)
 }
 
+/// Re-activating a cancelled recurrence instance is not the same as moving
+/// an active instance: the source already contains the cancellation and must
+/// remain in the busy corpus so every other occurrence still blocks time.
+pub fn conflicts_for_canceled_recurring_occurrence(
+    events: &[TemporalEvent],
+    series_event_id: Uuid,
+    original_slot: &TimeSpec,
+    proposed_time: &TimeSpec,
+    display_timezone: Tz,
+) -> anyhow::Result<ConflictCheck> {
+    let source = events
+        .iter()
+        .find(|event| event.id == series_event_id)
+        .ok_or_else(|| anyhow::anyhow!("recurrence series {series_event_id} does not exist"))?;
+    if source.time_uncertainty.is_some() {
+        anyhow::bail!("cancelled recurrence restoration requires definite placement");
+    }
+    let rule = source
+        .recurrence
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("selected event is not a recurrence series"))?;
+    if !rule
+        .overrides
+        .iter()
+        .any(|value| value.original == *original_slot && value.cancelled)
+    {
+        anyhow::bail!("original recurrence slot is not currently cancelled");
+    }
+    source
+        .validate_recurrence()
+        .context("cancelled recurrence series is invalid")?;
+
+    let mut candidate = source.clone();
+    candidate.recurrence = None;
+    candidate.time = proposed_time.clone();
+    conflicts_for_candidate_event(events, &candidate, display_timezone, Some(series_event_id))
+        .and_then(|mut result| {
+            // Checking only against other event UUIDs would incorrectly hide
+            // the still-active sister occurrences. Re-check the original
+            // cancelled series as well.
+            let siblings = conflicts_for_candidate_event(
+                std::slice::from_ref(source),
+                &candidate,
+                display_timezone,
+                None,
+            )?;
+            result.conflicts.extend(siblings.conflicts);
+            result.skipped.extend(siblings.skipped);
+            Ok(result)
+        })
+}
+
 fn corpus_without_recurring_occurrence(
     events: &[TemporalEvent],
     series_event_id: Uuid,
@@ -1288,6 +1340,69 @@ mod tests {
                 chrono_tz::UTC,
                 search,
                 4,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn cancelled_recurrence_restoration_checks_sisters_and_rejects_non_cancelled_targets() {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 7, 9, 0, 0)
+            .single()
+            .expect("start");
+        let first = TimeSpec::Instant {
+            start_utc: start,
+            end_utc: Some(start + Duration::hours(1)),
+            source_timezone: None,
+        };
+        let second = TimeSpec::Instant {
+            start_utc: start + Duration::days(1),
+            end_utc: Some(start + Duration::days(1) + Duration::hours(1)),
+            source_timezone: None,
+        };
+        let mut series = TemporalEvent::new("Daily", first.clone());
+        let mut rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        rule.count = Some(2);
+        let no_cancel = series.clone();
+        rule.overrides.push(RecurrenceOverride {
+            original: first.clone(),
+            replacement: None,
+            cancelled: true,
+        });
+        series.recurrence = Some(rule);
+        let active = conflicts_for_canceled_recurring_occurrence(
+            &[series.clone()],
+            series.id,
+            &first,
+            &second,
+            chrono_tz::UTC,
+        )
+        .expect("restoration against sister");
+        assert_eq!(active.conflicts.len(), 1);
+        assert_eq!(active.conflicts[0].event_id, series.id);
+
+        let free = conflicts_for_canceled_recurring_occurrence(
+            &[series.clone()],
+            series.id,
+            &first,
+            &first,
+            chrono_tz::UTC,
+        )
+        .expect("original is free while cancelled");
+        assert!(free.conflicts.is_empty());
+
+        let mut not_cancelled = no_cancel;
+        let mut unchanged_rule = RecurrenceRule::new(RecurrenceFrequency::Daily);
+        unchanged_rule.count = Some(2);
+        not_cancelled.recurrence = Some(unchanged_rule);
+        assert!(
+            conflicts_for_canceled_recurring_occurrence(
+                &[not_cancelled.clone()],
+                not_cancelled.id,
+                &first,
+                &second,
+                chrono_tz::UTC,
             )
             .is_err()
         );
