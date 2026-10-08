@@ -15067,7 +15067,7 @@ mod tests {
     }
 
     #[test]
-    fn event_time_edit_refuses_recurrence_and_uncertainty() {
+    fn event_time_edit_refuses_recurrence_but_preserves_bounded_uncertainty() {
         let day = NaiveDate::from_ymd_opt(2026, 10, 7).expect("day");
         let mut recurring = TemporalEvent::new(
             "Recurring",
@@ -15091,7 +15091,15 @@ mod tests {
             earliest: day,
             latest: day.succ_opt().expect("next day"),
         });
-        assert!(EventTimeEditDraft::from_event(&uncertain, chrono_tz::UTC).is_err());
+        let draft = EventTimeEditDraft::from_event(&uncertain, chrono_tz::UTC)
+            .expect("bounded civil uncertainty is editable");
+        assert_eq!(
+            draft.uncertain_origin,
+            Some((
+                uncertain.time.clone(),
+                uncertain.time_uncertainty.expect("uncertainty"),
+            ))
+        );
     }
 
     #[test]
